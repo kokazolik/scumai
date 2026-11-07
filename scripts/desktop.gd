@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.13"
+const VERSION := "0.14"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -39,6 +39,13 @@ var total_calls := 0
 var best_shift := 0
 var shift_log: Array = []      # все разговоры текущей смены
 var last_moments: Array = []   # «прикольные моменты» прошлой смены
+var earned_total := 0          # всё заработанное за игру, от него зависит ранг
+var heat := 0                  # внимание полиции 0..100
+var raids := 0
+var upgrades: Dictionary = {}  # купленные улучшения {id: уровень}
+var heat_bar: ProgressBar
+var heat_label: Label
+var call_paid := false
 
 var caller_order: Array = []
 var next_profile: Dictionary = {}  # следующий звонящий, которого заранее придумала нейронка
@@ -146,7 +153,7 @@ func _ready() -> void:
 
 func _save() -> void:
 	var c := ConfigFile.new()
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades"]:
 		c.set_value("game", k, get(k))
 	c.save(SAVE_PATH)
 
@@ -155,7 +162,7 @@ func _load() -> void:
 	var c := ConfigFile.new()
 	if c.load(SAVE_PATH) != OK:
 		return
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades"]:
 		if c.has_section_key("game", k):
 			set(k, c.get_value("game", k))
 
@@ -171,6 +178,7 @@ func _reset_progress() -> void:
 	balance = 0; deals = 0; shift = 1; quota = FIRST_QUOTA
 	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
 	shift_log = []; last_moments = []
+	earned_total = 0; heat = 0; raids = 0; upgrades = {}
 	_clear_chat()
 	_save()
 	_update_balance()
@@ -361,7 +369,7 @@ func _show_menu() -> void:
 	v.add_theme_constant_override("separation", 18)
 	m.add_child(v)
 
-	var phone := _label("☎", 120, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER)
+	var phone := _label("☎", 100, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER)
 	v.add_child(phone)
 	var tw := create_tween().set_loops()
 	phone.pivot_offset = Vector2(310, 80)
@@ -373,7 +381,7 @@ func _show_menu() -> void:
 	v.add_child(_label("КОНТОРА", 88, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER))
 	v.add_child(_label("Мы перезвоним. Вы заплатите.", 28, Color(1, 1, 1, 0.85), false, HORIZONTAL_ALIGNMENT_CENTER))
 	var gap := Control.new()
-	gap.custom_minimum_size.y = 46
+	gap.custom_minimum_size.y = 24
 	v.add_child(gap)
 
 	var stats_card := _card()
@@ -386,13 +394,16 @@ func _show_menu() -> void:
 	v.add_child(menu_play_btn)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
+	row.add_child(_big_button("$ Магазин", C_ACCENT, _show_shop, 100))
 	row.add_child(_big_button("★ Моменты", C_PURPLE, _show_last_moments, 100))
-	row.add_child(_big_button("? Как играть", C_BLUE, _show_help, 100))
 	v.add_child(row)
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 14)
+	row2.add_child(_big_button("? Как играть", C_BLUE, _show_help, 100))
 	row2.add_child(_big_button("Ключи", C_YELLOW, func(): _show_key_screen(false), 100))
-	var reset_btn := _big_button("Новая игра", Color("b9bccb"), Callable(), 100)
+	v.add_child(row2)
+	var row3 := HBoxContainer.new()
+	var reset_btn := _big_button("Новая игра", Color("b9bccb"), Callable(), 80)
 	reset_btn.pressed.connect(func():
 		if reset_btn.text != "Точно? Нажми ещё":
 			reset_btn.text = "Точно? Нажми ещё"
@@ -400,8 +411,9 @@ func _show_menu() -> void:
 		reset_btn.text = "Новая игра"
 		_reset_progress()
 		_refresh_menu())
-	row2.add_child(reset_btn)
-	v.add_child(row2)
+	reset_btn.add_theme_font_size_override("font_size", 26)
+	row3.add_child(reset_btn)
+	v.add_child(row3)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(spacer)
@@ -429,8 +441,8 @@ func _refresh_menu() -> void:
 	else:
 		menu_play_btn.text = "▶ Начать работу"
 	if _has_progress():
-		menu_stats.text = "Смена %d · план %s / %s\nНа счету %s · сделок %d · звонков %d\nЛучшая смена: %s" % [
-			shift, _rub(shift_earned), _rub(quota), _rub(balance), deals, total_calls, _rub(best_shift)]
+		menu_stats.text = "%s · смена %d · план %s / %s\nНа счету %s · сделок %d · жара %d%%\nЛучшая смена: %s" % [
+			_rank_name(), shift, _rub(shift_earned), _rub(quota), _rub(balance), deals, heat, _rub(best_shift)]
 	else:
 		menu_stats.text = "Ты оператор конторы. Тебе звонят люди с объявлений. Придумай услугу, назови цену и получи деньги.\nПлан первой смены: " + _rub(FIRST_QUOTA)
 
@@ -442,7 +454,7 @@ func _on_menu_play() -> void:
 	_prefetch_caller()
 	menu.hide()
 	if session == null or not session.active:
-		if shift_calls >= SHIFT_CALLS:
+		if shift_calls >= _calls_max():
 			_show_shift_result()
 		elif session == null:
 			_next_call()
@@ -460,10 +472,17 @@ func _show_help() -> void:
 • Списать можно только ту сумму, на которую клиент согласился.
 • Клиент может бросить трубку в любой момент.
 • Микрофон: с бесплатным ключом голоса (меню «Ключи») нажми, скажи фразу, нажми ещё раз, и она отправится. Без ключа откроется диктовка клавиатуры.
+• Жара растёт с каждой сделкой. На 100% будет облава и штраф. Пустые звонки и конец смены её сбивают.
+• Деньги со счёта тратятся в магазине на улучшения. Ранг растёт от заработка и открывает новые товары.
 • В конце смены вспомним самые смешные моменты."""
-	var l := _label(text, 27, C_INK, true)
-	l.custom_minimum_size.x = 580
-	v.add_child(l)
+	var l := _label(text, 26, C_INK, true)
+	l.custom_minimum_size.x = 570
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.custom_minimum_size = Vector2(590, 820)
+	overlay_scrolls.append(sc)
+	sc.add_child(l)
+	v.add_child(sc)
 	v.add_child(_big_button("Понятно", C_GREEN, func(): m[0].queue_free(), 110))
 
 
@@ -585,6 +604,7 @@ func _build_header() -> Control:
 	var row := HBoxContainer.new()
 	deals_label = _label("", 22, Color(1, 1, 1, 0.9))
 	deals_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	deals_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	row.add_child(deals_label)
 	quota_label = _label("", 22, Color.WHITE, false, HORIZONTAL_ALIGNMENT_RIGHT)
 	row.add_child(quota_label)
@@ -595,6 +615,21 @@ func _build_header() -> Control:
 	quota_bar.add_theme_stylebox_override("fill", _box(C_YELLOW, 8, 0))
 	quota_bar.add_theme_stylebox_override("background", _box(Color(1, 1, 1, 0.28), 8, 0))
 	outer.add_child(quota_bar)
+	var hr := HBoxContainer.new()
+	hr.add_theme_constant_override("separation", 10)
+	heat_label = _label("", 20, Color(1, 1, 1, 0.9))
+	heat_label.custom_minimum_size.x = 120
+	hr.add_child(heat_label)
+	heat_bar = ProgressBar.new()
+	heat_bar.show_percentage = false
+	heat_bar.max_value = 100
+	heat_bar.custom_minimum_size.y = 10
+	heat_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heat_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	heat_bar.add_theme_stylebox_override("fill", _box(Color("ffe08a"), 5, 0))
+	heat_bar.add_theme_stylebox_override("background", _box(Color(1, 1, 1, 0.22), 5, 0))
+	hr.add_child(heat_bar)
+	outer.add_child(hr)
 	return p
 
 
@@ -861,6 +896,13 @@ func _add_money(rub: int) -> void:
 	shift_earned += rub
 	deals += 1
 	call_rec["money"] = int(call_rec.get("money", 0)) + rub
+	call_paid = true
+	var old_rank := Upgrades.rank_index(earned_total)
+	earned_total += rub
+	var new_rank := Upgrades.rank_index(earned_total)
+	if new_rank > old_rank:
+		_add_note("★ Новый ранг: %s! В магазине открылись новые улучшения, клиенты стали богаче." % Upgrades.RANKS[new_rank]["name"], C_PURPLE, true)
+	_add_heat(int(round((5 + rub / 1000.0) * (1.0 - 0.25 * Upgrades.level(upgrades, "lawyer")))))
 	_update_balance()
 	_bump(balance_label)
 	_save()
@@ -909,7 +951,7 @@ func _next_call() -> void:
 		recorder.stop()
 	_drop_session()
 	_close_terminal()
-	if shift_calls >= SHIFT_CALLS:
+	if shift_calls >= _calls_max():
 		_show_shift_result()
 		return
 	shift_calls += 1
@@ -930,6 +972,8 @@ func _next_call() -> void:
 	dictated_card = ""
 	pinned_card_btn.hide()
 	session = CallSession.new(p)
+	call_paid = false
+	_apply_upgrades(session)
 	call_rec = {"name": p["name"], "age": p["age"], "outcome": "звонок прервался", "money": 0, "lines": []}
 	shift_log.append(call_rec)
 	session.caller_spoke.connect(func(t):
@@ -946,6 +990,8 @@ func _next_call() -> void:
 	_clear_chat()
 	caller_name.text = "%s, %d" % [p["name"], p["age"]]
 	caller_info.text = "Узнал(а) о нас: " + p["source"]
+	if Upgrades.level(upgrades, "base") > 0:
+		caller_info.text += "\nБаза: денег около %s. %s" % [_rub(session.budget), p["personality"]]
 	_set_avatar(p["name"])
 	_add_note("☎ Входящий звонок...")
 	_on_trust(session.trust, 0)
@@ -953,6 +999,114 @@ func _next_call() -> void:
 	_save()
 	_set_controls()
 	session.start()
+
+
+func _calls_max() -> int:
+	return SHIFT_CALLS + Upgrades.level(upgrades, "coffee")
+
+
+func _rank_name() -> String:
+	return Upgrades.RANKS[Upgrades.rank_index(earned_total)]["name"]
+
+
+## Улучшения и ранг меняют звонок: стартовое доверие, шанс, штрафы, бюджет клиента.
+func _apply_upgrades(s: CallSession) -> void:
+	s.trust = clampi(s.trust + 6 * Upgrades.level(upgrades, "script"), 1, CallSession.MAX_TRUST)
+	s.roll_bonus = 8 * Upgrades.level(upgrades, "spoof")
+	s.neg_mult = 0.67 if Upgrades.level(upgrades, "acting") > 0 else 1.0
+	var mult: float = Upgrades.RANKS[Upgrades.rank_index(earned_total)]["mult"]
+	if Upgrades.level(upgrades, "office") > 0:
+		mult *= 1.3
+	s.budget = int(round(s.budget * mult / 500.0)) * 500
+
+
+## Жара: каждая сделка привлекает внимание. На 100 — облава.
+func _add_heat(n: int) -> void:
+	heat = clampi(heat + n, 0, 100)
+	if heat >= 80 and heat - n < 80:
+		_add_note("Жара %d%%! Полиция уже интересуется конторой. Отпустите пару клиентов без денег." % heat, C_RED, true)
+	if heat >= 100:
+		_raid()
+
+
+func _raid() -> void:
+	raids += 1
+	var fine := int(round(balance * 0.3 / 100.0)) * 100
+	balance -= fine
+	heat = 35
+	_save()
+	_update_balance()
+	var m := _modal()
+	var v: VBoxContainer = m[1]
+	v.add_child(_label("ОБЛАВА!", 56, C_RED, false, HORIZONTAL_ALIGNMENT_CENTER))
+	var l := _label("Полиция нагрянула в контору. Пока адвокаты договаривались, пришлось отдать %s (30%% со счёта).\nЖара сбита до 35%%. В следующий раз не жадничайте." % _rub(fine), 27, C_INK, true, HORIZONTAL_ALIGNMENT_CENTER)
+	l.custom_minimum_size.x = 580
+	v.add_child(l)
+	v.add_child(_big_button("Работаем дальше", C_ACCENT, func(): m[0].queue_free(), 110))
+
+
+func _show_shop() -> void:
+	var m := _modal()
+	var v: VBoxContainer = m[1]
+	v.add_child(_label("$ Магазин конторы", 42, C_ACCENT))
+	var top := _label("", 26, C_MUTED, true)
+	top.custom_minimum_size.x = 580
+	v.add_child(top)
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.custom_minimum_size = Vector2(600, 700)
+	overlay_scrolls.append(sc)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 12)
+	sc.add_child(list)
+	v.add_child(sc)
+	var holder := []  # лямбда не видит саму себя, поэтому храним её в массиве
+	var refresh := func():
+		var r := Upgrades.rank_index(earned_total)
+		var nxt := ""
+		if r + 1 < Upgrades.RANKS.size():
+			nxt = "\nДо ранга «%s»: ещё %s заработка." % [Upgrades.RANKS[r + 1]["name"], _rub(Upgrades.RANKS[r + 1]["earned"] - earned_total)]
+		top.text = "На счету %s · ранг: %s%s" % [_rub(balance), Upgrades.RANKS[r]["name"], nxt]
+		for c in list.get_children():
+			c.queue_free()
+		for u in Upgrades.LIST:
+			var lvl := Upgrades.level(upgrades, u["id"])
+			var maxl: int = u["prices"].size()
+			var card := PanelContainer.new()
+			card.add_theme_stylebox_override("panel", _box(Color("fff8ea"), 24, 22))
+			var cv := VBoxContainer.new()
+			cv.add_theme_constant_override("separation", 6)
+			card.add_child(cv)
+			var head := _label(u["name"] + ("  ур. %d/%d" % [lvl, maxl] if maxl > 1 else ""), 29, C_INK, true)
+			cv.add_child(head)
+			cv.add_child(_label(u["desc"], 23, C_MUTED, true))
+			var b: Button
+			if lvl >= maxl:
+				b = _big_button("✔ Куплено", Color("b9bccb"), Callable(), 76)
+				b.disabled = true
+			elif r < u["rank"]:
+				b = _big_button("Нужен ранг «%s»" % Upgrades.RANKS[u["rank"]]["name"], Color("b9bccb"), Callable(), 76)
+				b.disabled = true
+			else:
+				var price: int = u["prices"][lvl]
+				var id: String = u["id"]
+				b = _big_button("Купить за " + _rub(price), C_GREEN if balance >= price else Color("b9bccb"), func():
+					if balance < price:
+						return
+					balance -= price
+					upgrades[id] = lvl + 1
+					_save()
+					_update_balance()
+					holder[0].call(), 76)
+			b.add_theme_font_size_override("font_size", 25)
+			cv.add_child(b)
+			list.add_child(card)
+	holder.append(refresh)
+	refresh.call()
+	v.add_child(_big_button("Закрыть", C_MUTED, func():
+		m[0].queue_free()
+		_refresh_menu(), 96))
 
 
 ## Пока идёт звонок, нейронка придумывает следующего клиента.
@@ -991,7 +1145,7 @@ func _set_controls() -> void:
 	mic_btn.disabled = not (talking or recorder.recording)
 	hang_btn.disabled = not live
 	terminal_btn.text = "▤ Терминал ●" if dictated_card != "" else "▤ Терминал"
-	var last := shift_calls >= SHIFT_CALLS
+	var last := shift_calls >= _calls_max()
 	next_btn.text = ("★ Итоги" if last else "☎ Дальше") if not live else ("★ Итоги" if last else "☎ Дальше")
 	_paint_button(next_btn, C_GREEN if (not live and session != null) else C_YELLOW)
 	if mic_icon:
@@ -1111,19 +1265,26 @@ func _on_call_ended(reason: String) -> void:
 	var msg := {"hung_up": "Клиент бросил трубку.", "operator": "Вы положили трубку.", "card_given": "Звонок завершён."}
 	var log_msg := {"hung_up": "клиент бросил трубку", "operator": "оператор положил трубку"}
 	_finish_record(log_msg.get(reason, "звонок завершён"))
+	if not call_paid:
+		heat = maxi(0, heat - 3)  # пустой звонок: полиция понемногу забывает о нас
+		_update_balance()
 	if recorder.recording:
 		recorder.stop()
 	input.release_focus()
-	_add_note(msg.get(reason, "Звонок завершён.") + ("  Жмите «Итоги»." if shift_calls >= SHIFT_CALLS else "  Жмите «Дальше»."), C_INK, true)
+	_add_note(msg.get(reason, "Звонок завершён.") + ("  Жмите «Итоги»." if shift_calls >= _calls_max() else "  Жмите «Дальше»."), C_INK, true)
 	_set_controls()
 
 
 func _update_balance() -> void:
 	balance_label.text = _rub(balance)
-	deals_label.text = "Смена %d · звонок %d из %d" % [shift, shift_calls, SHIFT_CALLS]
+	deals_label.text = _rank_name() + " · смена %d · звонок %d из %d" % [shift, shift_calls, _calls_max()]
 	quota_label.text = "план %s / %s" % [_rub(shift_earned), _rub(quota)]
 	quota_bar.max_value = quota
 	quota_bar.value = mini(shift_earned, quota)
+	heat_bar.value = heat
+	heat_label.text = "Жара %d%%" % heat
+	var hcol := Color("ffe08a") if heat < 50 else (Color("ffb04a") if heat < 80 else Color("2b0d0d"))
+	(heat_bar.get_theme_stylebox("fill") as StyleBoxFlat).bg_color = hcol
 
 
 ## 12500 -> «12 500 ₽»
@@ -1163,6 +1324,7 @@ func _show_shift_result() -> void:
 	dots.tween_property(wait, "modulate:a", 1.0, 0.5)
 
 	var log_copy := shift_log.duplicate(true)
+	heat = maxi(0, heat - 15)
 	# Сразу закрываем смену в сохранении, чтобы итог не потерялся при выходе.
 	if ok:
 		shift += 1
@@ -1177,6 +1339,7 @@ func _show_shift_result() -> void:
 		dim.queue_free()
 		_clear_chat()
 		_next_call(), 120))
+	v.add_child(_big_button("$ Магазин", C_ACCENT, _show_shop, 90))
 	v.add_child(_big_button("В меню", C_MUTED, func():
 		dim.queue_free()
 		_clear_chat()

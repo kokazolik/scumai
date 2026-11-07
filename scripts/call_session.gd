@@ -40,6 +40,8 @@ var card_given := false
 var last_operator_line := ""
 var agreed_price := 0  # сколько клиент согласился заплатить, ₽
 var budget := 0        # сколько у клиента примерно есть денег, ₽
+var roll_bonus := 0      # улучшения: прибавка к шансу карты и перевода, %
+var neg_mult := 1.0      # улучшения: доля штрафа доверия, которая доходит до клиента
 var offered_max := 0     # самая большая цена, которую оператор называл за звонок
 var paid := false        # деньги уже получены (карта списана или перевод)
 var _card_answer := ""
@@ -162,9 +164,9 @@ func say(text: String) -> void:
 		if agreed_price <= 0:
 			_transfer_answer = "no_price"
 		else:
-			_transfer_answer = "agree" if randi() % 100 < trust else "refuse"  # шанс = доверие в %
+			_transfer_answer = "agree" if randi() % 100 < trust + roll_bonus else "refuse"  # шанс = доверие в %
 	elif not card_given and not paid and asks_for_card(text):
-		_card_answer = "agree" if randi() % 100 < trust else "refuse"  # шанс = доверие в %
+		_card_answer = "agree" if randi() % 100 < trust + roll_bonus else "refuse"  # шанс = доверие в %
 	await _ask_model(true)
 	if not active:
 		return
@@ -284,6 +286,8 @@ func _ask_model(apply_trust: bool) -> void:
 		var delta: int = d["trust_delta"]
 		if _card_answer != "" or _transfer_answer != "":
 			delta = 0  # просьбу о карте решает бросок, а не оценка модели
+		if delta < 0:
+			delta = mini(-1, int(round(delta * neg_mult)))
 		if is_gibberish(last_operator_line) and delta > -10:
 			delta = -10  # «бе-бе-бе» никогда не вызывает доверия
 		_set_trust(delta)
