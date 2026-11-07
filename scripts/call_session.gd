@@ -4,12 +4,15 @@ extends RefCounted
 ## Модель после каждой реплики игрока возвращает ответ и изменение доверия.
 ## Если игрок в реплике просит номер карты, согласие решает не модель,
 ## а бросок по шкале доверия. Модель лишь озвучивает решение.
+## Модель также сообщает, на какую сумму клиент согласился (agreed_price),
+## и может в любой момент бросить трубку (hang_up).
 
 signal caller_spoke(text: String)
 signal trust_changed(value: int, delta: int)
 signal thinking(is_thinking: bool)
 signal call_ended(reason: String)  # "hung_up" | "card_given" | "operator"
 signal card_dictated(card: String)
+signal price_agreed(rub: int)
 
 const MAX_TRUST := 100
 const REFUSE_PENALTY := 10
@@ -24,6 +27,8 @@ var active := true
 var busy := false
 var card_given := false
 var last_operator_line := ""
+var agreed_price := 0  # сколько клиент согласился заплатить, ₽
+var budget := 0        # сколько у клиента примерно есть денег, ₽
 var _card_answer := ""  # "agree" | "refuse" | "" на текущий ход
 
 
@@ -31,6 +36,7 @@ func _init(p: Dictionary) -> void:
 	profile = p
 	trust = randi_range(START_TRUST_MIN, START_TRUST_MAX)  # каждый звонок — случайное небольшое доверие
 	card_number = Callers.fake_card()
+	budget = randi_range(4, 40) * 500  # от 2 000 до 20 000 ₽
 
 
 func _system_prompt() -> String:
@@ -49,9 +55,16 @@ func _system_prompt() -> String:
 - оператор отлично попал в твой характер и интересы: от +12 до +20.
 Никогда сам не называй номер карты.
 
+Деньги: у тебя есть примерно %d рублей, больше ты заплатить не можешь. Суммы до половины этого тебя не пугают, дороже ты торгуешься или сомневаешься.
+Сейчас договорённая сумма: %s.
+agreed_price: если в этой реплике оператор назвал цену и ты на неё СОГЛАСЕН(НА), поставь эту сумму в рублях. Если согласен(на) на меньшую, поставь её. Иначе 0.
+
+Ты живой человек и можешь закончить разговор, когда захочешь: если тебя оскорбили, если стало подозрительно или скучно, если разговор зашёл в тупик. Тогда скажи что угодно (или ничего) и поставь hang_up: true. Не бросай трубку без причины.
+
 Ответь ТОЛЬКО JSON-объектом, без пояснений:
-{"reply": "реплика персонажа на грамотном русском, 1-3 предложения", "trust_delta": целое число от -20 до 20}""" % [
-		profile["name"], profile["age"], profile["source"], profile["reason"], profile["personality"], trust]
+{"reply": "реплика персонажа на грамотном русском, 1-3 предложения (может быть пустой, если бросаешь трубку молча)", "trust_delta": целое число от -20 до 20, "agreed_price": целое число, "hang_up": true или false}""" % [
+		profile["name"], profile["age"], profile["source"], profile["reason"], profile["personality"], trust,
+		budget, ("%d рублей" % agreed_price) if agreed_price > 0 else "пока нет"]
 
 
 func _messages() -> Array:
@@ -68,7 +81,7 @@ func _set_trust(delta: int) -> void:
 	trust = clampi(trust + delta, 0, MAX_TRUST)
 	trust_changed.emit(trust, trust - old)
 	if trust <= 0 and active:
-		_end("hung_up", "Всё, я кладу трубку. Мошенники!")
+		_end("hung_up")  # доверие кончилось: клиент молча кладёт трубку
 
 
 func _end(reason: String, last_line := "") -> void:
@@ -85,8 +98,14 @@ static func parse_reply(raw: String) -> Dictionary:
 	if a != -1 and b > a:
 		var d = JSON.parse_string(raw.substr(a, b - a + 1))
 		if d is Dictionary and d.has("reply"):
-			return {"reply": str(d["reply"]), "trust_delta": clampi(int(d.get("trust_delta", 0)), -20, 20)}
-	return {"reply": raw.strip_edges(), "trust_delta": 0}
+			var hang = d.get("hang_up", false)
+			return {
+				"reply": str(d["reply"]).strip_edges(),
+				"trust_delta": clampi(int(d.get("trust_delta", 0)), -20, 20),
+				"agreed_price": maxi(0, int(d.get("agreed_price", 0))),
+				"hang_up": hang == true or str(hang).to_lower() == "true",
+			}
+	return {"reply": raw.strip_edges(), "trust_delta": 0, "agreed_price": 0, "hang_up": false}
 
 
 ## Клиент начинает разговор сам (он же позвонил).
@@ -158,8 +177,15 @@ func _ask_model(apply_trust: bool) -> void:
 		history.pop_back()
 		return
 	var d := parse_reply(res["text"])
-	history.append({"role": "assistant", "content": d["reply"]})
-	caller_spoke.emit(d["reply"])
+	history.append({"role": "assistant", "content": d["reply"] if d["reply"] != "" else "(молчит)"})
+	if d["reply"] != "":
+		caller_spoke.emit(d["reply"])
+	if apply_trust and d["agreed_price"] > 0 and d["agreed_price"] <= budget and d["agreed_price"] != agreed_price:
+		agreed_price = d["agreed_price"]
+		price_agreed.emit(agreed_price)
+	if apply_trust and d["hang_up"] and _card_answer != "agree":
+		_end("hung_up")
+		return
 	if apply_trust:
 		var delta: int = d["trust_delta"]
 		if _card_answer != "":

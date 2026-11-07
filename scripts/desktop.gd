@@ -5,7 +5,9 @@ extends Control
 ## Платёжный терминал выезжает отдельным экраном поверх звонка.
 ## Весь интерфейс собирается кодом.
 
-const CHARGE := 200
+const SHIFT_CALLS := 8       # звонков в смене
+const FIRST_QUOTA := 15000   # план первой смены, ₽
+const QUOTA_GROWTH := 1.3    # на сколько растёт план каждую выполненную смену
 const INPUT_MIN_H := 100
 const INPUT_MAX_H := 200
 
@@ -25,6 +27,12 @@ const C_ME_BUBBLE := Color("ffe2d6")
 
 var balance := 0
 var deals := 0
+var shift := 1
+var quota := FIRST_QUOTA
+var shift_earned := 0
+var shift_calls := 0
+var quota_bar: ProgressBar
+var charge_btn: Button
 var caller_index := 0
 var caller_order: Array = []
 var main_margin: MarginContainer
@@ -234,8 +242,20 @@ func _build_header() -> Control:
 	deals_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	v.add_child(deals_label)
 	h.add_child(v)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 6)
+	outer.add_child(h)
+	quota_bar = ProgressBar.new()
+	quota_bar.show_percentage = false
+	quota_bar.custom_minimum_size.y = 18
+	quota_bar.add_theme_stylebox_override("fill", _box(C_GREEN, 9, 0))
+	quota_bar.add_theme_stylebox_override("background", _box(Color("ece6d3"), 9, 0))
+	v.remove_child(deals_label)
+	deals_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	outer.add_child(deals_label)
+	outer.add_child(quota_bar)
 	_update_balance()
-	return h
+	return outer
 
 
 func _build_caller_card() -> Control:
@@ -381,7 +401,8 @@ func _build_terminal() -> Control:
 	row.add_child(paste_btn)
 	v.add_child(row)
 
-	v.add_child(_big_button("Списать $%d" % CHARGE, C_GREEN, _on_charge, 130))
+	charge_btn = _big_button("Списать", C_GREEN, _on_charge, 130)
+	v.add_child(charge_btn)
 
 	term_result = Label.new()
 	term_result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -395,10 +416,12 @@ func _build_terminal() -> Control:
 
 func _open_terminal() -> void:
 	term_result.text = ""
-	if dictated_card != "":
-		term_hint.text = "Клиент прислал: " + dictated_card
-	else:
-		term_hint.text = "Сначала уговорите клиента прислать номер карты."
+	var price: int = session.agreed_price if session else 0
+	var lines := []
+	lines.append(("Клиент прислал: " + dictated_card) if dictated_card != "" else "Клиент ещё не прислал номер карты.")
+	lines.append(("Договорились на " + _rub(price)) if price > 0 else "Цена ещё не согласована: назовите клиенту сумму.")
+	term_hint.text = "\n".join(lines)
+	charge_btn.text = ("Списать " + _rub(price)) if price > 0 else "Списать"
 	terminal.show()
 	card_input.grab_focus()
 
@@ -430,16 +453,21 @@ func _on_charge() -> void:
 	if digits.length() != 16:
 		_term_says("Нужно 16 цифр.", C_RED)
 		return
-	if dictated_card != "" and digits == dictated_card.replace(" ", ""):
-		balance += CHARGE
-		deals += 1
-		dictated_card = ""
-		_update_balance()
-		card_input.text = ""
-		_term_says("✔ Операция одобрена. Списано $%d." % CHARGE, C_GREEN)
-		_set_controls()
-	else:
+	if dictated_card == "" or digits != dictated_card.replace(" ", ""):
 		_term_says("✖ Операция отклонена: карта не найдена.", C_RED)
+		return
+	var price: int = session.agreed_price
+	if price <= 0:
+		_term_says("✖ Клиент не соглашался ни на какую сумму. Договоритесь о цене.", C_RED)
+		return
+	balance += price
+	shift_earned += price
+	deals += 1
+	dictated_card = ""
+	_update_balance()
+	card_input.text = ""
+	_term_says("✔ Операция одобрена. Списано %s." % _rub(price), C_GREEN)
+	_set_controls()
 
 
 func _term_says(t: String, c: Color) -> void:
@@ -452,6 +480,12 @@ func _term_says(t: String, c: Color) -> void:
 func _next_call() -> void:
 	if session and session.active:
 		session.hang_up()
+	_close_terminal()
+	if shift_calls >= SHIFT_CALLS:
+		_show_shift_result()
+		return
+	shift_calls += 1
+	_update_balance()
 	if caller_order.is_empty():
 		caller_order = Callers.LIST.duplicate()
 		caller_order.shuffle()
@@ -464,6 +498,7 @@ func _next_call() -> void:
 	session.thinking.connect(_on_thinking)
 	session.call_ended.connect(_on_call_ended)
 	session.card_dictated.connect(_on_card_dictated)
+	session.price_agreed.connect(func(rub): _add_note("Клиент согласен заплатить " + _rub(rub), C_GREEN))
 	for c in chat_list.get_children():
 		c.queue_free()
 	caller_name.text = "%s, %d" % [p["name"], p["age"]]
@@ -583,8 +618,62 @@ func _on_call_ended(reason: String) -> void:
 
 
 func _update_balance() -> void:
-	balance_label.text = "$%d" % balance
-	deals_label.text = "сделок: %d" % deals
+	balance_label.text = _rub(balance)
+	deals_label.text = "Смена %d · план %s / %s · звонок %d из %d" % [shift, _rub(shift_earned), _rub(quota), shift_calls, SHIFT_CALLS]
+	quota_bar.max_value = quota
+	quota_bar.value = mini(shift_earned, quota)
+
+
+## 12500 -> «12 500 ₽»
+static func _rub(n: int) -> String:
+	var s := str(absi(n))
+	var out := ""
+	for i in s.length():
+		if i > 0 and (s.length() - i) % 3 == 0:
+			out += " "
+		out += s[i]
+	return ("-" if n < 0 else "") + out + " ₽"
+
+
+## Итог смены: план выполнен — следующая смена с планом побольше,
+## не выполнен — смена начинается заново с тем же планом.
+func _show_shift_result() -> void:
+	var ok := shift_earned >= quota
+	var dim := ColorRect.new()
+	dim.color = Color(0.12, 0.13, 0.25, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.add_child(center)
+	var card := _card()
+	card.custom_minimum_size = Vector2(640, 0)
+	center.add_child(card)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 22)
+	card.add_child(v)
+	var t := Label.new()
+	t.text = "ПЛАН ВЫПОЛНЕН!" if ok else "ПЛАН ПРОВАЛЕН"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 48)
+	t.add_theme_color_override("font_color", C_GREEN if ok else C_RED)
+	v.add_child(t)
+	var info := Label.new()
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info.custom_minimum_size.x = 580
+	var next_quota := int(round(quota * QUOTA_GROWTH / 500.0)) * 500 if ok else quota
+	info.text = "Смена %d: заработано %s из %s.\n%s" % [shift, _rub(shift_earned), _rub(quota),
+		("Следующий план: " + _rub(next_quota)) if ok else "Начальник недоволен. Смена начинается заново."]
+	v.add_child(info)
+	v.add_child(_big_button("Начать смену %d" % (shift + 1 if ok else shift), C_GREEN if ok else C_ACCENT, func():
+		if ok:
+			shift += 1
+			quota = next_quota
+		shift_earned = 0
+		shift_calls = 0
+		dim.queue_free()
+		_next_call(), 130))
 
 
 # ---------- ввод и клавиатура ----------
