@@ -24,7 +24,25 @@ func _ready() -> void:
 		if cfg.load("user://secrets.cfg") == OK:
 			api_key = str(cfg.get_value("openrouter", "api_key", ""))
 	if api_key.is_empty():
+		api_key = _embedded_key()
+	if api_key.is_empty():
 		push_warning("OpenRouter: ключ не найден (OPENROUTER_API_KEY или user://secrets.cfg)")
+
+
+## Ключ, вшитый при сборке APK (файл scripts/embedded_key.gd не хранится в git).
+## Он лишь слегка спрятан (XOR), из APK его всё равно можно достать,
+## поэтому для сборки нужен отдельный ключ с лимитом трат.
+func _embedded_key() -> String:
+	var path := "res://scripts/embedded_key.gd"
+	if not ResourceLoader.exists(path):
+		return ""
+	var k = load(path)
+	var data: Array = k.DATA
+	var mask: Array = k.MASK
+	var out := PackedByteArray()
+	for i in data.size():
+		out.append(int(data[i]) ^ int(mask[i % mask.size()]))
+	return out.get_string_from_utf8()
 
 
 ## Сохраняет ключ, введённый в игре, в user://secrets.cfg (на телефоне это личная папка приложения).

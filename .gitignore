@@ -4,3 +4,4 @@ build/
 *.apk
 *.idsig
 !apk/*.apk
+scripts/embedded_key.gd

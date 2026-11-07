@@ -90,8 +90,8 @@ func _ask_model(apply_trust: bool) -> void:
 	busy = true
 	thinking.emit(true)
 	var res: Dictionary = await LLM.chat(_messages(), 0.7)
+	busy = false  # до сигнала: интерфейс по нему включает кнопки
 	thinking.emit(false)
-	busy = false
 	if not active:
 		return
 	if not res["ok"]:
