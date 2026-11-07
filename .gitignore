@@ -3,3 +3,4 @@ secrets.cfg
 build/
 *.apk
 *.idsig
+!apk/*.apk
