@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.8"
+const VERSION := "0.9"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -92,9 +92,7 @@ var menu_stats: Label
 var menu_play_btn: Button
 var overlay_scrolls: Array = []  # прокрутки поверх звонка, их тоже тянем пальцем
 
-# Голос
-var recorder: VoiceRecorder
-var transcribing := false
+var voice_hint_shown := false
 
 
 func _ready() -> void:
@@ -130,11 +128,6 @@ func _ready() -> void:
 	add_child(terminal)
 	terminal.hide()
 
-	recorder = VoiceRecorder.new()
-	add_child(recorder)
-	get_tree().on_request_permissions_result.connect(func(perm: String, granted: bool):
-		if perm.ends_with("RECORD_AUDIO") and granted:
-			_add_note("Микрофон разрешён. Нажмите кнопку с микрофоном ещё раз.", C_BLUE))
 
 	_update_balance()
 	_set_controls()
@@ -459,7 +452,7 @@ func _show_help() -> void:
 • Или продиктуй наш номер для перевода: деньги придут сами.
 • Списать можно только ту сумму, на которую клиент согласился.
 • Клиент может бросить трубку в любой момент.
-• Кнопка с микрофоном: нажми, скажи реплику, нажми ещё раз. Она отправится сама.
+• Кнопка с микрофоном открывает клавиатуру: нажми на ней микрофон и диктуй, это бесплатно.
 • В конце смены вспомним самые смешные моменты."""
 	var l := _label(text, 27, C_INK, true)
 	l.custom_minimum_size.x = 580
@@ -602,7 +595,7 @@ func _build_caller_card() -> Control:
 	nv.add_theme_constant_override("separation", 2)
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(nv)
-	caller_name = _label("Ждём звонка", 34)
+	caller_name = _label("Ждём звонка", 32, C_INK, true)
 	nv.add_child(caller_name)
 	caller_info = _label("", 23, C_MUTED, true)
 	nv.add_child(caller_info)
@@ -888,8 +881,6 @@ func _clear_chat() -> void:
 
 
 func _next_call() -> void:
-	if recorder and recorder.recording:
-		recorder.stop()
 	_drop_session()
 	_close_terminal()
 	if shift_calls >= SHIFT_CALLS:
@@ -968,17 +959,17 @@ func _finish_record(outcome: String) -> void:
 
 func _set_controls() -> void:
 	var live := session != null and session.active
-	var talking := live and not session.busy and not transcribing
+	var talking := live and not session.busy
 	input.editable = talking
 	send_btn.disabled = not talking
-	mic_btn.disabled = not (talking or (recorder and recorder.recording))
+	mic_btn.disabled = not talking
 	hang_btn.disabled = not live
 	terminal_btn.text = "▤ Терминал ●" if dictated_card != "" else "▤ Терминал"
 	var last := shift_calls >= SHIFT_CALLS
 	next_btn.text = ("★ Итоги" if last else "☎ Дальше") if not live else ("★ Итоги" if last else "☎ Дальше")
 	_paint_button(next_btn, C_GREEN if (not live and session != null) else C_YELLOW)
 	if mic_icon:
-		mic_icon.queue_redraw()
+		mic_icon.modulate.a = 0.6 if mic_btn.disabled else 1.0
 
 
 func _scroll_down() -> void:
@@ -1003,7 +994,9 @@ func _add_bubble(who: String, text: String, mine: bool) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 2)
 	bubble.add_child(v)
-	v.add_child(_label(who, 21, C_ACCENT if mine else C_BLUE))
+	var who_l := _label(who, 21, C_ACCENT if mine else C_BLUE)
+	who_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	v.add_child(who_l)
 	v.add_child(_label(text, 28, C_INK, true))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1090,8 +1083,6 @@ func _on_call_ended(reason: String) -> void:
 	var msg := {"hung_up": "Клиент бросил трубку.", "operator": "Вы положили трубку.", "card_given": "Звонок завершён."}
 	var log_msg := {"hung_up": "клиент бросил трубку", "operator": "оператор положил трубку"}
 	_finish_record(log_msg.get(reason, "звонок завершён"))
-	if recorder.recording:
-		recorder.stop()
 	input.release_focus()
 	_add_note(msg.get(reason, "Звонок завершён.") + ("  Жмите «Итоги»." if shift_calls >= SHIFT_CALLS else "  Жмите «Дальше»."), C_INK, true)
 	_set_controls()
@@ -1184,41 +1175,19 @@ func _show_shift_result() -> void:
 
 # ---------- голос ----------
 
+## Голос: бесплатное распознавание самой клавиатуры (Google и др.).
+## Открываем клавиатуру, игрок жмёт на ней микрофон и диктует, текст сам
+## попадает в поле ввода. Платная нейронка для звука не нужна.
 func _on_mic() -> void:
-	if recorder.recording:
-		var wav := recorder.stop()
-		_set_controls()
-		if wav.size() < 44 + 16000:  # меньше полсекунды
-			_add_note("Слишком коротко. Нажмите микрофон, скажите фразу и нажмите ещё раз.", C_MUTED)
-			return
-		if VoiceRecorder.peak(wav) < 0.01:
-			_add_note("Ничего не слышно. Проверьте, что микрофон разрешён.", C_RED)
-			return
-		transcribing = true
-		status_label.text = "Распознаю голос…"
-		_set_controls()
-		var res: Dictionary = await LLM.transcribe(wav)
-		transcribing = false
-		status_label.text = ""
-		_set_controls()
-		if not res["ok"]:
-			_add_note("Голос не распознан: " + str(res["error"]), C_RED)
-			return
-		var t: String = res["text"].replace("\n", " ").strip_edges()
-		if t.is_empty():
-			_add_note("Речь не разобрать. Попробуйте ещё раз.", C_MUTED)
-			return
-		_say(t)
-		return
 	if session == null or not session.active or session.busy:
 		return
-	if not VoiceRecorder.has_permission():
-		VoiceRecorder.ask_permission()
-		_add_note("Разрешите доступ к микрофону.", C_BLUE)
-		return
-	input.release_focus()
-	recorder.start()
-	_set_controls()
+	input.grab_focus()
+	if DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+		DisplayServer.virtual_keyboard_show(input.text, Rect2(), DisplayServer.KEYBOARD_TYPE_MULTILINE)
+	if not voice_hint_shown:
+		voice_hint_shown = true
+		_add_note("Нажмите значок микрофона на клавиатуре и говорите. Текст появится в поле, потом жмите ➤.", C_PURPLE, true)
+	status_label.text = "Диктуйте через микрофон на клавиатуре"
 
 
 # ---------- ввод и клавиатура ----------
@@ -1234,17 +1203,6 @@ func _on_input_changed() -> void:
 
 
 func _process(_delta: float) -> void:
-	if recorder and recorder.recording:
-		var s := int(recorder.elapsed())
-		status_label.text = "● Запись %d:%02d · нажмите микрофон, чтобы отправить" % [s / 60, s % 60]
-		status_label.add_theme_color_override("font_color", C_RED)
-		mic_icon.queue_redraw()
-		if recorder.elapsed() > VoiceRecorder.MAX_SECONDS:
-			_on_mic()
-	elif status_label.get_theme_color("font_color") != C_MUTED:
-		status_label.add_theme_color_override("font_color", C_MUTED)
-		if status_label.text.begins_with("●"):
-			status_label.text = ""
 	_follow_keyboard()
 
 
@@ -1299,26 +1257,14 @@ func _input(event: InputEvent) -> void:
 ## Значок микрофона, нарисованный вручную (эмодзи на телефонах показываются квадратиками).
 class MicIcon extends Control:
 	func _draw() -> void:
-		var btn := get_parent() as Button
-		var rec := false
-		var d = btn.get_parent().get_parent().get_parent().get_parent() if btn else null
-		if d and d.get("recorder") and d.recorder.recording:
-			rec = true
 		var c := size / 2.0
-		var col := Color.WHITE if not (btn and btn.disabled) else Color("f4f4f8")
-		if rec:
-			var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 160.0)
-			draw_circle(c, 34 + 4 * pulse, Color(1, 1, 1, 0.25))
-			draw_rect(Rect2(c - Vector2(14, 14), Vector2(28, 28)), Color.WHITE)
-			return
-		# капсула
+		var col := Color.WHITE
 		var w := 22.0
 		var hh := 34.0
 		var top := c + Vector2(0, -24)
 		draw_circle(top + Vector2(0, w / 2), w / 2, col)
 		draw_rect(Rect2(top.x - w / 2, top.y + w / 2, w, hh - w), col)
 		draw_circle(top + Vector2(0, hh - w / 2), w / 2, col)
-		# дужка и ножка
 		draw_arc(c + Vector2(0, -2), 20, 0.15, PI - 0.15, 24, col, 4.0, true)
 		draw_line(c + Vector2(0, 18), c + Vector2(0, 28), col, 4.0)
 		draw_line(c + Vector2(-12, 28), c + Vector2(12, 28), col, 4.0)

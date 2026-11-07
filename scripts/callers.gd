@@ -150,7 +150,7 @@ static func generate(parody: bool, avoid: Array) -> Dictionary:
 Характер должен намекать, на что он может повестись и что его насторожит.
 Не повторяй этих персонажей: %s.
 Ответь строго JSON без пояснений:
-{"name":"имя (можно с отчеством или прозвищем)","age":число,"source":"откуда узнал номер, одной фразой","reason":"зачем звонит, одной фразой","personality":"характер и слабые места, 1-2 фразы"}""" % [kind, ", ".join(avoid.slice(-12))]
+{"name":"имя, коротко, до 25 символов, без скобок и пояснений","age":число,"source":"откуда узнал номер, одной фразой","reason":"зачем звонит, одной фразой","personality":"характер и слабые места, 1-2 фразы"}""" % [kind, ", ".join(avoid.slice(-12))]
 	var res: Dictionary = await LLM.chat([
 		{"role": "system", "content": sys},
 		{"role": "user", "content": "Новый звонящий. Случайное число для разнообразия: %d" % randi()},
@@ -168,6 +168,9 @@ static func generate(parody: bool, avoid: Array) -> Dictionary:
 	for k in ["name", "source", "reason", "personality"]:
 		if str(d.get(k, "")).strip_edges() == "":
 			return {}
-	return {"name": str(d["name"]).substr(0, 40), "age": clampi(int(d.get("age", 40)), 7, 999),
+	var nm := str(d["name"]).split("(")[0].split(",")[0].strip_edges()
+	if nm.length() > 30:
+		nm = nm.substr(0, 30).strip_edges()
+	return {"name": nm, "age": clampi(int(d.get("age", 40)), 7, 999),
 		"source": str(d["source"]), "reason": str(d["reason"]), "personality": str(d["personality"]),
 		"generated": true}
