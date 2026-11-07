@@ -12,6 +12,8 @@ extends Node
 
 const API_URL := "https://openrouter.ai/api/v1/chat/completions"
 const MODEL := "google/gemma-4-26b-a4b-it"
+## Модель, которая понимает звук: ей отправляем запись голоса и получаем текст.
+const STT_MODEL := "google/gemini-2.5-flash-lite"
 const RETRY_CODES := [429, 500, 502, 503, 504]
 
 var api_key := ""
@@ -56,12 +58,12 @@ func save_key(key: String) -> void:
 
 ## Отправляет сообщения и возвращает {"ok": bool, "text": String, "error": String}.
 ## Использование: var res = await LLM.chat([{"role": "user", "content": "Привет"}])
-func chat(messages: Array, temperature := 0.8, max_tokens := 400, retries := 3) -> Dictionary:
+func chat(messages: Array, temperature := 0.8, max_tokens := 400, retries := 3, model := MODEL) -> Dictionary:
 	if api_key.is_empty():
 		return {"ok": false, "text": "", "error": "Нет API-ключа OpenRouter"}
 
 	var body := JSON.stringify({
-		"model": MODEL,
+		"model": model,
 		"messages": messages,
 		"temperature": temperature,
 		"max_tokens": max_tokens,
@@ -73,7 +75,7 @@ func chat(messages: Array, temperature := 0.8, max_tokens := 400, retries := 3) 
 
 	for attempt in range(retries + 1):
 		var http := HTTPRequest.new()
-		http.timeout = 30.0
+		http.timeout = 45.0
 		add_child(http)
 		var err := http.request(API_URL, headers, HTTPClient.METHOD_POST, body)
 		if err != OK:
@@ -107,3 +109,17 @@ func chat(messages: Array, temperature := 0.8, max_tokens := 400, retries := 3) 
 		return {"ok": false, "text": "", "error": msg}
 
 	return {"ok": false, "text": "", "error": "Не удалось получить ответ"}
+
+
+## Распознаёт речь: принимает WAV и возвращает {"ok", "text", "error"}.
+func transcribe(wav: PackedByteArray) -> Dictionary:
+	var msgs := [{"role": "user", "content": [
+		{"type": "text", "text": "Распиши дословно, что говорится в этой записи, по-русски. Верни только сам текст без кавычек и пояснений. Если речи нет, верни пустую строку."},
+		{"type": "input_audio", "input_audio": {"data": Marshalls.raw_to_base64(wav), "format": "wav"}},
+	]}]
+	var res := await chat(msgs, 0.0, 300, 1, STT_MODEL)
+	if res["ok"]:
+		res["text"] = str(res["text"]).strip_edges().trim_prefix("\"").trim_suffix("\"")
+	elif "402" in str(res["error"]) or "balance" in str(res["error"]):
+		res["error"] = "Для голоса на счёте OpenRouter нужно хотя бы $0.50"
+	return res
