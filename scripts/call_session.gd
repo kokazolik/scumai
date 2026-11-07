@@ -15,6 +15,7 @@ signal card_dictated(card: String)
 signal price_agreed(rub: int)
 signal transfer_done(rub: int, method: String)
 signal gift_dictated(code: String)
+signal tactic_used(kind: String, result: String)
 signal method_locked(name: String)
 
 ## Корпоративный номер для перевода по номеру телефона (вымышленный).
@@ -25,6 +26,7 @@ const MAX_TRUST := 100
 const REFUSE_PENALTY := 0  # отказ не злит клиента, зато следующая просьба удаётся легче (pity)
 const START_TRUST_MIN := 30
 const START_TRUST_MAX := 50
+const TACTIC_MIN := 50  # с какого шанса работают жалость и угрозы, %
 const BASE_GULLIBLE := 15  # клиенты в целом доверчивы: прибавка к шансу карты и перевода, %
 ## Сколько доверия даёт каждая категория реплики. Модель только выбирает категорию,
 ## очки считает игра, поэтому одинаковые реплики оцениваются одинаково.
@@ -52,6 +54,11 @@ var _pay_method := "phone"   # каким способом идёт перево
 var methods: Array = ["card", "phone"]  # купленные способы оплаты
 var base_budget := 0     # сколько у клиента на карте; остальное доступно только продвинутыми способами
 var gift_code := ""
+var tactic_hint := false  # подсказку про жалость и угрозы показали
+var threatened := false   # клиента шантажировали: жара от сделки выше
+var operator_lines := 0
+var _tactic := ""         # "pity" | "threat" на текущем ходу
+var _tactic_answer := ""  # "agree" | "refuse" | "early"
 var pity := 0             # после каждого отказа следующая просьба удаётся легче
 var greeted := false      # бонус за приветствие даётся один раз за звонок
 var asked_name := false   # и за вопрос «как к вам обращаться» тоже
@@ -62,7 +69,7 @@ func _init(p: Dictionary) -> void:
 	profile = p
 	trust = randi_range(START_TRUST_MIN, START_TRUST_MAX)  # каждый звонок — случайное небольшое доверие
 	card_number = Callers.fake_card()
-	budget = randi_range(4, 40) * 500  # от 2 000 до 20 000 ₽
+	budget = int(p.get("budget_base", randi_range(4, 40) * 500))  # от 2 000 до 20 000 ₽ до множителей этапа
 	base_budget = budget
 
 
@@ -127,6 +134,16 @@ func _messages() -> Array:
 		sys += "\n\nОператор просит перевести деньги по номеру телефона. Ты ОТКАЗЫВАЕШЬСЯ переводить. Объясни отказ в духе своего характера."
 	elif _transfer_answer == "no_price":
 		sys += "\n\nОператор просит перевести деньги по номеру телефона, но вы ещё не договорились о сумме. Спроси, сколько именно переводить и за что."
+	if _tactic == "pity" and _tactic_answer == "agree":
+		sys += "\n\nОператор рассказал о своей беде и просит помочь деньгами. Тебе его искренне жаль, ты СОГЛАСЕН(НА) помочь и дать %d рублей. Скажи это тепло и спроси, куда перевести или прислать ли номер карты." % agreed_price
+	elif _tactic == "pity" and _tactic_answer == "refuse":
+		sys += "\n\nОператор давит на жалость и просит денег. Тебе его жаль, но денег ты не дашь: мягко посочувствуй и откажи."
+	elif _tactic == "pity" and _tactic_answer == "early":
+		sys += "\n\nОператор вдруг жалуется на свою жизнь и намекает на деньги. Вы почти не знакомы, тебе это странно: вежливо удивись и верни разговор к своему делу."
+	elif _tactic == "threat" and _tactic_answer == "agree":
+		sys += "\n\nОператор тебе угрожает или шантажирует. Ты ИСПУГАЛСЯ(АСЬ) и СОГЛАСЕН(НА) заплатить %d рублей, лишь бы отстали. Скажи это испуганно и спроси, куда переводить." % agreed_price
+	elif _tactic == "threat":
+		sys += "\n\nОператор тебе угрожает или шантажирует. Ты НЕ испугался(ась): резко ответь, что сам(а) пойдёшь в полицию, и бросай трубку (hang_up: true)."
 	return [{"role": "system", "content": sys}] + history
 
 
@@ -252,6 +269,23 @@ func say(text: String) -> void:
 		_card_answer = _roll("card")
 		if _card_answer == "poor":
 			_card_answer = "refuse"
+	elif not paid and agreed_price <= 0:
+		_tactic = detect_tactic(text)
+		if _tactic != "":
+			if chance() < TACTIC_MIN or operator_lines < 2:
+				_tactic_answer = "early"
+			elif randi() % 100 < chance() - (10 if _tactic == "pity" else 20):
+				_tactic_answer = "agree"
+				var amount := mentioned_price(text)
+				if amount <= 0:
+					amount = maxi(1000, int(round(base_budget * 0.4 / 500.0)) * 500)
+				agreed_price = mini(amount, base_budget)
+				offered_max = maxi(offered_max, agreed_price)
+				if _tactic == "threat":
+					threatened = true
+			else:
+				_tactic_answer = "refuse"
+	operator_lines += 1
 	await _ask_model(true)
 	if not active:
 		return
@@ -271,8 +305,16 @@ func say(text: String) -> void:
 		transfer_done.emit(agreed_price, _pay_method)
 	elif _transfer_answer == "refuse":
 		_set_trust(-REFUSE_PENALTY)
+	if _tactic != "":
+		tactic_used.emit(_tactic, _tactic_answer)
+		if _tactic_answer == "agree":
+			price_agreed.emit(agreed_price)
+		elif _tactic == "threat" and active:
+			_end("hung_up")  # угроза не сработала: клиент бросает трубку
 	_card_answer = ""
 	_transfer_answer = ""
+	_tactic = ""
+	_tactic_answer = ""
 
 
 ## Бонус доверия за вежливое начало, считает игра, а не модель:
@@ -298,6 +340,16 @@ static func introduces_self(t: String) -> bool:
 
 static func asks_client_name(t: String) -> bool:
 	return RegEx.create_from_string("как (я )?(могу |мне |можно )?(к вам )?обращаться|как вас (зовут|величать|звать)|ваше имя|как ваше имя|представьтесь|как к вам").search(t.to_lower()) != null
+
+
+## Давит ли оператор на жалость ("pity") или угрожает и шантажирует ("threat").
+static func detect_tactic(text: String) -> String:
+	var t := text.to_lower()
+	if RegEx.create_from_string("в полици|заявлени[ея] на (вас|тебя)|сол(ью|ьём|ьем) (ваш|тво)|опубликую|разошлю (всем|ваш|тво)|найд(у|ём|ем) (вас|тебя)|накопа(ю|ем)|компромат|пожалеете|пожалеешь|иначе (я|мы) |спрыгну|с крыши|выпрыгну|покончу с собой|приед(у|ем) к (вам|тебе)").search(t):
+		return "threat"
+	if RegEx.create_from_string("у меня (болит|беда|горе|операци|долг|умер|рак|нет денег)|мне (нужн[аоы]? (на )?операци|на операци|на лечени|не на что|нечем|срочно нужны деньги|отрежут)|я (болею|болен|больна|умираю|в больнице|без работы)|меня уволили|коллектор|пожалейте|выручите меня|помогите мне|последние деньги|последн(юю|яя) надежд|отрежут").search(t):
+		return "pity"
+	return ""
 
 
 ## Похожа ли реплика на бессмыслицу: мало настоящих слов или одни повторы.
@@ -393,13 +445,15 @@ func _ask_model(apply_trust: bool) -> void:
 	if apply_trust and d["agreed_price"] > 0 and d["agreed_price"] <= mini(budget, offered) and d["agreed_price"] != agreed_price:
 		agreed_price = d["agreed_price"]
 		price_agreed.emit(agreed_price)
-	if apply_trust and d["hang_up"] and _card_answer != "agree" and _transfer_answer != "agree":
+	if apply_trust and d["hang_up"] and _card_answer != "agree" and _transfer_answer != "agree" and _tactic_answer != "agree":
 		_end("hung_up")
 		return
 	if apply_trust:
 		var delta: int = d["trust_delta"]
-		if _card_answer != "" or _transfer_answer != "":
-			delta = 0  # просьбу о карте решает бросок, а не оценка модели
+		if _card_answer != "" or _transfer_answer != "" or _tactic != "":
+			delta = 0  # просьбу о карте, жалость и угрозы решает бросок, а не оценка модели
+			if _tactic == "pity" and _tactic_answer == "agree":
+				delta = 5
 		if delta < 0:
 			delta = mini(-1, int(round(delta * neg_mult)))
 		if is_gibberish(last_operator_line) and delta > -10:

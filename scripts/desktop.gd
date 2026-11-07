@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.23"
+const VERSION := "0.24"
 const OLD_SAVE_PATH := "user://save.cfg"   # сохранение до 0.20, переносится в слот 1
 const SETTINGS_PATH := "user://settings.cfg"
 const SLOTS := 6
@@ -61,7 +61,7 @@ var heat_bar: ProgressBar
 var heat_label: Label
 var call_paid := false
 
-var caller_order: Array = []
+var waiting_caller := false  # ждём, пока нейронка придумает клиента
 var next_profile: Dictionary = {}  # следующий звонящий, которого заранее придумала нейронка
 var generating := false
 var prefetch_gen := 0  # растёт при покупке схемы: заготовленный клиент по старым схемам выбрасывается
@@ -744,6 +744,7 @@ func _show_help() -> void:
 • Списать можно только ту сумму, на которую клиент согласился.
 • Клиент может бросить трубку в любой момент.
 • Микрофон: с бесплатным ключом голоса (меню «Ключи») нажми, скажи фразу, нажми ещё раз, и она отправится. Без ключа откроется диктовка клавиатуры.
+• При шансе от 50% можно давить на жалость («у меня операция, помогите») или угрожать («солью ваши данные»). Угроза, которая не сработала, поднимает жару и клиент уходит.
 • Жара растёт с каждой сделкой. На 100% будет облава и штраф. Пустые звонки (−3%) и конец смены (−20%) её сбивают.
 • Способы оплаты из магазина (подарочные карты, криптокошелёк и дальше) позволяют брать суммы крупнее: просто предложи их клиенту в разговоре.
 • За сделки растёт уровень оператора и даются очки навыков (магазин, раздел «Навыки»).
@@ -1275,6 +1276,8 @@ func _add_money(rub: int, method := "card") -> void:
 	# Жара растёт медленнее суммы (логарифм), иначе на крупных схемах облава была бы после каждой сделки.
 	var h := (3.0 + 3.0 * log(1.0 + rub / 1000.0) / log(10.0)) * float(cur_scheme.get("heat", 1.0)) * float(Upgrades.method(method)["heat"])
 	h *= (1.0 - 0.2 * Upgrades.level(upgrades, "lawyer")) * (1.0 - 0.08 * _skill("cool"))
+	if session and session.threatened:
+		h *= 1.5  # шантаж запоминают: жара выше
 	_add_heat(int(round(h)))
 	var lvl_before := Upgrades.operator_level(deals - 1)
 	if Upgrades.operator_level(deals) > lvl_before:
@@ -1337,21 +1340,38 @@ func _next_call() -> void:
 	if shift_calls >= _calls_max():
 		_show_shift_result()
 		return
+	if waiting_caller:
+		return
+	if next_profile.is_empty():
+		# всех клиентов придумывает нейронка: если заготовки нет, ждём её
+		waiting_caller = true
+		session = null
+		_clear_chat()
+		caller_name.text = "Ищем клиента…"
+		caller_info.text = ""
+		_set_avatar("?")
+		_add_note("Нейронка придумывает следующего клиента…", C_MUTED)
+		_set_controls()
+		var tries := 0
+		var waited := 0.0
+		while next_profile.is_empty() and waited < 60.0:
+			if not generating:
+				if tries >= 3:
+					break
+				tries += 1
+				_prefetch_caller()
+			await get_tree().create_timer(0.25).timeout
+			waited += 0.25
+		waiting_caller = false
+		if next_profile.is_empty():
+			caller_name.text = "Нет связи"
+			_add_note("Не удалось придумать клиента. Проверьте интернет и ключ ИИ, потом нажмите «Дальше».", C_RED, true)
+			_set_controls()
+			return
 	shift_calls += 1
 	total_calls += 1
-	if caller_order.is_empty():
-		caller_order = Callers.LIST.duplicate()
-		caller_order.shuffle()
-	var p: Dictionary
-	if not next_profile.is_empty():
-		p = next_profile
-		next_profile = {}
-	else:
-		p = caller_order.pop_back()
-		while p["name"] in used_names and not caller_order.is_empty():
-			p = caller_order.pop_back()
-		p = p.duplicate()
-		p["scheme"] = "ads"
+	var p: Dictionary = next_profile
+	next_profile = {}
 	used_names.append(p["name"])
 	_prefetch_caller()
 	dictated_card = ""
@@ -1369,6 +1389,7 @@ func _next_call() -> void:
 		_log_line(p["name"], t)
 		_add_bubble(p["name"], t, false))
 	session.trust_changed.connect(_on_trust)
+	session.tactic_used.connect(_on_tactic)
 	session.thinking.connect(_on_thinking)
 	session.call_ended.connect(_on_call_ended)
 	session.card_dictated.connect(_on_card_dictated)
@@ -1406,11 +1427,16 @@ func _apply_upgrades(s: CallSession) -> void:
 	s.trust = clampi(s.trust + 5 * Upgrades.level(upgrades, "script") + 3 * _skill("charm"), 1, CallSession.MAX_TRUST)
 	s.roll_bonus = 5 * Upgrades.level(upgrades, "spoof") + 3 * _skill("persuade")
 	s.neg_mult = (1.0 - 0.2 * Upgrades.level(upgrades, "acting")) * (1.0 - 0.08 * _skill("patience"))
+	s.budget = int(round(s.budget * _budget_mult(cur_scheme) / 500.0)) * 500
+
+
+## Во сколько раз клиент богаче стартового: ранг, офис, торг и схемы (они складываются).
+func _budget_mult(sch: Dictionary) -> float:
 	var mult: float = Upgrades.RANKS[Upgrades.rank_index(earned_total)]["mult"]
 	mult *= 1.0 + 0.15 * Upgrades.level(upgrades, "office")
 	mult *= 1.0 + 0.05 * _skill("bargain")
-	mult *= float(cur_scheme.get("mult", 1.0)) * (1.0 + 0.025 * (schemes.size() - 1))  # схемы складываются
-	s.budget = int(round(s.budget * mult / 500.0)) * 500
+	mult *= float(sch.get("mult", 1.0)) * (1.0 + 0.025 * (schemes.size() - 1))
+	return mult
 
 
 func _skill(id: String) -> int:
@@ -1949,17 +1975,19 @@ func _prefetch_caller() -> void:
 		return
 	generating = true
 	var avoid := used_names.duplicate()
-	for c in Callers.LIST:
-		avoid.append(c["name"])
 	var gen := prefetch_gen
 	var sch := Upgrades.pick_scheme(schemes)
-	var p: Dictionary = await Callers.generate(randf() < 0.35, avoid, sch["premise"])
+	# деньги клиента зависят от этапа игры: ранг, схема, улучшения. Нейронка подгоняет под них образ.
+	var base := randi_range(4, 40) * 500
+	var wallet := int(round(base * _budget_mult(sch) / 500.0)) * 500
+	var p: Dictionary = await Callers.generate(randf() < 0.3, avoid, Upgrades.premise_for(sch), Upgrades.rank_index(earned_total), wallet)
 	generating = false
 	if gen != prefetch_gen:
 		_prefetch_caller()
 		return
 	if not p.is_empty() and not (p["name"] in used_names):
 		p["scheme"] = sch["id"]
+		p["budget_base"] = base
 		next_profile = p
 
 
@@ -1983,6 +2011,7 @@ func _set_controls() -> void:
 	send_btn.disabled = not talking
 	mic_btn.disabled = not (talking or recorder.recording)
 	hang_btn.disabled = not live
+	next_btn.disabled = waiting_caller
 	terminal_btn.text = "Терминал •" if (dictated_card != "" or dictated_gift != "") else "Терминал"
 	var last := shift_calls >= _calls_max()
 	next_btn.text = "Итоги" if last else "Дальше"
@@ -2147,9 +2176,27 @@ func _on_card_dictated(card: String) -> void:
 	_set_controls()
 
 
+## Жалость и угрозы: что из этого вышло.
+func _on_tactic(kind: String, result: String) -> void:
+	var pity := kind == "pity"
+	match result:
+		"agree":
+			_add_note(("Клиент пожалел вас" if pity else "Клиент испугался") + " и готов заплатить " + _rub(session.agreed_price) + ". Продиктуйте наш номер или попросите карту.", C_GREEN, true)
+		"refuse":
+			_add_note("Клиент посочувствовал, но денег не даст." if pity else "Угроза не сработала: клиент грозит полицией. Жара +10%.", C_RED)
+		"early":
+			_add_note(("Рано давить на жалость: клиент ещё мало вам доверяет." if pity else "Рано угрожать: клиент вас не боится и идёт в полицию. Жара +10%.") + " Нужен шанс от %d%%." % CallSession.TACTIC_MIN, C_MUTED if pity else C_RED)
+	if not pity and result != "agree":
+		_add_heat(10)
+		_update_balance()
+
+
 func _on_trust(value: int, delta: int) -> void:
 	if session:
 		value = session.chance()  # на полоске шанс отдать деньги: доверие плюс доверчивость и улучшения
+		if value >= CallSession.TACTIC_MIN and session.operator_lines >= 2 and not session.tactic_hint and not session.paid and session.active:
+			session.tactic_hint = true
+			_add_note("Клиент проникся. Теперь можно давить на жалость («у меня операция, помогите…») или припугнуть («солью ваши данные, переведите…»).", C_PURPLE, true)
 	trust_label.text = "Шанс %d%%" % value
 	var col := C_RED if value < 30 else (C_YELLOW if value < 60 else C_GREEN)
 	trust_fill.bg_color = col

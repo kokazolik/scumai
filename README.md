@@ -1,7 +1,7 @@
 # Контора: прототип звонков с ИИ (Godot 4, 2D)
 
 ## Скачать APK
-Готовая сборка для Android: [apk/kontora-0.23.apk](https://github.com/kokazolik/scumai/raw/main/apk/kontora-0.23.apk).
+Готовая сборка для Android: [apk/kontora-0.24.apk](https://github.com/kokazolik/scumai/raw/main/apk/kontora-0.24.apk).
 Открой ссылку с телефона, установи (разреши установку из неизвестных источников), при первом запуске скопируй ключ OpenRouter и нажми «Ключ ИИ» → «Вставить ключ из буфера».
 
 ## Как запустить
@@ -19,7 +19,7 @@
 
 ## Как устроено
 - `scripts/openrouter_client.gd` — автозагрузка `LLM`, `await LLM.chat(messages)`.
-- `scripts/callers.gd` — запасные профили звонящих. Обычно клиентов придумывает нейронка (`Callers.generate`),
+- `scripts/callers.gd` — всех клиентов придумывает нейронка (`Callers.generate`) под этап игры и деньги клиента,
   примерно каждый третий — пародия на известного персонажа (Балк, Граф Мрякула и т. п.).
 - `scripts/shift_recap.gd` — все разговоры смены записываются, в конце нейронка выбирает 3-5 смешных моментов.
 - Голос: `scripts/voice_recorder.gd` пишет WAV 16 кГц, `LLM.transcribe()` распознаёт его бесплатным Whisper от Groq
