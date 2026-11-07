@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.15"
+const VERSION := "0.16"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -44,6 +44,9 @@ var heat := 0                  # внимание полиции 0..100
 var raids := 0
 var upgrades: Dictionary = {}  # купленные улучшения {id: уровень}
 var schemes: Array = ["repair"]  # купленные схемы
+var pay_methods: Array = ["card", "phone"]  # купленные способы оплаты
+var dictated_gift := ""
+var pinned_gift_btn: Button
 var cur_scheme: Dictionary = {}
 var heat_bar: ProgressBar
 var heat_label: Label
@@ -156,7 +159,7 @@ func _ready() -> void:
 
 func _save() -> void:
 	var c := ConfigFile.new()
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods"]:
 		c.set_value("game", k, get(k))
 	c.save(SAVE_PATH)
 
@@ -165,7 +168,7 @@ func _load() -> void:
 	var c := ConfigFile.new()
 	if c.load(SAVE_PATH) != OK:
 		return
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods"]:
 		if c.has_section_key("game", k):
 			set(k, c.get_value("game", k))
 
@@ -181,7 +184,7 @@ func _reset_progress() -> void:
 	balance = 0; deals = 0; shift = 1; quota = FIRST_QUOTA
 	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
 	shift_log = []; last_moments = []
-	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["repair"]
+	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["repair"]; pay_methods = ["card", "phone"]
 	_clear_chat()
 	_save()
 	_update_balance()
@@ -476,6 +479,7 @@ func _show_help() -> void:
 • Клиент может бросить трубку в любой момент.
 • Микрофон: с бесплатным ключом голоса (меню «Ключи») нажми, скажи фразу, нажми ещё раз, и она отправится. Без ключа откроется диктовка клавиатуры.
 • Жара растёт с каждой сделкой. На 100% будет облава и штраф. Пустые звонки и конец смены её сбивают.
+• Способы оплаты из магазина (подарочные карты, криптокошелёк и дальше) позволяют брать суммы крупнее: просто предложи их клиенту в разговоре.
 • Деньги со счёта тратятся в магазине на новые схемы и улучшения. Схемы приводят клиентов богаче и складываются. Ранг растёт от заработка и открывает новые товары.
 • В конце смены вспомним самые смешные моменты."""
 	var l := _label(text, 26, C_INK, true)
@@ -691,6 +695,11 @@ func _build_caller_card() -> Control:
 		_add_note("Номер карты скопирован. Вставьте его в терминале.", C_BLUE))
 	pinned_card_btn.hide()
 	chips.add_child(pinned_card_btn)
+	pinned_gift_btn = _chip_button("", C_PURPLE, func():
+		DisplayServer.clipboard_set(dictated_gift)
+		_add_note("Код подарочной карты скопирован. Вставьте его в терминале.", C_BLUE))
+	pinned_gift_btn.hide()
+	chips.add_child(pinned_gift_btn)
 	v.add_child(chips)
 	return card
 
@@ -836,12 +845,15 @@ func _open_terminal() -> void:
 	var price: int = session.agreed_price if session else 0
 	var lines := []
 	lines.append(("Карта клиента: " + dictated_card) if dictated_card != "" else "Клиент ещё не прислал номер карты.")
+	if dictated_gift != "":
+		lines.append("Код подарочной карты: " + dictated_gift)
 	lines.append(("Сумма: " + _rub(price)) if price > 0 else "Сумма не согласована: назовите клиенту цену.")
 	if session and session.paid:
 		lines.append("С этого клиента деньги уже получены.")
 	term_hint.text = "\n".join(lines)
 	charge_btn.text = ("Списать " + _rub(price)) if price > 0 else "Списать"
-	if dictated_card != "" and card_input.text == "":
+	card_input.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT if dictated_gift != "" else LineEdit.KEYBOARD_TYPE_NUMBER
+	if (dictated_card != "" or dictated_gift != "") and card_input.text == "":
 		card_input.placeholder_text = "Нажмите «Вставить»"
 	terminal.show()
 	input.release_focus()
@@ -854,6 +866,21 @@ func _close_terminal() -> void:
 
 ## Расставляет пробелы по 4 цифры, пока игрок печатает.
 func _format_card_input(t: String) -> void:
+	if RegEx.create_from_string("[A-Za-z]").search(t):  # код подарочной карты: XXXX-XXXX-XXXX
+		var raw := ""
+		for ch in t.to_upper():
+			if (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9"):
+				raw += ch
+		raw = raw.substr(0, 12)
+		var code := ""
+		for i in raw.length():
+			if i > 0 and i % 4 == 0:
+				code += "-"
+			code += raw[i]
+		if code != t:
+			card_input.text = code
+			card_input.caret_column = code.length()
+		return
 	var digits := ""
 	for ch in t:
 		if ch >= "0" and ch <= "9":
@@ -870,6 +897,9 @@ func _format_card_input(t: String) -> void:
 
 
 func _on_charge() -> void:
+	if card_input.text.contains("-"):
+		_charge_gift()
+		return
 	var digits := card_input.text.replace(" ", "")
 	if digits.length() != 16:
 		_term_says("Нужно 16 цифр.", C_RED)
@@ -884,8 +914,11 @@ func _on_charge() -> void:
 	if price <= 0:
 		_term_says("✖ Клиент не соглашался ни на какую сумму. Договоритесь о цене.", C_RED)
 		return
+	if price > session.cap_for("card"):
+		_term_says("✖ Недостаточно средств на карте: там около %s. Возьмите меньше или предложите другой способ." % _rub(session.cap_for("card")), C_RED)
+		return
 	session.paid = true
-	_add_money(price)
+	_add_money(price, "card")
 	_log_line("Терминал", "списано " + _rub(price))
 	dictated_card = ""
 	pinned_card_btn.hide()
@@ -894,7 +927,35 @@ func _on_charge() -> void:
 	_set_controls()
 
 
-func _add_money(rub: int) -> void:
+func _charge_gift() -> void:
+	if session == null or dictated_gift == "" or card_input.text != dictated_gift:
+		_term_says("✖ Код не найден. Проверьте код подарочной карты.", C_RED)
+		return
+	if session.paid:
+		_term_says("✖ С этого клиента деньги уже получены.", C_RED)
+		return
+	var price: int = session.agreed_price
+	session.paid = true
+	_add_money(price, "gift")
+	_log_line("Терминал", "активированы подарочные карты на " + _rub(price))
+	dictated_gift = ""
+	pinned_gift_btn.hide()
+	card_input.text = ""
+	_term_says("✔ Подарочные карты активированы: +%s." % _rub(price), C_GREEN)
+	_set_controls()
+
+
+func _on_gift_dictated(code: String) -> void:
+	dictated_gift = code
+	_log_line(session.profile["name"], "(диктует коды подарочных карт)")
+	pinned_gift_btn.text = "⧉ Код " + code
+	pinned_gift_btn.show()
+	_add_bubble(session.profile["name"], "✉ " + code, false)
+	_add_note("Клиент продиктовал код подарочной карты. Активируйте его в терминале!", C_GREEN, true)
+	_set_controls()
+
+
+func _add_money(rub: int, method := "card") -> void:
 	balance += rub
 	shift_earned += rub
 	deals += 1
@@ -905,7 +966,7 @@ func _add_money(rub: int) -> void:
 	var new_rank := Upgrades.rank_index(earned_total)
 	if new_rank > old_rank:
 		_add_note("★ Новый ранг: %s! В магазине открылись новые улучшения, клиенты стали богаче." % Upgrades.RANKS[new_rank]["name"], C_PURPLE, true)
-	_add_heat(int(round((5 + rub / 1000.0) * float(cur_scheme.get("heat", 1.0)) * (1.0 - 0.25 * Upgrades.level(upgrades, "lawyer")))))
+	_add_heat(int(round((5 + rub / 1000.0) * float(cur_scheme.get("heat", 1.0)) * float(Upgrades.method(method)["heat"]) * (1.0 - 0.25 * Upgrades.level(upgrades, "lawyer")))))
 	_update_balance()
 	_bump(balance_label)
 	_save()
@@ -918,10 +979,14 @@ func _bump(c: Control) -> void:
 	tw.tween_property(c, "scale", Vector2.ONE, 0.2)
 
 
-func _on_transfer_done(rub: int) -> void:
-	_add_money(rub)
-	_log_line("Банк", "перевод " + _rub(rub))
-	_add_note("✔ Поступил перевод %s по номеру %s" % [_rub(rub), CallSession.CORP_PHONE], C_GREEN, true)
+func _on_transfer_done(rub: int, method: String) -> void:
+	_add_money(rub, method)
+	var mname: String = Upgrades.method(method)["name"]
+	_log_line("Банк", "%s: %s" % [mname, _rub(rub)])
+	if method == "phone":
+		_add_note("✔ Поступил перевод %s по номеру %s" % [_rub(rub), CallSession.CORP_PHONE], C_GREEN, true)
+	else:
+		_add_note("✔ %s: поступило %s" % [mname, _rub(rub)], C_GREEN, true)
 	_set_controls()
 
 
@@ -980,6 +1045,9 @@ func _next_call() -> void:
 	call_paid = false
 	cur_scheme = Upgrades.scheme(str(p.get("scheme", "repair")))
 	_apply_upgrades(session)
+	session.set_methods(pay_methods)
+	dictated_gift = ""
+	pinned_gift_btn.hide()
 	call_rec = {"name": p["name"], "age": p["age"], "outcome": "звонок прервался", "money": 0, "lines": []}
 	shift_log.append(call_rec)
 	session.caller_spoke.connect(func(t):
@@ -990,6 +1058,8 @@ func _next_call() -> void:
 	session.call_ended.connect(_on_call_ended)
 	session.card_dictated.connect(_on_card_dictated)
 	session.transfer_done.connect(_on_transfer_done)
+	session.gift_dictated.connect(_on_gift_dictated)
+	session.method_locked.connect(func(n): _add_note("Способ «%s» ещё не куплен. Его можно открыть в магазине." % n, C_MUTED))
 	session.price_agreed.connect(func(rub):
 		_log_line(p["name"], "(соглашается заплатить %s)" % _rub(rub))
 		_add_note("Клиент согласен заплатить " + _rub(rub), C_GREEN, true))
@@ -997,7 +1067,7 @@ func _next_call() -> void:
 	caller_name.text = "%s, %d" % [p["name"], p["age"]]
 	caller_info.text = ("Схема «%s» · " % cur_scheme["name"] if schemes.size() > 1 else "") + "Узнал(а) о нас: " + p["source"]
 	if Upgrades.level(upgrades, "base") > 0:
-		caller_info.text += "\nБаза: денег около %s. %s" % [_rub(session.budget), p["personality"]]
+		caller_info.text += "\nБаза: на карте около %s, всего до %s. %s" % [_rub(session.base_budget), _rub(session.budget), p["personality"]]
 	_set_avatar(p["name"])
 	_add_note("☎ Входящий звонок...")
 	_on_trust(session.trust, 0)
@@ -1117,6 +1187,44 @@ func _show_shop() -> void:
 			sb2.add_theme_font_size_override("font_size", 25)
 			sv.add_child(sb2)
 			list.add_child(scard)
+		list.add_child(_label("Способы оплаты", 32, C_ACCENT))
+		list.add_child(_label("Чем круче способ, тем больше денег клиент может отдать, но уговорить труднее. Карта и перевод по номеру есть сразу. Способ работает, когда ты называешь его в разговоре.", 22, C_MUTED, true))
+		for mt in Upgrades.METHODS:
+			if mt["price"] == 0:
+				continue
+			var mown: bool = mt["id"] in pay_methods
+			var mcard := PanelContainer.new()
+			var msb := _box(Color("f1f0ff") if not mown else Color("eafaf0"), 24, 22)
+			msb.border_width_left = 8
+			msb.border_color = C_PURPLE if not mown else C_GREEN
+			mcard.add_theme_stylebox_override("panel", msb)
+			var mv := VBoxContainer.new()
+			mv.add_theme_constant_override("separation", 6)
+			mcard.add_child(mv)
+			mv.add_child(_label(mt["name"], 29, C_INK, true))
+			mv.add_child(_label(mt["desc"], 23, C_MUTED, true))
+			mv.add_child(_label("Суммы до ×%s · шанс %d%% · жара ×%s" % [str(mt["cap"]), mt["chance"], str(mt["heat"])], 22, C_PURPLE.darkened(0.2), true))
+			var mb: Button
+			if mown:
+				mb = _big_button("✔ Доступен", Color("b9bccb"), Callable(), 76)
+				mb.disabled = true
+			elif r < mt["rank"]:
+				mb = _big_button("Нужен ранг «%s»" % Upgrades.RANKS[mt["rank"]]["name"], Color("b9bccb"), Callable(), 76)
+				mb.disabled = true
+			else:
+				var mprice: int = mt["price"]
+				var mid: String = mt["id"]
+				mb = _big_button("Открыть за " + _rub(mprice), C_PURPLE if balance >= mprice else Color("b9bccb"), func():
+					if balance < mprice:
+						return
+					balance -= mprice
+					pay_methods.append(mid)
+					_save()
+					_update_balance()
+					holder[0].call(), 76)
+			mb.add_theme_font_size_override("font_size", 25)
+			mv.add_child(mb)
+			list.add_child(mcard)
 		list.add_child(_label("Улучшения", 32, C_ACCENT))
 		for u in Upgrades.LIST:
 			var lvl := Upgrades.level(upgrades, u["id"])
@@ -1198,7 +1306,7 @@ func _set_controls() -> void:
 	send_btn.disabled = not talking
 	mic_btn.disabled = not (talking or recorder.recording)
 	hang_btn.disabled = not live
-	terminal_btn.text = "▤ Терминал ●" if dictated_card != "" else "▤ Терминал"
+	terminal_btn.text = "▤ Терминал ●" if (dictated_card != "" or dictated_gift != "") else "▤ Терминал"
 	var last := shift_calls >= _calls_max()
 	next_btn.text = ("★ Итоги" if last else "☎ Дальше") if not live else ("★ Итоги" if last else "☎ Дальше")
 	_paint_button(next_btn, C_GREEN if (not live and session != null) else C_YELLOW)

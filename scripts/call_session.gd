@@ -13,7 +13,9 @@ signal thinking(is_thinking: bool)
 signal call_ended(reason: String)  # "hung_up" | "card_given" | "operator"
 signal card_dictated(card: String)
 signal price_agreed(rub: int)
-signal transfer_done(rub: int)
+signal transfer_done(rub: int, method: String)
+signal gift_dictated(code: String)
+signal method_locked(name: String)
 
 ## Корпоративный номер для перевода по номеру телефона (вымышленный).
 const CORP_PHONE := "+7 900 555-01-23"
@@ -45,6 +47,10 @@ var neg_mult := 1.0      # улучшения: доля штрафа довер�
 var offered_max := 0     # самая большая цена, которую оператор называл за звонок
 var paid := false        # деньги уже получены (карта списана или перевод)
 var _card_answer := ""
+var _pay_method := "phone"   # каким способом идёт перевод на этом ходу
+var methods: Array = ["card", "phone"]  # купленные способы оплаты
+var base_budget := 0     # сколько у клиента на карте; остальное доступно только продвинутыми способами
+var gift_code := ""
 var _transfer_answer := ""  # "agree" | "refuse" | "no_price" | ""  # "agree" | "refuse" | "" на текущий ход
 
 
@@ -53,6 +59,7 @@ func _init(p: Dictionary) -> void:
 	trust = randi_range(START_TRUST_MIN, START_TRUST_MAX)  # каждый звонок — случайное небольшое доверие
 	card_number = Callers.fake_card()
 	budget = randi_range(4, 40) * 500  # от 2 000 до 20 000 ₽
+	base_budget = budget
 
 
 func _system_prompt() -> String:
@@ -76,7 +83,7 @@ func _system_prompt() -> String:
 Оценивай только саму последнюю реплику, а не прошлые. Учитывай свой характер: на что ты ведёшься, то для тебя good_offer или perfect. Не выбирай плохую категорию только потому, что вопрос ещё не решён. Твоё низкое доверие влияет на тон ответа, но не на rating.
 Никогда сам не называй номер карты.
 
-Деньги: у тебя есть примерно %d рублей, больше ты заплатить не можешь. Суммы до половины этого тебя не пугают, дороже ты торгуешься или сомневаешься.
+Деньги: всего ты можешь отдать примерно %d рублей (вместе со сбережениями), больше никак. Из них на карте около %d. Суммы до половины всего тебя не пугают, дороже ты торгуешься или сомневаешься.
 Сейчас договорённая сумма: %s.
 agreed_price: если в этой реплике оператор назвал цену и ты на неё СОГЛАСЕН(НА), поставь эту сумму в рублях. Если согласен(на) на меньшую, поставь её. Иначе 0.
 
@@ -85,7 +92,7 @@ agreed_price: если в этой реплике оператор назвал 
 Ответь ТОЛЬКО JSON-объектом, без пояснений:
 {"reply": "реплика персонажа на грамотном русском, 1-3 предложения (может быть пустой, если бросаешь трубку молча)", "rating": одна категория из списка, "agreed_price": целое число, "hang_up": true или false}""" % [
 		profile["name"], profile["age"], profile["source"], profile["reason"], profile["personality"], trust,
-		budget, ("%d рублей" % agreed_price) if agreed_price > 0 else "пока нет"]
+		budget, base_budget, ("%d рублей" % agreed_price) if agreed_price > 0 else "пока нет"]
 
 
 func _messages() -> Array:
@@ -94,7 +101,16 @@ func _messages() -> Array:
 		sys += "\n\nОператор просит номер твоей карты. Ты СОГЛАСЕН(НА). Коротко скажи, что сейчас пришлёшь номер сообщением. Сам номер не пиши."
 	elif _card_answer == "refuse":
 		sys += "\n\nОператор просит номер твоей карты. Ты ОТКАЗЫВАЕШЬСЯ его называть. Объясни отказ в духе своего характера."
-	if _transfer_answer == "agree":
+	var pm := Upgrades.method(_pay_method)
+	if _transfer_answer == "poor":
+		sys += "\n\nОператор просит оплатить %d рублей способом «%s». У тебя нет таких денег для этого способа (доступно около %d рублей). Скажи, что столько у тебя нет." % [agreed_price, pm["name"], cap_for(_pay_method)]
+	elif _pay_method != "phone" and _transfer_answer == "agree":
+		sys += "\n\nОператор просит оплатить %d рублей способом «%s». Ты СОГЛАСЕН(НА): коротко скажи, что %s." % [agreed_price, pm["name"], pm["act"]]
+	elif _pay_method != "phone" and _transfer_answer == "refuse":
+		sys += "\n\nОператор просит оплатить способом «%s». Ты ОТКАЗЫВАЕШЬСЯ. Объясни отказ в духе своего характера." % pm["name"]
+	elif _pay_method != "phone" and _transfer_answer == "no_price":
+		sys += "\n\nОператор предлагает оплатить способом «%s», но вы ещё не договорились о сумме. Спроси, сколько и за что." % pm["name"]
+	elif _transfer_answer == "agree":
 		sys += "\n\nОператор продиктовал номер телефона %s, чтобы ты перевёл(а) %d рублей через %s. Ты СОГЛАСЕН(НА): скажи, что перевёл(а) деньги по этому номеру." % [CORP_PHONE, agreed_price, CORP_BANK]
 	elif _transfer_answer == "refuse":
 		sys += "\n\nОператор просит перевести деньги по номеру телефона. Ты ОТКАЗЫВАЕШЬСЯ переводить. Объясни отказ в духе своего характера."
@@ -144,6 +160,49 @@ static func rating_delta(rating: String, fallback) -> int:
 	return clampi(int(fallback), -20, 20)
 
 
+## Вызывается после настройки улучшений: общий бюджет растёт от лучшего купленного способа оплаты.
+func set_methods(owned: Array) -> void:
+	methods = owned.duplicate()
+	if not "card" in methods:
+		methods.append("card")
+	if not "phone" in methods:
+		methods.append("phone")
+	base_budget = budget
+	var best := 1.0
+	for id in methods:
+		best = maxf(best, float(Upgrades.method(id)["cap"]))
+	budget = int(round(budget * best / 500.0)) * 500
+
+
+func cap_for(id: String) -> int:
+	return int(base_budget * float(Upgrades.method(id)["cap"]))
+
+
+func _roll(id: String) -> String:
+	if agreed_price > cap_for(id):
+		return "poor"
+	return "agree" if randi() % 100 < trust + roll_bonus + int(Upgrades.method(id)["chance"]) else "refuse"
+
+
+## Какой продвинутый способ оплаты предлагает оператор (по ключевым словам), "" если никакой.
+static func detect_method(text: String) -> String:
+	var t := text.to_lower()
+	for m in Upgrades.METHODS:
+		if m["words"] != "" and RegEx.create_from_string(m["words"]).search(t):
+			return m["id"]
+	return ""
+
+
+static func make_gift_code() -> String:
+	var abc := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	var out := ""
+	for i in 12:
+		if i > 0 and i % 4 == 0:
+			out += "-"
+		out += abc[randi() % abc.length()]
+	return out
+
+
 ## Клиент начинает разговор сам (он же позвонил).
 func start() -> void:
 	history.append({"role": "user", "content": "(Оператор снял трубку и молчит. Начни разговор: поздоровайся и скажи, зачем звонишь.)"})
@@ -160,13 +219,20 @@ func say(text: String) -> void:
 		offered_max = maxi(offered_max, mentioned_price(text))
 	_card_answer = ""
 	_transfer_answer = ""
-	if not paid and has_corp_phone(text):
-		if agreed_price <= 0:
-			_transfer_answer = "no_price"
-		else:
-			_transfer_answer = "agree" if randi() % 100 < trust + roll_bonus else "refuse"  # шанс = доверие в %
+	_pay_method = "phone"
+	var adv := detect_method(text)
+	if adv != "" and not adv in methods:
+		method_locked.emit(Upgrades.method(adv)["name"])
+		adv = ""
+	if not paid and adv != "":
+		_pay_method = adv
+		_transfer_answer = "no_price" if agreed_price <= 0 else _roll(adv)
+	elif not paid and has_corp_phone(text):
+		_transfer_answer = "no_price" if agreed_price <= 0 else _roll("phone")  # шанс = доверие в %
 	elif not card_given and not paid and asks_for_card(text):
-		_card_answer = "agree" if randi() % 100 < trust + roll_bonus else "refuse"  # шанс = доверие в %
+		_card_answer = _roll("card")
+		if _card_answer == "poor":
+			_card_answer = "refuse"
 	await _ask_model(true)
 	if not active:
 		return
@@ -176,10 +242,14 @@ func say(text: String) -> void:
 		card_dictated.emit(card_number)
 	elif _card_answer == "refuse":
 		_set_trust(-REFUSE_PENALTY)
-	if _transfer_answer == "agree":
+	if _transfer_answer == "agree" and _pay_method == "gift":
+		gift_code = make_gift_code()
+		history.append({"role": "assistant", "content": "(продиктовал(а) коды подарочных карт на %d рублей)" % agreed_price})
+		gift_dictated.emit(gift_code)
+	elif _transfer_answer == "agree":
 		paid = true
-		history.append({"role": "assistant", "content": "(перевёл(а) %d рублей по номеру телефона)" % agreed_price})
-		transfer_done.emit(agreed_price)
+		history.append({"role": "assistant", "content": "(перевёл(а) %d рублей: %s)" % [agreed_price, Upgrades.method(_pay_method)["name"]]})
+		transfer_done.emit(agreed_price, _pay_method)
 	elif _transfer_answer == "refuse":
 		_set_trust(-REFUSE_PENALTY)
 	_card_answer = ""
