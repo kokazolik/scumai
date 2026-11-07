@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.22"
+const VERSION := "0.23"
 const OLD_SAVE_PATH := "user://save.cfg"   # сохранение до 0.20, переносится в слот 1
 const SETTINGS_PATH := "user://settings.cfg"
 const SLOTS := 6
@@ -2148,6 +2148,8 @@ func _on_card_dictated(card: String) -> void:
 
 
 func _on_trust(value: int, delta: int) -> void:
+	if session:
+		value = session.chance()  # на полоске шанс отдать деньги: доверие плюс доверчивость и улучшения
 	trust_label.text = "Шанс %d%%" % value
 	var col := C_RED if value < 30 else (C_YELLOW if value < 60 else C_GREEN)
 	trust_fill.bg_color = col
