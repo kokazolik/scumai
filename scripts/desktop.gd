@@ -91,8 +91,53 @@ func _ready() -> void:
 	terminal.hide()
 
 	if LLM.api_key.is_empty():
-		_add_bubble("Система", "Нет ключа OpenRouter. Сборка сделана без ключа.", false)
-	_next_call()
+		_show_key_screen()
+	else:
+		_next_call()
+
+
+## Экран первого запуска: ключ вставляется из буфера обмена одной кнопкой
+## и сохраняется только на телефоне. Сам ключ на экране не показывается.
+func _show_key_screen() -> void:
+	var dim := ColorRect.new()
+	dim.color = C_BG
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
+	var m := MarginContainer.new()
+	m.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right"]:
+		m.add_theme_constant_override("margin_" + side, 40)
+	dim.add_child(m)
+	var v := VBoxContainer.new()
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 28)
+	m.add_child(v)
+	var title := Label.new()
+	title.text = "☎ КОНТОРА"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 60)
+	title.add_theme_color_override("font_color", C_ACCENT)
+	v.add_child(title)
+	var info := Label.new()
+	info.text = "1. Скопируй ключ OpenRouter (начинается с sk-or-).\n2. Нажми кнопку ниже.\nКлюч сохранится только на этом телефоне."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(info)
+	var status := Label.new()
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var paste := func():
+		var k := DisplayServer.clipboard_get().strip_edges()
+		if k.begins_with("sk-or-") and k.length() > 20:
+			LLM.save_key(k)
+			DisplayServer.clipboard_set("")  # не оставляем ключ в буфере
+			dim.queue_free()
+			_next_call()
+		else:
+			status.text = "В буфере нет ключа. Скопируй ключ sk-or-... и нажми ещё раз."
+			status.add_theme_color_override("font_color", C_RED)
+	v.add_child(_big_button("Вставить ключ из буфера", C_GREEN, paste, 140))
+	v.add_child(status)
 
 
 # ---------- тема ----------

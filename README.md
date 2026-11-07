@@ -1,8 +1,8 @@
 # Контора: прототип звонков с ИИ (Godot 4, 2D)
 
 ## Скачать APK
-Готовая сборка для Android: [apk/kontora-0.2-debug.apk](https://github.com/kokazolik/scumai/raw/main/apk/kontora-0.2-debug.apk).
-Открой ссылку с телефона, установи (разреши установку из неизвестных источников), ключ уже вшит в сборку.
+Готовая сборка для Android: [apk/kontora-0.4.apk](https://github.com/kokazolik/scumai/raw/main/apk/kontora-0.4.apk).
+Открой ссылку с телефона, установи (разреши установку из неизвестных источников), при первом запуске скопируй ключ OpenRouter и нажми «Вставить ключ из буфера».
 
 ## Как запустить
 1. Открой папку в Godot 4.3+ (Import → `project.godot`).
