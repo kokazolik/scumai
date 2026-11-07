@@ -12,6 +12,8 @@ signal call_ended(reason: String)  # "hung_up" | "card_given" | "operator"
 signal card_dictated(card: String)
 
 const MAX_TRUST := 100
+const MIN_GAIN := 8       # минимальный прирост доверия за не-грубую реплику
+const REFUSE_PENALTY := 10
 
 var profile: Dictionary
 var trust: int
@@ -37,11 +39,11 @@ func _system_prompt() -> String:
 Характер: %s.
 Сейчас твоё доверие к оператору: %d из 100. Чем ниже доверие, тем холоднее и подозрительнее ты отвечаешь.
 
-Оцени последнюю реплику оператора. Вежливость, внимание к твоей проблеме, попадание в твой характер и понятные объяснения повышают доверие. Грубость, давление, спешка, непонятные слова и подозрительные просьбы понижают.
+Ты легковерный человек и быстро проникаешься к оператору. Оцени последнюю реплику оператора ЩЕДРО: обычная вежливая фраза даёт +10..+15, внимание к твоей проблеме или попадание в твой характер +15..+30. Минус только за откровенную грубость или оскорбления, и не больше -10.
 Никогда сам не называй номер карты.
 
 Ответь ТОЛЬКО JSON-объектом, без пояснений:
-{"reply": "реплика персонажа на грамотном русском, 1-3 предложения", "trust_delta": целое число от -20 до 20}""" % [
+{"reply": "реплика персонажа на грамотном русском, 1-3 предложения", "trust_delta": целое число от -10 до 30}""" % [
 		profile["name"], profile["age"], profile["source"], profile["reason"], profile["personality"], trust]
 
 
@@ -76,7 +78,7 @@ static func parse_reply(raw: String) -> Dictionary:
 	if a != -1 and b > a:
 		var d = JSON.parse_string(raw.substr(a, b - a + 1))
 		if d is Dictionary and d.has("reply"):
-			return {"reply": str(d["reply"]), "trust_delta": clampi(int(d.get("trust_delta", 0)), -20, 20)}
+			return {"reply": str(d["reply"]), "trust_delta": clampi(int(d.get("trust_delta", 0)), -10, 30)}
 	return {"reply": raw.strip_edges(), "trust_delta": 0}
 
 
@@ -93,7 +95,7 @@ func say(text: String) -> void:
 	history.append({"role": "user", "content": "Оператор: " + text})
 	_card_answer = ""
 	if not card_given and asks_for_card(text):
-		_card_answer = "agree" if randi() % 100 < trust else "refuse"
+		_card_answer = "agree" if randi() % 100 < trust else "refuse"  # шанс = доверие в %
 	await _ask_model(true)
 	if not active:
 		return
@@ -102,7 +104,7 @@ func say(text: String) -> void:
 		history.append({"role": "assistant", "content": "(прислал(а) номер карты сообщением)"})
 		card_dictated.emit(card_number)
 	elif _card_answer == "refuse":
-		_set_trust(-15)
+		_set_trust(-REFUSE_PENALTY)
 	_card_answer = ""
 
 
@@ -133,7 +135,10 @@ func _ask_model(apply_trust: bool) -> void:
 	history.append({"role": "assistant", "content": d["reply"]})
 	caller_spoke.emit(d["reply"])
 	if apply_trust:
-		_set_trust(d["trust_delta"])
+		var delta: int = d["trust_delta"]
+		if delta >= 0:
+			delta = maxi(delta, MIN_GAIN)  # нейтральная фраза тоже немного помогает
+		_set_trust(delta)
 
 
 func hang_up() -> void:

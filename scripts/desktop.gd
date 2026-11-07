@@ -6,6 +6,8 @@ extends Control
 ## Весь интерфейс собирается кодом.
 
 const CHARGE := 200
+const INPUT_MIN_H := 100
+const INPUT_MAX_H := 200
 
 # Яркая палитра
 const C_BG := Color("fff4d6")
@@ -20,17 +22,16 @@ const C_RED := Color("e8364f")
 const C_CALLER_BUBBLE := Color("eef2ff")
 const C_ME_BUBBLE := Color("ffe2d6")
 
-const QUICK_PHRASES := [
-	"Здравствуйте! Чем могу помочь?",
-	"Не волнуйтесь, мы всё решим.",
-	"Расскажите подробнее, пожалуйста.",
-	"У нас как раз сегодня акция!",
-	"Назовите номер карты с лицевой стороны.",
-]
 
 var balance := 0
 var deals := 0
 var caller_index := 0
+var caller_order: Array = []
+var main_margin: MarginContainer
+var term_sheet: PanelContainer
+var kb_height := 0.0
+var actions_box: Control
+var header_box: Control
 var session: CallSession
 var dictated_card := ""
 
@@ -44,9 +45,8 @@ var trust_label: Label
 var chat_scroll: ScrollContainer
 var chat_list: VBoxContainer
 var status_label: Label
-var input: LineEdit
+var input: TextEdit
 var send_btn: Button
-var quick_box: HBoxContainer
 var hang_btn: Button
 var next_btn: Button
 var terminal_btn: Button
@@ -67,6 +67,7 @@ func _ready() -> void:
 	add_child(bg)
 
 	var margin := MarginContainer.new()
+	main_margin = margin
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 20)
@@ -77,12 +78,13 @@ func _ready() -> void:
 	root.add_theme_constant_override("separation", 14)
 	margin.add_child(root)
 
-	root.add_child(_build_header())
+	header_box = _build_header()
+	root.add_child(header_box)
 	root.add_child(_build_caller_card())
 	root.add_child(_build_chat())
-	root.add_child(_build_quick_phrases())
 	root.add_child(_build_input_row())
-	root.add_child(_build_actions())
+	actions_box = _build_actions()
+	root.add_child(actions_box)
 
 	terminal = _build_terminal()
 	add_child(terminal)
@@ -131,6 +133,13 @@ func _make_theme() -> Theme:
 	t.set_color("font_color", "LineEdit", C_INK)
 	t.set_color("font_placeholder_color", "LineEdit", C_MUTED)
 	t.set_color("caret_color", "LineEdit", C_BLUE)
+	t.set_stylebox("normal", "TextEdit", le)
+	t.set_stylebox("focus", "TextEdit", lef)
+	t.set_stylebox("read_only", "TextEdit", le)
+	t.set_color("font_color", "TextEdit", C_INK)
+	t.set_color("font_readonly_color", "TextEdit", C_MUTED)
+	t.set_color("font_placeholder_color", "TextEdit", C_MUTED)
+	t.set_color("caret_color", "TextEdit", C_BLUE)
 	# Полоса доверия
 	t.set_stylebox("background", "ProgressBar", _box(Color("ece6d3"), 18, 0))
 	# Полосы прокрутки потоньше
@@ -236,43 +245,17 @@ func _build_chat() -> Control:
 	return card
 
 
-func _build_quick_phrases() -> Control:
-	var scroll := ScrollContainer.new()
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
-	scroll.custom_minimum_size.y = 84
-	quick_box = HBoxContainer.new()
-	quick_box.add_theme_constant_override("separation", 10)
-	scroll.add_child(quick_box)
-	for p in QUICK_PHRASES:
-		var b := Button.new()
-		b.text = p
-		b.custom_minimum_size.y = 72
-		b.add_theme_font_size_override("font_size", 24)
-		var sb := _box(C_CARD, 36, 18)
-		sb.border_color = C_BLUE
-		sb.set_border_width_all(3)
-		b.add_theme_stylebox_override("normal", sb)
-		b.add_theme_stylebox_override("hover", sb)
-		var sbp := sb.duplicate()
-		sbp.bg_color = C_CALLER_BUBBLE
-		b.add_theme_stylebox_override("pressed", sbp)
-		b.add_theme_color_override("font_color", C_BLUE)
-		b.add_theme_color_override("font_hover_color", C_BLUE)
-		b.add_theme_color_override("font_pressed_color", C_BLUE)
-		b.pressed.connect(_say.bind(p))
-		quick_box.add_child(b)
-	return scroll
-
-
 func _build_input_row() -> Control:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
-	input = LineEdit.new()
+	input = TextEdit.new()
 	input.placeholder_text = "Ваша реплика..."
-	input.custom_minimum_size.y = 100
+	input.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	input.custom_minimum_size.y = INPUT_MIN_H
 	input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	input.text_submitted.connect(func(_t): _on_send())
+	input.size_flags_vertical = Control.SIZE_SHRINK_END
+	input.add_theme_font_size_override("font_size", 30)
+	input.text_changed.connect(_on_input_changed)
 	h.add_child(input)
 	send_btn = _big_button("➤", C_ACCENT, _on_send, 100)
 	send_btn.size_flags_horizontal = Control.SIZE_FILL
@@ -311,6 +294,7 @@ func _build_terminal() -> Control:
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	var sheet := PanelContainer.new()
+	term_sheet = sheet
 	sheet.add_theme_stylebox_override("panel", _box(C_CARD, 36, 32))
 	sheet.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	sheet.offset_top = -760
@@ -413,7 +397,10 @@ func _term_says(t: String, c: Color) -> void:
 func _next_call() -> void:
 	if session and session.active:
 		session.hang_up()
-	var p: Dictionary = Callers.LIST[caller_index % Callers.LIST.size()]
+	if caller_order.is_empty():
+		caller_order = Callers.LIST.duplicate()
+		caller_order.shuffle()
+	var p: Dictionary = caller_order.pop_back()
 	caller_index += 1
 	dictated_card = ""
 	session = CallSession.new(p)
@@ -436,14 +423,13 @@ func _set_controls() -> void:
 	var talking := session != null and session.active and not session.busy
 	input.editable = talking
 	send_btn.disabled = not talking
-	for b in quick_box.get_children():
-		b.disabled = not talking
 	hang_btn.disabled = not (session != null and session.active)
 	terminal_btn.text = "▤ Терминал ●" if dictated_card != "" else "▤ Терминал"
 
 
 func _scroll_down() -> void:
 	await get_tree().process_frame
+	await get_tree().process_frame  # ждём, пока переписка пересчитает размеры
 	chat_scroll.scroll_vertical = int(chat_scroll.get_v_scroll_bar().max_value)
 
 
@@ -496,10 +482,11 @@ func _say(text: String) -> void:
 
 
 func _on_send() -> void:
-	var t := input.text.strip_edges()
+	var t := input.text.replace("\n", " ").strip_edges()
 	if t.is_empty():
 		return
-	input.clear()
+	input.text = ""
+	_on_input_changed()
 	input.release_focus()  # прячем клавиатуру, чтобы был виден ответ
 	_say(t)
 
@@ -523,7 +510,7 @@ func _on_card_dictated(card: String) -> void:
 
 func _on_trust(value: int, delta: int) -> void:
 	trust_bar.value = value
-	trust_label.text = "Доверие %d" % value
+	trust_label.text = "Шанс %d%%" % value
 	trust_fill.bg_color = C_RED if value < 30 else (C_YELLOW if value < 60 else C_GREEN)
 	if delta != 0:
 		_add_note("доверие %+d" % delta, C_GREEN if delta > 0 else C_RED)
@@ -538,3 +525,40 @@ func _on_call_ended(reason: String) -> void:
 func _update_balance() -> void:
 	balance_label.text = "$%d" % balance
 	deals_label.text = "сделок: %d" % deals
+
+
+# ---------- ввод и клавиатура ----------
+
+## Поле ввода растёт по мере набора (до INPUT_MAX_H), чтобы текст был виден целиком.
+func _on_input_changed() -> void:
+	var lines := 0
+	for i in input.get_line_count():
+		lines += input.get_line_wrap_count(i) + 1
+	var h := lines * input.get_line_height() + 36
+	input.custom_minimum_size.y = clampf(h, INPUT_MIN_H, INPUT_MAX_H)
+	if Engine.get_process_frames() > 0:
+		input.scroll_vertical = input.get_line_count() * 10
+
+
+## Экранная клавиатура телефона: поднимаем весь экран и терминал над ней.
+func _process(_delta: float) -> void:
+	var px := 0.0
+	if DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+		px = float(DisplayServer.virtual_keyboard_get_height())
+	if OS.get_environment("KB_TEST") == "1":  # для проверки без телефона
+		px = 600.0 if (input.has_focus() or card_input.has_focus()) else 0.0
+	var win_h := float(DisplayServer.window_get_size().y)
+	var h := 0.0
+	if px > 0.0 and win_h > 0.0:
+		h = px * get_viewport_rect().size.y / win_h
+	if absf(h - kb_height) < 1.0:
+		return
+	kb_height = h
+	main_margin.add_theme_constant_override("margin_bottom", 20 + int(h))
+	main_margin.add_theme_constant_override("margin_top", 40 if h <= 0.0 else 16)
+	term_sheet.offset_bottom = -h
+	term_sheet.offset_top = -760 - h
+	caller_info.visible = h <= 0.0  # освобождаем место под переписку
+	actions_box.visible = h <= 0.0
+	header_box.visible = h <= 0.0
+	_scroll_down()
