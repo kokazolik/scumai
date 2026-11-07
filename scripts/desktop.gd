@@ -4,11 +4,11 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.16"
+const VERSION := "0.17"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
-const QUOTA_GROWTH := 1.3    # на сколько растёт план каждую выполненную смену
+const QUOTA_GROWTH := 1.08    # на сколько растёт план каждую выполненную смену
 const INPUT_MIN_H := 96
 const INPUT_MAX_H := 300
 
@@ -45,6 +45,9 @@ var raids := 0
 var upgrades: Dictionary = {}  # купленные улучшения {id: уровень}
 var schemes: Array = ["repair"]  # купленные схемы
 var pay_methods: Array = ["card", "phone"]  # купленные способы оплаты
+var skills: Dictionary = {}    # навыки оператора {id: уровень}
+var play_seconds := 0.0
+var finale_shown := false
 var dictated_gift := ""
 var pinned_gift_btn: Button
 var cur_scheme: Dictionary = {}
@@ -159,7 +162,7 @@ func _ready() -> void:
 
 func _save() -> void:
 	var c := ConfigFile.new()
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods", "skills", "play_seconds", "finale_shown"]:
 		c.set_value("game", k, get(k))
 	c.save(SAVE_PATH)
 
@@ -168,7 +171,7 @@ func _load() -> void:
 	var c := ConfigFile.new()
 	if c.load(SAVE_PATH) != OK:
 		return
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods", "skills", "play_seconds", "finale_shown"]:
 		if c.has_section_key("game", k):
 			set(k, c.get_value("game", k))
 
@@ -185,6 +188,7 @@ func _reset_progress() -> void:
 	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
 	shift_log = []; last_moments = []
 	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["repair"]; pay_methods = ["card", "phone"]
+	skills = {}; play_seconds = 0.0; finale_shown = false
 	_clear_chat()
 	_save()
 	_update_balance()
@@ -447,8 +451,8 @@ func _refresh_menu() -> void:
 	else:
 		menu_play_btn.text = "▶ Начать работу"
 	if _has_progress():
-		menu_stats.text = "%s · смена %d · план %s / %s\nНа счету %s · сделок %d · жара %d%%\nСхем: %d · лучшая смена: %s" % [
-			_rank_name(), shift, _rub(shift_earned), _rub(quota), _rub(balance), deals, heat, schemes.size(), _rub(best_shift)]
+		menu_stats.text = "%s · ур. %d · смена %d\nПлан %s / %s · на счету %s\nСхем: %d · жара %d%% · в игре %d ч %d мин" % [
+			_rank_name(), Upgrades.operator_level(deals), shift, _rub(shift_earned), _rub(quota), _rub(balance), schemes.size(), heat, int(play_seconds / 3600.0), int(play_seconds / 60.0) % 60]
 	else:
 		menu_stats.text = "Ты оператор конторы. Тебе звонят люди с объявлений. Придумай услугу, назови цену и получи деньги.\nПлан первой смены: " + _rub(FIRST_QUOTA)
 
@@ -478,8 +482,10 @@ func _show_help() -> void:
 • Списать можно только ту сумму, на которую клиент согласился.
 • Клиент может бросить трубку в любой момент.
 • Микрофон: с бесплатным ключом голоса (меню «Ключи») нажми, скажи фразу, нажми ещё раз, и она отправится. Без ключа откроется диктовка клавиатуры.
-• Жара растёт с каждой сделкой. На 100% будет облава и штраф. Пустые звонки и конец смены её сбивают.
+• Жара растёт с каждой сделкой. На 100% будет облава и штраф. Пустые звонки (−3%) и конец смены (−20%) её сбивают.
 • Способы оплаты из магазина (подарочные карты, криптокошелёк и дальше) позволяют брать суммы крупнее: просто предложи их клиенту в разговоре.
+• За сделки растёт уровень оператора и даются очки навыков (магазин, раздел «Навыки»).
+• Цель игры — стать Королём скама: заработать 80 000 000 ₽.
 • Деньги со счёта тратятся в магазине на новые схемы и улучшения. Схемы приводят клиентов богаче и складываются. Ранг растёт от заработка и открывает новые товары.
 • В конце смены вспомним самые смешные моменты."""
 	var l := _label(text, 26, C_INK, true)
@@ -966,7 +972,16 @@ func _add_money(rub: int, method := "card") -> void:
 	var new_rank := Upgrades.rank_index(earned_total)
 	if new_rank > old_rank:
 		_add_note("★ Новый ранг: %s! В магазине открылись новые улучшения, клиенты стали богаче." % Upgrades.RANKS[new_rank]["name"], C_PURPLE, true)
-	_add_heat(int(round((5 + rub / 1000.0) * float(cur_scheme.get("heat", 1.0)) * float(Upgrades.method(method)["heat"]) * (1.0 - 0.25 * Upgrades.level(upgrades, "lawyer")))))
+	# Жара растёт медленнее суммы (логарифм), иначе на крупных схемах облава была бы после каждой сделки.
+	var h := (3.0 + 3.0 * log(1.0 + rub / 1000.0) / log(10.0)) * float(cur_scheme.get("heat", 1.0)) * float(Upgrades.method(method)["heat"])
+	h *= (1.0 - 0.2 * Upgrades.level(upgrades, "lawyer")) * (1.0 - 0.08 * _skill("cool"))
+	_add_heat(int(round(h)))
+	var lvl_before := Upgrades.operator_level(deals - 1)
+	if Upgrades.operator_level(deals) > lvl_before:
+		_add_note("▲ Уровень оператора %d! Получено очко навыка, потратьте его в магазине." % Upgrades.operator_level(deals), C_BLUE, true)
+	if new_rank == Upgrades.RANKS.size() - 1 and not finale_shown:
+		finale_shown = true
+		call_deferred("_show_finale")
 	_update_balance()
 	_bump(balance_label)
 	_save()
@@ -1087,14 +1102,25 @@ func _rank_name() -> String:
 
 ## Улучшения и ранг меняют звонок: стартовое доверие, шанс, штрафы, бюджет клиента.
 func _apply_upgrades(s: CallSession) -> void:
-	s.trust = clampi(s.trust + 6 * Upgrades.level(upgrades, "script"), 1, CallSession.MAX_TRUST)
-	s.roll_bonus = 8 * Upgrades.level(upgrades, "spoof")
-	s.neg_mult = 0.67 if Upgrades.level(upgrades, "acting") > 0 else 1.0
+	s.trust = clampi(s.trust + 5 * Upgrades.level(upgrades, "script") + 3 * _skill("charm"), 1, CallSession.MAX_TRUST)
+	s.roll_bonus = 5 * Upgrades.level(upgrades, "spoof") + 3 * _skill("persuade")
+	s.neg_mult = (1.0 - 0.2 * Upgrades.level(upgrades, "acting")) * (1.0 - 0.08 * _skill("patience"))
 	var mult: float = Upgrades.RANKS[Upgrades.rank_index(earned_total)]["mult"]
-	if Upgrades.level(upgrades, "office") > 0:
-		mult *= 1.3
-	mult *= float(cur_scheme.get("mult", 1.0)) * (1.0 + 0.05 * (schemes.size() - 1))  # схемы складываются
+	mult *= 1.0 + 0.15 * Upgrades.level(upgrades, "office")
+	mult *= 1.0 + 0.05 * _skill("bargain")
+	mult *= float(cur_scheme.get("mult", 1.0)) * (1.0 + 0.04 * (schemes.size() - 1))  # схемы складываются
 	s.budget = int(round(s.budget * mult / 500.0)) * 500
+
+
+func _skill(id: String) -> int:
+	return int(skills.get(id, 0))
+
+
+func _skill_points() -> int:
+	var spent := 0
+	for k in skills:
+		spent += int(skills[k])
+	return Upgrades.operator_level(deals) - spent
 
 
 ## Жара: каждая сделка привлекает внимание. На 100 — облава.
@@ -1122,6 +1148,18 @@ func _raid() -> void:
 	v.add_child(_big_button("Работаем дальше", C_ACCENT, func(): m[0].queue_free(), 110))
 
 
+func _show_finale() -> void:
+	var m := _modal()
+	var v: VBoxContainer = m[1]
+	v.add_child(_label("♛ КОРОЛЬ СКАМА", 52, C_YELLOW.darkened(0.25), false, HORIZONTAL_ALIGNMENT_CENTER))
+	var h := int(play_seconds / 3600.0)
+	var mins := int(play_seconds / 60.0) % 60
+	var l := _label("Ты прошёл путь от стажёра до короля телефонного скама.\n\nЗаработано за игру: %s\nСделок: %d · звонков: %d · облав: %d\nВремя в игре: %d ч %d мин\n\nКонтора продолжает работать: можно играть дальше и скупить всё до конца." % [_rub(earned_total), deals, total_calls, raids, h, mins], 27, C_INK, true, HORIZONTAL_ALIGNMENT_CENTER)
+	l.custom_minimum_size.x = 580
+	v.add_child(l)
+	v.add_child(_big_button("Продолжить царствовать", C_GREEN, func(): m[0].queue_free(), 110))
+
+
 func _show_shop() -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
@@ -1147,8 +1185,31 @@ func _show_shop() -> void:
 		top.text = "На счету %s · ранг: %s%s" % [_rub(balance), Upgrades.RANKS[r]["name"], nxt]
 		for c in list.get_children():
 			c.queue_free()
+		var pts := _skill_points()
+		list.add_child(_label("Навыки", 32, C_ACCENT))
+		list.add_child(_label("Уровень оператора %d. Свободных очков: %d. Очки дают за сделки." % [Upgrades.operator_level(deals), pts], 22, C_MUTED, true))
+		for skd in Upgrades.SKILLS:
+			var sl := _skill(skd["id"])
+			var srow := HBoxContainer.new()
+			srow.add_theme_constant_override("separation", 10)
+			var sinfo := VBoxContainer.new()
+			sinfo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			sinfo.add_child(_label("%s  %d/%d" % [skd["name"], sl, Upgrades.SKILL_MAX], 27, C_INK, true))
+			sinfo.add_child(_label(skd["desc"], 21, C_MUTED, true))
+			srow.add_child(sinfo)
+			var skid: String = skd["id"]
+			var plus := _big_button("+", C_BLUE if (pts > 0 and sl < Upgrades.SKILL_MAX) else Color("b9bccb"), func():
+				if _skill_points() <= 0 or _skill(skid) >= Upgrades.SKILL_MAX:
+					return
+				skills[skid] = _skill(skid) + 1
+				_save()
+				holder[0].call(), 76)
+			plus.custom_minimum_size.x = 90
+			plus.size_flags_horizontal = Control.SIZE_SHRINK_END
+			srow.add_child(plus)
+			list.add_child(srow)
 		list.add_child(_label("Схемы", 32, C_ACCENT))
-		list.add_child(_label("Каждая схема приводит клиентов побогаче. Купленные складываются: +5%% к каждой сделке за схему и доход в конце смены (сейчас %s)." % _rub(Upgrades.passive_income(schemes)), 22, C_MUTED, true))
+		list.add_child(_label("Каждая схема приводит клиентов побогаче. Купленные складываются: +4%% к бюджету клиентов за схему и доход в конце смены (сейчас %s)." % _rub(Upgrades.passive_income(schemes)), 22, C_MUTED, true))
 		for sc_item in Upgrades.SCHEMES:
 			if sc_item["price"] == 0:
 				continue
@@ -1467,7 +1528,8 @@ func _show_shift_result() -> void:
 	session = null
 	var ok := shift_earned >= quota
 	best_shift = maxi(best_shift, shift_earned)
-	var next_quota := int(round(quota * QUOTA_GROWTH / 500.0)) * 500 if ok else quota
+	# План растёт на 8%, но не меньше 60% от заработанного в этой смене, чтобы не отставать от игрока.
+	var next_quota := int(round(maxf(quota * QUOTA_GROWTH, shift_earned * 0.6) / 500.0)) * 500 if ok else quota
 	# Старые схемы приносят доход, только если смена вообще работала: весь при выполненном плане, половину иначе.
 	var passive := 0 if shift_earned <= 0 else (Upgrades.passive_income(schemes) if ok else Upgrades.passive_income(schemes) / 2)
 	if passive > 0:
@@ -1492,7 +1554,7 @@ func _show_shift_result() -> void:
 	dots.tween_property(wait, "modulate:a", 1.0, 0.5)
 
 	var log_copy := shift_log.duplicate(true)
-	heat = maxi(0, heat - 15)
+	heat = maxi(0, heat - 20)
 	# Сразу закрываем смену в сохранении, чтобы итог не потерялся при выходе.
 	if ok:
 		shift += 1
@@ -1601,6 +1663,8 @@ func _on_input_changed() -> void:
 
 
 func _process(_delta: float) -> void:
+	if menu and not menu.visible:
+		play_seconds += _delta
 	if recorder and recorder.recording:
 		var sec := int(recorder.elapsed())
 		status_label.text = "● Запись %d:%02d · нажмите микрофон, чтобы отправить" % [sec / 60, sec % 60]

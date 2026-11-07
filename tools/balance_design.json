@@ -1,0 +1,220 @@
+{
+ "quota_growth": 1.08,
+ "quota_follow": 0.6,
+ "ranks": [
+  {
+   "name": "Стажёр",
+   "earned": 0,
+   "mult": 1.0
+  },
+  {
+   "name": "Оператор",
+   "earned": 60000,
+   "mult": 1.15
+  },
+  {
+   "name": "Старший оператор",
+   "earned": 250000,
+   "mult": 1.3
+  },
+  {
+   "name": "Начальник смены",
+   "earned": 1000000,
+   "mult": 1.5
+  },
+  {
+   "name": "Менеджер по продажам",
+   "earned": 4000000,
+   "mult": 1.7
+  },
+  {
+   "name": "Директор конторы",
+   "earned": 12000000,
+   "mult": 1.9
+  },
+  {
+   "name": "Владелец сети контор",
+   "earned": 35000000,
+   "mult": 2.1
+  },
+  {
+   "name": "Король скама",
+   "earned": 100000000,
+   "mult": 2.4
+  }
+ ],
+ "schemes": [
+  {
+   "id": "repair",
+   "price": 0,
+   "rank": 0,
+   "mult": 1.0,
+   "passive": 0
+  },
+  {
+   "id": "prize",
+   "price": 13000,
+   "rank": 0,
+   "mult": 1.31,
+   "passive": 800
+  },
+  {
+   "id": "courses",
+   "price": 49000,
+   "rank": 1,
+   "mult": 1.69,
+   "passive": 2500
+  },
+  {
+   "id": "gadgets",
+   "price": 137000,
+   "rank": 2,
+   "mult": 2.12,
+   "passive": 7000
+  },
+  {
+   "id": "healer",
+   "price": 330000,
+   "rank": 2,
+   "mult": 2.62,
+   "passive": 16000
+  },
+  {
+   "id": "lottery",
+   "price": 825000,
+   "rank": 3,
+   "mult": 3.25,
+   "passive": 40000
+  },
+  {
+   "id": "crypto",
+   "price": 2200000,
+   "rank": 4,
+   "mult": 4.0,
+   "passive": 100000
+  },
+  {
+   "id": "fund",
+   "price": 5500000,
+   "rank": 5,
+   "mult": 4.88,
+   "passive": 250000
+  },
+  {
+   "id": "moon",
+   "price": 13750000,
+   "rank": 6,
+   "mult": 6.0,
+   "passive": 600000
+  },
+  {
+   "id": "mars",
+   "price": 33000000,
+   "rank": 6,
+   "mult": 7.25,
+   "passive": 1400000
+  }
+ ],
+ "methods": [
+  {
+   "id": "card",
+   "price": 0,
+   "rank": 0,
+   "cap": 1.0,
+   "chance": 0
+  },
+  {
+   "id": "gift",
+   "price": 66000,
+   "rank": 1,
+   "cap": 1.4,
+   "chance": -6
+  },
+  {
+   "id": "crypto",
+   "price": 385000,
+   "rank": 2,
+   "cap": 1.8,
+   "chance": -9
+  },
+  {
+   "id": "safe",
+   "price": 1650000,
+   "rank": 4,
+   "cap": 2.3,
+   "chance": -13
+  },
+  {
+   "id": "loan",
+   "price": 6600000,
+   "rank": 5,
+   "cap": 2.8,
+   "chance": -17
+  }
+ ],
+ "upgrades": [
+  {
+   "id": "script",
+   "rank": 0,
+   "prices": [
+    4000,
+    22000,
+    110000,
+    550000,
+    2750000
+   ]
+  },
+  {
+   "id": "coffee",
+   "rank": 0,
+   "prices": [
+    16000,
+    220000,
+    3300000
+   ]
+  },
+  {
+   "id": "spoof",
+   "rank": 1,
+   "prices": [
+    27000,
+    165000,
+    1100000
+   ]
+  },
+  {
+   "id": "lawyer",
+   "rank": 1,
+   "prices": [
+    33000,
+    275000,
+    2200000
+   ]
+  },
+  {
+   "id": "base",
+   "rank": 2,
+   "prices": [
+    165000
+   ]
+  },
+  {
+   "id": "acting",
+   "rank": 2,
+   "prices": [
+    220000,
+    1650000
+   ]
+  },
+  {
+   "id": "office",
+   "rank": 3,
+   "prices": [
+    825000,
+    4400000,
+    22000000
+   ]
+  }
+ ],
+ "skills": {}
+}
