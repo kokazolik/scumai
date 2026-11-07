@@ -45,74 +45,144 @@
  ],
  "schemes": [
   {
-   "id": "repair",
+   "id": "ads",
    "price": 0,
    "rank": 0,
    "mult": 1.0,
    "passive": 0
   },
   {
+   "id": "repair",
+   "price": 8000,
+   "rank": 0,
+   "mult": 1.11,
+   "passive": 200
+  },
+  {
    "id": "prize",
    "price": 13000,
    "rank": 0,
-   "mult": 1.31,
+   "mult": 1.24,
+   "passive": 300
+  },
+  {
+   "id": "parcel",
+   "price": 21000,
+   "rank": 0,
+   "mult": 1.37,
+   "passive": 500
+  },
+  {
+   "id": "job",
+   "price": 33000,
+   "rank": 1,
+   "mult": 1.53,
    "passive": 800
   },
   {
    "id": "courses",
-   "price": 49000,
+   "price": 53000,
    "rank": 1,
-   "mult": 1.69,
-   "passive": 2500
+   "mult": 1.7,
+   "passive": 1300
   },
   {
    "id": "gadgets",
-   "price": 137000,
+   "price": 85000,
+   "rank": 1,
+   "mult": 1.89,
+   "passive": 2100
+  },
+  {
+   "id": "compens",
+   "price": 140000,
    "rank": 2,
-   "mult": 2.12,
-   "passive": 7000
+   "mult": 2.1,
+   "passive": 3500
   },
   {
    "id": "healer",
-   "price": 330000,
+   "price": 220000,
    "rank": 2,
-   "mult": 2.62,
-   "passive": 16000
+   "mult": 2.34,
+   "passive": 5500
+  },
+  {
+   "id": "prince",
+   "price": 350000,
+   "rank": 2,
+   "mult": 2.6,
+   "passive": 8800
   },
   {
    "id": "lottery",
-   "price": 825000,
+   "price": 570000,
    "rank": 3,
-   "mult": 3.25,
-   "passive": 40000
+   "mult": 2.89,
+   "passive": 14200
   },
   {
    "id": "crypto",
-   "price": 2200000,
-   "rank": 4,
-   "mult": 4.0,
-   "passive": 100000
+   "price": 910000,
+   "rank": 3,
+   "mult": 3.21,
+   "passive": 22800
   },
   {
    "id": "fund",
-   "price": 5500000,
-   "rank": 5,
-   "mult": 4.88,
-   "passive": 250000
+   "price": 1500000,
+   "rank": 3,
+   "mult": 3.57,
+   "passive": 37500
+  },
+  {
+   "id": "stars",
+   "price": 2300000,
+   "rank": 4,
+   "mult": 3.97,
+   "passive": 57500
+  },
+  {
+   "id": "air",
+   "price": 3800000,
+   "rank": 4,
+   "mult": 4.41,
+   "passive": 95000
   },
   {
    "id": "moon",
-   "price": 13750000,
-   "rank": 6,
-   "mult": 6.0,
-   "passive": 600000
+   "price": 6000000,
+   "rank": 5,
+   "mult": 4.91,
+   "passive": 150000
   },
   {
    "id": "mars",
-   "price": 33000000,
+   "price": 9700000,
+   "rank": 5,
+   "mult": 5.46,
+   "passive": 242500
+  },
+  {
+   "id": "sun",
+   "price": 16000000,
    "rank": 6,
-   "mult": 7.25,
-   "passive": 1400000
+   "mult": 6.07,
+   "passive": 400000
+  },
+  {
+   "id": "time",
+   "price": 25000000,
+   "rank": 6,
+   "mult": 6.75,
+   "passive": 625000
+  },
+  {
+   "id": "immortal",
+   "price": 40000000,
+   "rank": 6,
+   "mult": 7.5,
+   "passive": 1000000
   }
  ],
  "methods": [

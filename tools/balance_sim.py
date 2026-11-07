@@ -1,4 +1,5 @@
 import random, math, json, sys
+COMBO=float(sys.argv[5]) if len(sys.argv)>5 else 0.025
 MIN_PER_CALL=float(sys.argv[1]) if len(sys.argv)>1 else 2.5
 TAKE=float(sys.argv[2]) if len(sys.argv)>2 else 0.4
 D=json.load(open(sys.argv[3] if len(sys.argv)>3 else 'tools/balance_design.json'))
@@ -14,7 +15,7 @@ def run(seed):
         m=RANKS[r]['mult']*(1+0.15*lv('office'))*(1+0.05*sk.get('bargain',0))
         ss=[s for s in SCHEMES if s['id'] in sch]
         s=random.choices(ss,weights=[i+1 for i in range(len(ss))])[0]
-        mult=s['mult']*(1+0.04*(len(sch)-1))
+        mult=s["mult"]*(1+COMBO*(len(sch)-1))
         best=max((x for x in METHODS if x['id'] in meth), key=lambda x:x['cap'])
         budget=random.randint(4,40)*500*m*mult*best['cap']
         chance=min(0.95,0.6+0.03*lv('script')+0.03*lv('spoof')+0.025*sk.get('persuade',0)+best['chance']/100)

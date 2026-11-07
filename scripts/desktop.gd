@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.17"
+const VERSION := "0.18"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -43,7 +43,7 @@ var earned_total := 0          # всё заработанное за игру, 
 var heat := 0                  # внимание полиции 0..100
 var raids := 0
 var upgrades: Dictionary = {}  # купленные улучшения {id: уровень}
-var schemes: Array = ["repair"]  # купленные схемы
+var schemes: Array = ["ads"]  # купленные схемы
 var pay_methods: Array = ["card", "phone"]  # купленные способы оплаты
 var skills: Dictionary = {}    # навыки оператора {id: уровень}
 var play_seconds := 0.0
@@ -174,6 +174,8 @@ func _load() -> void:
 	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods", "skills", "play_seconds", "finale_shown"]:
 		if c.has_section_key("game", k):
 			set(k, c.get_value("game", k))
+	if not "ads" in schemes:  # сохранения до 0.18: первой схемы «Объявления» тогда не было
+		schemes.insert(0, "ads")
 
 
 func _has_progress() -> bool:
@@ -187,7 +189,7 @@ func _reset_progress() -> void:
 	balance = 0; deals = 0; shift = 1; quota = FIRST_QUOTA
 	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
 	shift_log = []; last_moments = []
-	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["repair"]; pay_methods = ["card", "phone"]
+	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["ads"]; pay_methods = ["card", "phone"]
 	skills = {}; play_seconds = 0.0; finale_shown = false
 	_clear_chat()
 	_save()
@@ -1051,14 +1053,14 @@ func _next_call() -> void:
 		while p["name"] in used_names and not caller_order.is_empty():
 			p = caller_order.pop_back()
 		p = p.duplicate()
-		p["scheme"] = "repair"
+		p["scheme"] = "ads"
 	used_names.append(p["name"])
 	_prefetch_caller()
 	dictated_card = ""
 	pinned_card_btn.hide()
 	session = CallSession.new(p)
 	call_paid = false
-	cur_scheme = Upgrades.scheme(str(p.get("scheme", "repair")))
+	cur_scheme = Upgrades.scheme(str(p.get("scheme", "ads")))
 	_apply_upgrades(session)
 	session.set_methods(pay_methods)
 	dictated_gift = ""
@@ -1108,7 +1110,7 @@ func _apply_upgrades(s: CallSession) -> void:
 	var mult: float = Upgrades.RANKS[Upgrades.rank_index(earned_total)]["mult"]
 	mult *= 1.0 + 0.15 * Upgrades.level(upgrades, "office")
 	mult *= 1.0 + 0.05 * _skill("bargain")
-	mult *= float(cur_scheme.get("mult", 1.0)) * (1.0 + 0.04 * (schemes.size() - 1))  # схемы складываются
+	mult *= float(cur_scheme.get("mult", 1.0)) * (1.0 + 0.025 * (schemes.size() - 1))  # схемы складываются
 	s.budget = int(round(s.budget * mult / 500.0)) * 500
 
 
@@ -1209,7 +1211,7 @@ func _show_shop() -> void:
 			srow.add_child(plus)
 			list.add_child(srow)
 		list.add_child(_label("Схемы", 32, C_ACCENT))
-		list.add_child(_label("Каждая схема приводит клиентов побогаче. Купленные складываются: +4%% к бюджету клиентов за схему и доход в конце смены (сейчас %s)." % _rub(Upgrades.passive_income(schemes)), 22, C_MUTED, true))
+		list.add_child(_label("Каждая схема приводит клиентов побогаче. Купленные складываются: +2,5%% к бюджету клиентов за схему и доход в конце смены (сейчас %s)." % _rub(Upgrades.passive_income(schemes)), 22, C_MUTED, true))
 		for sc_item in Upgrades.SCHEMES:
 			if sc_item["price"] == 0:
 				continue
