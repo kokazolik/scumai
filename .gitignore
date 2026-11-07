@@ -1,0 +1,5 @@
+.godot/
+secrets.cfg
+build/
+*.apk
+*.idsig
