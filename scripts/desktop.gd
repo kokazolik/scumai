@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.18"
+const VERSION := "0.19"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -176,6 +176,8 @@ func _load() -> void:
 			set(k, c.get_value("game", k))
 	if not "ads" in schemes:  # сохранения до 0.18: первой схемы «Объявления» тогда не было
 		schemes.insert(0, "ads")
+	if "repair" in schemes:  # «Ремонт на дому» влился в «Объявления», вместо него «Квартира посуточно»
+		schemes[schemes.find("repair")] = "rent"
 
 
 func _has_progress() -> bool:

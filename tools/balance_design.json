@@ -52,7 +52,7 @@
    "passive": 0
   },
   {
-   "id": "repair",
+   "id": "rent",
    "price": 8000,
    "rank": 0,
    "mult": 1.11,
