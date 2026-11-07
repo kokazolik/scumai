@@ -13,6 +13,11 @@ signal thinking(is_thinking: bool)
 signal call_ended(reason: String)  # "hung_up" | "card_given" | "operator"
 signal card_dictated(card: String)
 signal price_agreed(rub: int)
+signal transfer_done(rub: int)
+
+## Корпоративный номер для перевода по номеру телефона (вымышленный).
+const CORP_PHONE := "+7 900 555-01-23"
+const CORP_BANK := "Восход-Банк"
 
 const MAX_TRUST := 100
 const REFUSE_PENALTY := 10
@@ -29,7 +34,9 @@ var card_given := false
 var last_operator_line := ""
 var agreed_price := 0  # сколько клиент согласился заплатить, ₽
 var budget := 0        # сколько у клиента примерно есть денег, ₽
-var _card_answer := ""  # "agree" | "refuse" | "" на текущий ход
+var paid := false        # деньги уже получены (карта списана или перевод)
+var _card_answer := ""
+var _transfer_answer := ""  # "agree" | "refuse" | "no_price" | ""  # "agree" | "refuse" | "" на текущий ход
 
 
 func _init(p: Dictionary) -> void:
@@ -73,6 +80,12 @@ func _messages() -> Array:
 		sys += "\n\nОператор просит номер твоей карты. Ты СОГЛАСЕН(НА). Коротко скажи, что сейчас пришлёшь номер сообщением. Сам номер не пиши."
 	elif _card_answer == "refuse":
 		sys += "\n\nОператор просит номер твоей карты. Ты ОТКАЗЫВАЕШЬСЯ его называть. Объясни отказ в духе своего характера."
+	if _transfer_answer == "agree":
+		sys += "\n\nОператор продиктовал номер телефона %s, чтобы ты перевёл(а) %d рублей через %s. Ты СОГЛАСЕН(НА): скажи, что перевёл(а) деньги по этому номеру." % [CORP_PHONE, agreed_price, CORP_BANK]
+	elif _transfer_answer == "refuse":
+		sys += "\n\nОператор просит перевести деньги по номеру телефона. Ты ОТКАЗЫВАЕШЬСЯ переводить. Объясни отказ в духе своего характера."
+	elif _transfer_answer == "no_price":
+		sys += "\n\nОператор просит перевести деньги по номеру телефона, но вы ещё не договорились о сумме. Спроси, сколько именно переводить и за что."
 	return [{"role": "system", "content": sys}] + history
 
 
@@ -121,7 +134,13 @@ func say(text: String) -> void:
 	history.append({"role": "user", "content": "Оператор: " + text})
 	last_operator_line = text
 	_card_answer = ""
-	if not card_given and asks_for_card(text):
+	_transfer_answer = ""
+	if not paid and has_corp_phone(text):
+		if agreed_price <= 0:
+			_transfer_answer = "no_price"
+		else:
+			_transfer_answer = "agree" if randi() % 100 < trust else "refuse"  # шанс = доверие в %
+	elif not card_given and not paid and asks_for_card(text):
 		_card_answer = "agree" if randi() % 100 < trust else "refuse"  # шанс = доверие в %
 	await _ask_model(true)
 	if not active:
@@ -132,7 +151,14 @@ func say(text: String) -> void:
 		card_dictated.emit(card_number)
 	elif _card_answer == "refuse":
 		_set_trust(-REFUSE_PENALTY)
+	if _transfer_answer == "agree":
+		paid = true
+		history.append({"role": "assistant", "content": "(перевёл(а) %d рублей по номеру телефона)" % agreed_price})
+		transfer_done.emit(agreed_price)
+	elif _transfer_answer == "refuse":
+		_set_trust(-REFUSE_PENALTY)
 	_card_answer = ""
+	_transfer_answer = ""
 
 
 ## Похожа ли реплика на бессмыслицу: мало настоящих слов или одни повторы.
@@ -151,6 +177,36 @@ static func is_gibberish(text: String) -> bool:
 		return false  # короткий ответ «да»/«нет» пусть оценивает модель
 	var long_words := words.filter(func(w): return w.length() >= 4)
 	return long_words.is_empty() or (uniq.size() == 1 and words.size() >= 3)
+
+
+## Самая большая сумма, которую оператор назвал в реплике («2000», «2 000», «2 тысячи»).
+## Клиент может согласиться только на названную оператором цену или меньше.
+static func mentioned_price(text: String) -> int:
+	var best := 0
+	var t := text.to_lower()
+	var re := RegEx.create_from_string("(\\d[\\d\\s]*\\d|\\d)(\\s*(тыс|к(?![а-яё])))?")
+	for m in re.search_all(t):
+		var digits := m.get_string(1).replace(" ", "")
+		if digits.length() > 7:
+			continue  # это номер телефона или карты, а не цена
+		var n := int(digits)
+		if m.get_string(2) != "":
+			n *= 1000
+		best = maxi(best, n)
+	return best
+
+
+## Продиктовал ли игрок корпоративный номер (цифры в любом формате).
+static func has_corp_phone(text: String) -> bool:
+	var digits := ""
+	for ch in text:
+		if ch >= "0" and ch <= "9":
+			digits += ch
+	var corp := ""
+	for ch in CORP_PHONE:
+		if ch >= "0" and ch <= "9":
+			corp += ch
+	return digits.contains(corp.substr(1))  # без первой цифры: +7 / 8 / без кода
 
 
 ## Просит ли реплика игрока номер карты.
@@ -180,15 +236,16 @@ func _ask_model(apply_trust: bool) -> void:
 	history.append({"role": "assistant", "content": d["reply"] if d["reply"] != "" else "(молчит)"})
 	if d["reply"] != "":
 		caller_spoke.emit(d["reply"])
-	if apply_trust and d["agreed_price"] > 0 and d["agreed_price"] <= budget and d["agreed_price"] != agreed_price:
+	var offered := mentioned_price(last_operator_line)
+	if apply_trust and d["agreed_price"] > 0 and d["agreed_price"] <= mini(budget, offered) and d["agreed_price"] != agreed_price:
 		agreed_price = d["agreed_price"]
 		price_agreed.emit(agreed_price)
-	if apply_trust and d["hang_up"] and _card_answer != "agree":
+	if apply_trust and d["hang_up"] and _card_answer != "agree" and _transfer_answer != "agree":
 		_end("hung_up")
 		return
 	if apply_trust:
 		var delta: int = d["trust_delta"]
-		if _card_answer != "":
+		if _card_answer != "" or _transfer_answer != "":
 			delta = 0  # просьбу о карте решает бросок, а не оценка модели
 		if is_gibberish(last_operator_line) and delta > -10:
 			delta = -10  # «бе-бе-бе» никогда не вызывает доверия

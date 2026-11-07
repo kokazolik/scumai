@@ -9,7 +9,7 @@ const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
 const QUOTA_GROWTH := 1.3    # на сколько растёт план каждую выполненную смену
 const INPUT_MIN_H := 100
-const INPUT_MAX_H := 200
+const INPUT_MAX_H := 300
 
 # Яркая палитра
 const C_BG := Color("fff4d6")
@@ -33,6 +33,8 @@ var shift_earned := 0
 var shift_calls := 0
 var quota_bar: ProgressBar
 var charge_btn: Button
+var pinned_card_row: HBoxContainer
+var pinned_card_label: Label
 var caller_index := 0
 var caller_order: Array = []
 var main_margin: MarginContainer
@@ -287,7 +289,42 @@ func _build_caller_card() -> Control:
 	trust_fill = _box(C_YELLOW, 18, 0)
 	trust_bar.add_theme_stylebox_override("fill", trust_fill)
 	th.add_child(trust_bar)
+
+	# Корпоративный номер для перевода: копируешь и вставляешь в чат.
+	var corp := HBoxContainer.new()
+	corp.add_theme_constant_override("separation", 10)
+	var corp_l := Label.new()
+	corp_l.text = "Наш номер для перевода:\n" + CallSession.CORP_PHONE
+	corp_l.add_theme_font_size_override("font_size", 24)
+	corp_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	corp.add_child(corp_l)
+	var corp_b := _small_button("Скопировать", C_ACCENT, func():
+		DisplayServer.clipboard_set(CallSession.CORP_PHONE)
+		_add_note("Номер для перевода скопирован. Продиктуйте его клиенту в чате.", C_BLUE))
+	corp.add_child(corp_b)
+	v.add_child(corp)
+
+	# Присланный номер карты закреплён здесь, чтобы не искать его в переписке.
+	pinned_card_row = HBoxContainer.new()
+	pinned_card_row.add_theme_constant_override("separation", 10)
+	pinned_card_label = Label.new()
+	pinned_card_label.add_theme_font_size_override("font_size", 26)
+	pinned_card_label.add_theme_color_override("font_color", C_GREEN)
+	pinned_card_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pinned_card_row.add_child(pinned_card_label)
+	pinned_card_row.add_child(_small_button("Скопировать", C_BLUE, func():
+		DisplayServer.clipboard_set(dictated_card.replace(" ", ""))
+		_add_note("Номер карты скопирован. Вставьте его в терминале.", C_BLUE)))
+	pinned_card_row.hide()
+	v.add_child(pinned_card_row)
 	return card
+
+
+func _small_button(text: String, color: Color, cb: Callable) -> Button:
+	var b := _big_button(text, color, cb, 76)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_END
+	b.add_theme_font_size_override("font_size", 24)
+	return b
 
 
 func _build_chat() -> Control:
@@ -456,17 +493,32 @@ func _on_charge() -> void:
 	if dictated_card == "" or digits != dictated_card.replace(" ", ""):
 		_term_says("✖ Операция отклонена: карта не найдена.", C_RED)
 		return
+	if session.paid:
+		_term_says("✖ С этого клиента деньги уже получены.", C_RED)
+		return
 	var price: int = session.agreed_price
 	if price <= 0:
 		_term_says("✖ Клиент не соглашался ни на какую сумму. Договоритесь о цене.", C_RED)
 		return
-	balance += price
-	shift_earned += price
-	deals += 1
+	session.paid = true
+	_add_money(price)
 	dictated_card = ""
-	_update_balance()
+	pinned_card_row.hide()
 	card_input.text = ""
 	_term_says("✔ Операция одобрена. Списано %s." % _rub(price), C_GREEN)
+	_set_controls()
+
+
+func _add_money(rub: int) -> void:
+	balance += rub
+	shift_earned += rub
+	deals += 1
+	_update_balance()
+
+
+func _on_transfer_done(rub: int) -> void:
+	_add_money(rub)
+	_add_note("✔ Поступил перевод %s по номеру %s" % [_rub(rub), CallSession.CORP_PHONE], C_GREEN)
 	_set_controls()
 
 
@@ -498,6 +550,8 @@ func _next_call() -> void:
 	session.thinking.connect(_on_thinking)
 	session.call_ended.connect(_on_call_ended)
 	session.card_dictated.connect(_on_card_dictated)
+	session.transfer_done.connect(_on_transfer_done)
+	pinned_card_row.hide()
 	session.price_agreed.connect(func(rub): _add_note("Клиент согласен заплатить " + _rub(rub), C_GREEN))
 	for c in chat_list.get_children():
 		c.queue_free()
@@ -525,7 +579,9 @@ func _scroll_down() -> void:
 
 func _add_bubble(who: String, text: String, mine: bool) -> void:
 	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bubble := PanelContainer.new()
+	bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bubble.add_theme_stylebox_override("panel", _box(C_ME_BUBBLE if mine else C_CALLER_BUBBLE, 24, 18))
 	bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bubble.size_flags_stretch_ratio = 5.0
@@ -593,6 +649,8 @@ func _on_thinking(on: bool) -> void:
 
 func _on_card_dictated(card: String) -> void:
 	dictated_card = card
+	pinned_card_label.text = "Карта: " + card
+	pinned_card_row.show()
 	_add_bubble(session.profile["name"], "✉ " + card, false)
 	var copy_btn := _big_button("⧉ Скопировать номер", C_BLUE, func():
 		DisplayServer.clipboard_set(card.replace(" ", ""))
@@ -685,8 +743,7 @@ func _on_input_changed() -> void:
 		lines += input.get_line_wrap_count(i) + 1
 	var h := lines * input.get_line_height() + 36
 	input.custom_minimum_size.y = clampf(h, INPUT_MIN_H, INPUT_MAX_H)
-	if Engine.get_process_frames() > 0:
-		input.scroll_vertical = input.get_line_count() * 10
+	input.adjust_viewport_to_caret()  # строка с курсором всегда видна
 
 
 ## Экранная клавиатура телефона: поднимаем весь экран и терминал над ней.
@@ -711,3 +768,16 @@ func _process(_delta: float) -> void:
 	actions_box.visible = h <= 0.0
 	header_box.visible = h <= 0.0
 	_scroll_down()
+
+
+## Прокрутка пальцем. Свои обработчики, потому что на телефоне стандартная
+## прокрутка в переписке и в поле ввода срабатывала ненадёжно.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventScreenDrag) or terminal.visible:
+		return
+	if chat_scroll.get_global_rect().has_point(event.position):
+		chat_scroll.scroll_vertical -= int(event.relative.y)
+		get_viewport().set_input_as_handled()
+	elif input.get_global_rect().has_point(event.position):
+		input.scroll_vertical -= event.relative.y / float(input.get_line_height())
+		get_viewport().set_input_as_handled()
