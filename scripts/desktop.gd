@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.14"
+const VERSION := "0.15"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -43,6 +43,8 @@ var earned_total := 0          # всё заработанное за игру, 
 var heat := 0                  # внимание полиции 0..100
 var raids := 0
 var upgrades: Dictionary = {}  # купленные улучшения {id: уровень}
+var schemes: Array = ["repair"]  # купленные схемы
+var cur_scheme: Dictionary = {}
 var heat_bar: ProgressBar
 var heat_label: Label
 var call_paid := false
@@ -50,6 +52,7 @@ var call_paid := false
 var caller_order: Array = []
 var next_profile: Dictionary = {}  # следующий звонящий, которого заранее придумала нейронка
 var generating := false
+var prefetch_gen := 0  # растёт при покупке схемы: заготовленный клиент по старым схемам выбрасывается
 var used_names: Array = []
 var session: CallSession
 var dictated_card := ""
@@ -153,7 +156,7 @@ func _ready() -> void:
 
 func _save() -> void:
 	var c := ConfigFile.new()
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes"]:
 		c.set_value("game", k, get(k))
 	c.save(SAVE_PATH)
 
@@ -162,7 +165,7 @@ func _load() -> void:
 	var c := ConfigFile.new()
 	if c.load(SAVE_PATH) != OK:
 		return
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades"]:
+	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes"]:
 		if c.has_section_key("game", k):
 			set(k, c.get_value("game", k))
 
@@ -178,7 +181,7 @@ func _reset_progress() -> void:
 	balance = 0; deals = 0; shift = 1; quota = FIRST_QUOTA
 	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
 	shift_log = []; last_moments = []
-	earned_total = 0; heat = 0; raids = 0; upgrades = {}
+	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["repair"]
 	_clear_chat()
 	_save()
 	_update_balance()
@@ -441,8 +444,8 @@ func _refresh_menu() -> void:
 	else:
 		menu_play_btn.text = "▶ Начать работу"
 	if _has_progress():
-		menu_stats.text = "%s · смена %d · план %s / %s\nНа счету %s · сделок %d · жара %d%%\nЛучшая смена: %s" % [
-			_rank_name(), shift, _rub(shift_earned), _rub(quota), _rub(balance), deals, heat, _rub(best_shift)]
+		menu_stats.text = "%s · смена %d · план %s / %s\nНа счету %s · сделок %d · жара %d%%\nСхем: %d · лучшая смена: %s" % [
+			_rank_name(), shift, _rub(shift_earned), _rub(quota), _rub(balance), deals, heat, schemes.size(), _rub(best_shift)]
 	else:
 		menu_stats.text = "Ты оператор конторы. Тебе звонят люди с объявлений. Придумай услугу, назови цену и получи деньги.\nПлан первой смены: " + _rub(FIRST_QUOTA)
 
@@ -473,7 +476,7 @@ func _show_help() -> void:
 • Клиент может бросить трубку в любой момент.
 • Микрофон: с бесплатным ключом голоса (меню «Ключи») нажми, скажи фразу, нажми ещё раз, и она отправится. Без ключа откроется диктовка клавиатуры.
 • Жара растёт с каждой сделкой. На 100% будет облава и штраф. Пустые звонки и конец смены её сбивают.
-• Деньги со счёта тратятся в магазине на улучшения. Ранг растёт от заработка и открывает новые товары.
+• Деньги со счёта тратятся в магазине на новые схемы и улучшения. Схемы приводят клиентов богаче и складываются. Ранг растёт от заработка и открывает новые товары.
 • В конце смены вспомним самые смешные моменты."""
 	var l := _label(text, 26, C_INK, true)
 	l.custom_minimum_size.x = 570
@@ -902,7 +905,7 @@ func _add_money(rub: int) -> void:
 	var new_rank := Upgrades.rank_index(earned_total)
 	if new_rank > old_rank:
 		_add_note("★ Новый ранг: %s! В магазине открылись новые улучшения, клиенты стали богаче." % Upgrades.RANKS[new_rank]["name"], C_PURPLE, true)
-	_add_heat(int(round((5 + rub / 1000.0) * (1.0 - 0.25 * Upgrades.level(upgrades, "lawyer")))))
+	_add_heat(int(round((5 + rub / 1000.0) * float(cur_scheme.get("heat", 1.0)) * (1.0 - 0.25 * Upgrades.level(upgrades, "lawyer")))))
 	_update_balance()
 	_bump(balance_label)
 	_save()
@@ -967,12 +970,15 @@ func _next_call() -> void:
 		p = caller_order.pop_back()
 		while p["name"] in used_names and not caller_order.is_empty():
 			p = caller_order.pop_back()
+		p = p.duplicate()
+		p["scheme"] = "repair"
 	used_names.append(p["name"])
 	_prefetch_caller()
 	dictated_card = ""
 	pinned_card_btn.hide()
 	session = CallSession.new(p)
 	call_paid = false
+	cur_scheme = Upgrades.scheme(str(p.get("scheme", "repair")))
 	_apply_upgrades(session)
 	call_rec = {"name": p["name"], "age": p["age"], "outcome": "звонок прервался", "money": 0, "lines": []}
 	shift_log.append(call_rec)
@@ -989,7 +995,7 @@ func _next_call() -> void:
 		_add_note("Клиент согласен заплатить " + _rub(rub), C_GREEN, true))
 	_clear_chat()
 	caller_name.text = "%s, %d" % [p["name"], p["age"]]
-	caller_info.text = "Узнал(а) о нас: " + p["source"]
+	caller_info.text = ("Схема «%s» · " % cur_scheme["name"] if schemes.size() > 1 else "") + "Узнал(а) о нас: " + p["source"]
 	if Upgrades.level(upgrades, "base") > 0:
 		caller_info.text += "\nБаза: денег около %s. %s" % [_rub(session.budget), p["personality"]]
 	_set_avatar(p["name"])
@@ -1017,6 +1023,7 @@ func _apply_upgrades(s: CallSession) -> void:
 	var mult: float = Upgrades.RANKS[Upgrades.rank_index(earned_total)]["mult"]
 	if Upgrades.level(upgrades, "office") > 0:
 		mult *= 1.3
+	mult *= float(cur_scheme.get("mult", 1.0)) * (1.0 + 0.05 * (schemes.size() - 1))  # схемы складываются
 	s.budget = int(round(s.budget * mult / 500.0)) * 500
 
 
@@ -1070,6 +1077,47 @@ func _show_shop() -> void:
 		top.text = "На счету %s · ранг: %s%s" % [_rub(balance), Upgrades.RANKS[r]["name"], nxt]
 		for c in list.get_children():
 			c.queue_free()
+		list.add_child(_label("Схемы", 32, C_ACCENT))
+		list.add_child(_label("Каждая схема приводит клиентов побогаче. Купленные складываются: +5%% к каждой сделке за схему и доход в конце смены (сейчас %s)." % _rub(Upgrades.passive_income(schemes)), 22, C_MUTED, true))
+		for sc_item in Upgrades.SCHEMES:
+			if sc_item["price"] == 0:
+				continue
+			var owned: bool = sc_item["id"] in schemes
+			var scard := PanelContainer.new()
+			var ssb := _box(Color("fff1ec") if not owned else Color("eafaf0"), 24, 22)
+			ssb.border_width_left = 8
+			ssb.border_color = C_ACCENT if not owned else C_GREEN
+			scard.add_theme_stylebox_override("panel", ssb)
+			var sv := VBoxContainer.new()
+			sv.add_theme_constant_override("separation", 6)
+			scard.add_child(sv)
+			sv.add_child(_label(sc_item["name"], 29, C_INK, true))
+			sv.add_child(_label(sc_item["desc"], 23, C_MUTED, true))
+			sv.add_child(_label("Клиенты ×%s богаче · +%s за смену · жара ×%s" % [str(sc_item["mult"]), _rub(sc_item["passive"]), str(sc_item["heat"])], 22, C_ACCENT.darkened(0.2), true))
+			var sb2: Button
+			if owned:
+				sb2 = _big_button("✔ Работает", Color("b9bccb"), Callable(), 76)
+				sb2.disabled = true
+			elif r < sc_item["rank"]:
+				sb2 = _big_button("Нужен ранг «%s»" % Upgrades.RANKS[sc_item["rank"]]["name"], Color("b9bccb"), Callable(), 76)
+				sb2.disabled = true
+			else:
+				var sprice: int = sc_item["price"]
+				var sid: String = sc_item["id"]
+				sb2 = _big_button("Запустить за " + _rub(sprice), C_ACCENT if balance >= sprice else Color("b9bccb"), func():
+					if balance < sprice:
+						return
+					balance -= sprice
+					schemes.append(sid)
+					next_profile = {}  # следующий клиент уже придёт и по новой схеме
+					prefetch_gen += 1
+					_save()
+					_update_balance()
+					holder[0].call(), 76)
+			sb2.add_theme_font_size_override("font_size", 25)
+			sv.add_child(sb2)
+			list.add_child(scard)
+		list.add_child(_label("Улучшения", 32, C_ACCENT))
 		for u in Upgrades.LIST:
 			var lvl := Upgrades.level(upgrades, u["id"])
 			var maxl: int = u["prices"].size()
@@ -1118,9 +1166,15 @@ func _prefetch_caller() -> void:
 	var avoid := used_names.duplicate()
 	for c in Callers.LIST:
 		avoid.append(c["name"])
-	var p: Dictionary = await Callers.generate(randf() < 0.35, avoid)
+	var gen := prefetch_gen
+	var sch := Upgrades.pick_scheme(schemes)
+	var p: Dictionary = await Callers.generate(randf() < 0.35, avoid, sch["premise"])
 	generating = false
+	if gen != prefetch_gen:
+		_prefetch_caller()
+		return
 	if not p.is_empty() and not (p["name"] in used_names):
+		p["scheme"] = sch["id"]
 		next_profile = p
 
 
@@ -1306,12 +1360,18 @@ func _show_shift_result() -> void:
 	var ok := shift_earned >= quota
 	best_shift = maxi(best_shift, shift_earned)
 	var next_quota := int(round(quota * QUOTA_GROWTH / 500.0)) * 500 if ok else quota
+	# Старые схемы приносят доход, только если смена вообще работала: весь при выполненном плане, половину иначе.
+	var passive := 0 if shift_earned <= 0 else (Upgrades.passive_income(schemes) if ok else Upgrades.passive_income(schemes) / 2)
+	if passive > 0:
+		balance += passive
+		earned_total += passive
 	var m := _modal()
 	var dim: Control = m[0]
 	var v: VBoxContainer = m[1]
 	v.add_child(_label("ПЛАН ВЫПОЛНЕН!" if ok else "ПЛАН ПРОВАЛЕН", 50, C_GREEN if ok else C_RED, false, HORIZONTAL_ALIGNMENT_CENTER))
 	var info := _label("Смена %d: заработано %s из %s.\n%s" % [shift, _rub(shift_earned), _rub(quota),
-		("Следующий план: " + _rub(next_quota)) if ok else "Начальник недоволен. Смена начинается заново."], 27, C_INK, true, HORIZONTAL_ALIGNMENT_CENTER)
+		("Следующий план: " + _rub(next_quota)) if ok else "Начальник недоволен. Смена начинается заново."] +
+		("\nСтарые схемы принесли ещё %s на счёт." % _rub(passive) if passive > 0 else ""), 27, C_INK, true, HORIZONTAL_ALIGNMENT_CENTER)
 	info.custom_minimum_size.x = 580
 	v.add_child(info)
 	v.add_child(_label("★ Лучшие моменты смены", 34, C_PURPLE))
