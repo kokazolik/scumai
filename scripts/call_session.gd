@@ -2,7 +2,8 @@ class_name CallSession
 extends RefCounted
 ## Один телефонный звонок. ИИ играет клиента, игрок — оператора конторы.
 ## Модель после каждой реплики игрока возвращает ответ и изменение доверия.
-## Согласие на сделку решает не модель, а бросок по шкале доверия (try_ask_card).
+## Если игрок в реплике просит номер карты, согласие решает не модель,
+## а бросок по шкале доверия. Модель лишь озвучивает решение.
 
 signal caller_spoke(text: String)
 signal trust_changed(value: int, delta: int)
@@ -18,6 +19,8 @@ var card_number: String
 var history: Array = []  # сообщения для модели: user = оператор, assistant = клиент
 var active := true
 var busy := false
+var card_given := false
+var _card_answer := ""  # "agree" | "refuse" | "" на текущий ход
 
 
 func _init(p: Dictionary) -> void:
@@ -43,7 +46,12 @@ func _system_prompt() -> String:
 
 
 func _messages() -> Array:
-	return [{"role": "system", "content": _system_prompt()}] + history
+	var sys := _system_prompt()
+	if _card_answer == "agree":
+		sys += "\n\nОператор просит номер твоей карты. Ты СОГЛАСЕН(НА). Коротко скажи, что сейчас пришлёшь номер сообщением. Сам номер не пиши."
+	elif _card_answer == "refuse":
+		sys += "\n\nОператор просит номер твоей карты. Ты ОТКАЗЫВАЕШЬСЯ его называть. Объясни отказ в духе своего характера."
+	return [{"role": "system", "content": sys}] + history
 
 
 func _set_trust(delta: int) -> void:
@@ -83,7 +91,30 @@ func say(text: String) -> void:
 	if not active or busy or text.strip_edges().is_empty():
 		return
 	history.append({"role": "user", "content": "Оператор: " + text})
+	_card_answer = ""
+	if not card_given and asks_for_card(text):
+		_card_answer = "agree" if randi() % 100 < trust else "refuse"
 	await _ask_model(true)
+	if not active:
+		return
+	if _card_answer == "agree":
+		card_given = true
+		history.append({"role": "assistant", "content": "(прислал(а) номер карты сообщением)"})
+		card_dictated.emit(card_number)
+	elif _card_answer == "refuse":
+		_set_trust(-15)
+	_card_answer = ""
+
+
+## Просит ли реплика игрока номер карты.
+static func asks_for_card(text: String) -> bool:
+	var t := text.to_lower()
+	if not t.contains("карт"):
+		return false
+	for w in ["номер", "цифр", "лицев", "продиктуй", "назов", "скаж", "пришл", "отправ", "напиш", "данные", "реквизит"]:
+		if t.contains(w):
+			return true
+	return false
 
 
 func _ask_model(apply_trust: bool) -> void:
@@ -103,24 +134,6 @@ func _ask_model(apply_trust: bool) -> void:
 	caller_spoke.emit(d["reply"])
 	if apply_trust:
 		_set_trust(d["trust_delta"])
-
-
-## Игрок просит назвать номер карты. Шанс согласия = доверие.
-func try_ask_card() -> bool:
-	if not active or busy:
-		return false
-	var roll := randi() % 100
-	if roll < trust:
-		var line := "Ну ладно... записывайте: %s." % card_number
-		history.append({"role": "user", "content": "Оператор: Назовите, пожалуйста, номер карты с лицевой стороны."})
-		history.append({"role": "assistant", "content": line})
-		caller_spoke.emit(line)
-		card_dictated.emit(card_number)
-		return true
-	history.append({"role": "user", "content": "Оператор: Назовите, пожалуйста, номер карты с лицевой стороны."})
-	await _ask_model(false)  # пусть клиент сам откажет своими словами
-	_set_trust(-15)
-	return false
 
 
 func hang_up() -> void:

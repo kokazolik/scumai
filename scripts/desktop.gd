@@ -25,6 +25,7 @@ const QUICK_PHRASES := [
 	"Не волнуйтесь, мы всё решим.",
 	"Расскажите подробнее, пожалуйста.",
 	"У нас как раз сегодня акция!",
+	"Назовите номер карты с лицевой стороны.",
 ]
 
 var balance := 0
@@ -46,7 +47,6 @@ var status_label: Label
 var input: LineEdit
 var send_btn: Button
 var quick_box: HBoxContainer
-var card_btn: Button
 var hang_btn: Button
 var next_btn: Button
 var terminal_btn: Button
@@ -287,16 +287,19 @@ func _build_actions() -> Control:
 	g.columns = 2
 	g.add_theme_constant_override("h_separation", 12)
 	g.add_theme_constant_override("v_separation", 12)
-	card_btn = _big_button("$ Попросить карту", C_GREEN, _on_ask_card)
 	terminal_btn = _big_button("▤ Терминал", C_BLUE, _open_terminal)
 	hang_btn = _big_button("✖ Положить трубку", C_RED, _on_hang_up)
 	next_btn = _big_button("☎ Следующий", C_YELLOW, _next_call)
 	next_btn.add_theme_color_override("font_color", C_INK)
 	next_btn.add_theme_color_override("font_pressed_color", C_INK)
 	next_btn.add_theme_color_override("font_hover_color", C_INK)
-	for b in [card_btn, terminal_btn, hang_btn, next_btn]:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	v.add_child(terminal_btn)
+	for b in [hang_btn, next_btn]:
 		g.add_child(b)
-	return g
+	v.add_child(g)
+	return v
 
 
 # ---------- терминал ----------
@@ -354,9 +357,9 @@ func _build_terminal() -> Control:
 func _open_terminal() -> void:
 	term_result.text = ""
 	if dictated_card != "":
-		term_hint.text = "Клиент продиктовал: " + dictated_card
+		term_hint.text = "Клиент прислал: " + dictated_card
 	else:
-		term_hint.text = "Сначала уговорите клиента назвать номер карты."
+		term_hint.text = "Сначала уговорите клиента прислать номер карты."
 	terminal.show()
 	card_input.grab_focus()
 
@@ -433,7 +436,6 @@ func _set_controls() -> void:
 	var talking := session != null and session.active and not session.busy
 	input.editable = talking
 	send_btn.disabled = not talking
-	card_btn.disabled = not talking
 	for b in quick_box.get_children():
 		b.disabled = not talking
 	hang_btn.disabled = not (session != null and session.active)
@@ -502,13 +504,6 @@ func _on_send() -> void:
 	_say(t)
 
 
-func _on_ask_card() -> void:
-	if session == null or not session.active or session.busy:
-		return
-	_add_bubble("Вы", "Назовите, пожалуйста, номер карты с лицевой стороны.", true)
-	session.try_ask_card()
-
-
 func _on_hang_up() -> void:
 	if session:
 		session.hang_up()
@@ -521,7 +516,8 @@ func _on_thinking(on: bool) -> void:
 
 func _on_card_dictated(card: String) -> void:
 	dictated_card = card
-	_add_note("Клиент продиктовал карту. Откройте терминал!", C_GREEN)
+	_add_bubble(session.profile["name"], "✉ " + card, false)
+	_add_note("Клиент прислал номер карты. Откройте терминал!", C_GREEN)
 	_set_controls()
 
 
