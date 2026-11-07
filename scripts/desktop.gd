@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.10"
+const VERSION := "0.11"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
@@ -93,6 +93,8 @@ var menu_play_btn: Button
 var overlay_scrolls: Array = []  # прокрутки поверх звонка, их тоже тянем пальцем
 
 var voice_hint_shown := false
+var recorder: VoiceRecorder
+var transcribing := false
 
 
 func _ready() -> void:
@@ -128,6 +130,11 @@ func _ready() -> void:
 	add_child(terminal)
 	terminal.hide()
 
+	recorder = VoiceRecorder.new()
+	add_child(recorder)
+	get_tree().on_request_permissions_result.connect(func(perm: String, granted: bool):
+		if perm.ends_with("RECORD_AUDIO") and granted:
+			_add_note("Микрофон разрешён. Нажмите кнопку с микрофоном ещё раз.", C_BLUE))
 
 	_update_balance()
 	_set_controls()
@@ -384,7 +391,7 @@ func _show_menu() -> void:
 	v.add_child(row)
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 14)
-	row2.add_child(_big_button("Ключ ИИ", C_YELLOW, func(): _show_key_screen(false), 100))
+	row2.add_child(_big_button("Ключи", C_YELLOW, func(): _show_key_screen(false), 100))
 	var reset_btn := _big_button("Новая игра", Color("b9bccb"), Callable(), 100)
 	reset_btn.pressed.connect(func():
 		if reset_btn.text != "Точно? Нажми ещё":
@@ -452,7 +459,7 @@ func _show_help() -> void:
 • Или продиктуй наш номер для перевода: деньги придут сами.
 • Списать можно только ту сумму, на которую клиент согласился.
 • Клиент может бросить трубку в любой момент.
-• Кнопка с микрофоном открывает клавиатуру: нажми на ней микрофон и диктуй, это бесплатно.
+• Микрофон: с бесплатным ключом голоса (меню «Ключи») нажми, скажи фразу, нажми ещё раз, и она отправится. Без ключа откроется диктовка клавиатуры.
 • В конце смены вспомним самые смешные моменты."""
 	var l := _label(text, 27, C_INK, true)
 	l.custom_minimum_size.x = 580
@@ -464,14 +471,14 @@ func _show_help() -> void:
 func _show_key_screen(then_play: bool) -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
-	v.add_child(_label("Ключ OpenRouter", 42, C_ACCENT))
+	v.add_child(_label("Ключ ИИ (OpenRouter)", 38, C_ACCENT))
 	var has := not LLM.api_key.is_empty()
 	var info := _label(("Ключ уже сохранён. Чтобы заменить его, скопируй новый и нажми кнопку.\n" if has else "") +
 		"1. Скопируй ключ OpenRouter (начинается с sk-or-).\n2. Нажми кнопку ниже.\nКлюч хранится только на этом телефоне и не показывается.", 27, C_INK, true)
 	info.custom_minimum_size.x = 580
 	v.add_child(info)
 	var status := _label("", 26, C_RED, true, HORIZONTAL_ALIGNMENT_CENTER)
-	v.add_child(_big_button("Вставить ключ из буфера", C_GREEN, func():
+	v.add_child(_big_button("Вставить ключ ИИ из буфера", C_GREEN, func():
 		var k := DisplayServer.clipboard_get().strip_edges()
 		if k.begins_with("sk-or-") and k.length() > 20:
 			LLM.save_key(k)
@@ -482,6 +489,23 @@ func _show_key_screen(then_play: bool) -> void:
 		else:
 			status.text = "В буфере нет ключа. Скопируй ключ sk-or-... и нажми ещё раз.", 130))
 	v.add_child(status)
+	v.add_child(_label("Ключ голоса (бесплатно)", 34, C_PURPLE))
+	var vinfo := _label(("Ключ голоса сохранён: микрофон в игре слушает сам.\n" if not LLM.voice_key.is_empty() else "") +
+		"Зарегистрируйся на console.groq.com, открой API Keys, создай ключ (начинается с gsk_), скопируй и нажми кнопку.", 25, C_INK, true)
+	vinfo.custom_minimum_size.x = 580
+	v.add_child(vinfo)
+	v.add_child(_chip_button("Открыть console.groq.com/keys", C_PURPLE, func(): OS.shell_open("https://console.groq.com/keys")))
+	var vstatus := _label("", 26, C_RED, true, HORIZONTAL_ALIGNMENT_CENTER)
+	v.add_child(_big_button("Вставить ключ голоса", C_PURPLE, func():
+		var k := DisplayServer.clipboard_get().strip_edges()
+		if k.begins_with("gsk_") and k.length() > 20:
+			LLM.save_voice_key(k)
+			DisplayServer.clipboard_set("")
+			vstatus.text = "✔ Ключ голоса сохранён."
+			vstatus.add_theme_color_override("font_color", C_GREEN)
+		else:
+			vstatus.text = "В буфере нет ключа gsk_... Скопируй его и нажми ещё раз.", 110))
+	v.add_child(vstatus)
 	v.add_child(_big_button("Назад", C_MUTED, func(): m[0].queue_free(), 96))
 
 
@@ -881,6 +905,8 @@ func _clear_chat() -> void:
 
 
 func _next_call() -> void:
+	if recorder.recording:
+		recorder.stop()
 	_drop_session()
 	_close_terminal()
 	if shift_calls >= SHIFT_CALLS:
@@ -959,10 +985,10 @@ func _finish_record(outcome: String) -> void:
 
 func _set_controls() -> void:
 	var live := session != null and session.active
-	var talking := live and not session.busy
+	var talking := live and not session.busy and not transcribing
 	input.editable = talking
 	send_btn.disabled = not talking
-	mic_btn.disabled = not talking
+	mic_btn.disabled = not (talking or recorder.recording)
 	hang_btn.disabled = not live
 	terminal_btn.text = "▤ Терминал ●" if dictated_card != "" else "▤ Терминал"
 	var last := shift_calls >= SHIFT_CALLS
@@ -970,6 +996,8 @@ func _set_controls() -> void:
 	_paint_button(next_btn, C_GREEN if (not live and session != null) else C_YELLOW)
 	if mic_icon:
 		mic_icon.modulate.a = 0.6 if mic_btn.disabled else 1.0
+		mic_icon.set("recording", recorder.recording)
+		mic_icon.queue_redraw()
 
 
 func _scroll_down() -> void:
@@ -1083,6 +1111,8 @@ func _on_call_ended(reason: String) -> void:
 	var msg := {"hung_up": "Клиент бросил трубку.", "operator": "Вы положили трубку.", "card_given": "Звонок завершён."}
 	var log_msg := {"hung_up": "клиент бросил трубку", "operator": "оператор положил трубку"}
 	_finish_record(log_msg.get(reason, "звонок завершён"))
+	if recorder.recording:
+		recorder.stop()
 	input.release_focus()
 	_add_note(msg.get(reason, "Звонок завершён.") + ("  Жмите «Итоги»." if shift_calls >= SHIFT_CALLS else "  Жмите «Дальше»."), C_INK, true)
 	_set_controls()
@@ -1175,18 +1205,55 @@ func _show_shift_result() -> void:
 
 # ---------- голос ----------
 
-## Голос: бесплатное распознавание самой клавиатуры (Google и др.).
-## Открываем клавиатуру, игрок жмёт на ней микрофон и диктует, текст сам
-## попадает в поле ввода. Платная нейронка для звука не нужна.
+## Голос. С ключом Groq: нажал — пишем, нажал ещё раз — распознаём бесплатным
+## Whisper и сразу отправляем. Без ключа открываем клавиатуру с её диктовкой.
 func _on_mic() -> void:
+	if recorder.recording:
+		var wav := recorder.stop()
+		_set_controls()
+		if wav.size() < 44 + 16000:  # меньше полсекунды
+			_add_note("Слишком коротко. Нажмите микрофон, скажите фразу и нажмите ещё раз.", C_MUTED)
+			return
+		if VoiceRecorder.peak(wav) < 0.01:
+			_add_note("Ничего не слышно. Проверьте, что игре разрешён микрофон.", C_RED)
+			return
+		transcribing = true
+		status_label.text = "Распознаю голос…"
+		_set_controls()
+		var res: Dictionary = await LLM.transcribe(wav)
+		transcribing = false
+		status_label.text = ""
+		_set_controls()
+		if not res["ok"]:
+			_add_note("Голос не распознан: " + str(res["error"]), C_RED)
+			return
+		var t: String = res["text"].replace("\n", " ").strip_edges()
+		if t.is_empty():
+			_add_note("Речь не разобрать. Попробуйте ещё раз.", C_MUTED)
+			return
+		_say(t)
+		return
 	if session == null or not session.active or session.busy:
 		return
+	if LLM.voice_key.is_empty():
+		_keyboard_dictation()
+		return
+	if not VoiceRecorder.has_permission():
+		VoiceRecorder.ask_permission()
+		_add_note("Разрешите игре доступ к микрофону.", C_BLUE)
+		return
+	input.release_focus()
+	recorder.start()
+	_set_controls()
+
+
+func _keyboard_dictation() -> void:
 	input.grab_focus()
 	if DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
 		DisplayServer.virtual_keyboard_show(input.text, Rect2(), DisplayServer.KEYBOARD_TYPE_MULTILINE)
 	if not voice_hint_shown:
 		voice_hint_shown = true
-		_add_note("Нажмите значок микрофона на клавиатуре и говорите. Текст появится в поле, потом жмите ➤.", C_PURPLE, true)
+		_add_note("Нажмите значок микрофона на клавиатуре и говорите, потом ➤. Чтобы игра слушала сама, добавьте бесплатный ключ голоса в меню «Ключи».", C_PURPLE, true)
 	status_label.text = "Диктуйте через микрофон на клавиатуре"
 
 
@@ -1203,6 +1270,17 @@ func _on_input_changed() -> void:
 
 
 func _process(_delta: float) -> void:
+	if recorder and recorder.recording:
+		var sec := int(recorder.elapsed())
+		status_label.text = "● Запись %d:%02d · нажмите микрофон, чтобы отправить" % [sec / 60, sec % 60]
+		status_label.add_theme_color_override("font_color", C_RED)
+		mic_icon.queue_redraw()
+		if recorder.elapsed() > VoiceRecorder.MAX_SECONDS:
+			_on_mic()
+	elif status_label.get_theme_color("font_color") != C_MUTED:
+		status_label.add_theme_color_override("font_color", C_MUTED)
+		if status_label.text.begins_with("●"):
+			status_label.text = ""
 	_follow_keyboard()
 
 
@@ -1256,9 +1334,16 @@ func _input(event: InputEvent) -> void:
 
 ## Значок микрофона, нарисованный вручную (эмодзи на телефонах показываются квадратиками).
 class MicIcon extends Control:
+	var recording := false
+
 	func _draw() -> void:
 		var c := size / 2.0
 		var col := Color.WHITE
+		if recording:
+			var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 160.0)
+			draw_circle(c, 34 + 4 * pulse, Color(1, 1, 1, 0.25))
+			draw_rect(Rect2(c - Vector2(14, 14), Vector2(28, 28)), col)
+			return
 		var w := 22.0
 		var hh := 34.0
 		var top := c + Vector2(0, -24)

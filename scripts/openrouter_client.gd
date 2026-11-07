@@ -15,6 +15,10 @@ const MODEL := "google/gemma-4-26b-a4b-it"
 const RETRY_CODES := [429, 500, 502, 503, 504]
 
 var api_key := ""
+var voice_key := ""  # бесплатный ключ Groq для распознавания речи (gsk_...)
+
+const STT_URL := "https://api.groq.com/openai/v1/audio/transcriptions"
+const STT_MODEL := "whisper-large-v3-turbo"
 
 
 func _ready() -> void:
@@ -25,6 +29,11 @@ func _ready() -> void:
 			api_key = str(cfg.get_value("openrouter", "api_key", ""))
 	if api_key.is_empty():
 		api_key = _embedded_key()
+	voice_key = OS.get_environment("GROQ_API_KEY")
+	if voice_key.is_empty():
+		var vc := ConfigFile.new()
+		if vc.load("user://secrets.cfg") == OK:
+			voice_key = str(vc.get_value("groq", "api_key", ""))
 	if api_key.is_empty():
 		push_warning("OpenRouter: ключ не найден (OPENROUTER_API_KEY или user://secrets.cfg)")
 
@@ -108,3 +117,46 @@ func chat(messages: Array, temperature := 0.8, max_tokens := 400, retries := 3, 
 
 	return {"ok": false, "text": "", "error": "Не удалось получить ответ"}
 
+
+func save_voice_key(key: String) -> void:
+	voice_key = key.strip_edges()
+	var cfg := ConfigFile.new()
+	cfg.load("user://secrets.cfg")
+	cfg.set_value("groq", "api_key", voice_key)
+	cfg.save("user://secrets.cfg")
+
+
+## Распознаёт речь бесплатным Whisper от Groq. Принимает WAV, возвращает {"ok", "text", "error"}.
+func transcribe(wav: PackedByteArray) -> Dictionary:
+	if voice_key.is_empty():
+		return {"ok": false, "text": "", "error": "нет ключа для голоса"}
+	var boundary := "----kontora%d" % randi()
+	var body := PackedByteArray()
+	for kv in [["model", STT_MODEL], ["language", "ru"], ["response_format", "json"]]:
+		body.append_array(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % [boundary, kv[0], kv[1]]).to_utf8_buffer())
+	body.append_array(("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice.wav\"\r\nContent-Type: audio/wav\r\n\r\n" % boundary).to_utf8_buffer())
+	body.append_array(wav)
+	body.append_array(("\r\n--%s--\r\n" % boundary).to_utf8_buffer())
+	var headers := PackedStringArray([
+		"Authorization: Bearer " + voice_key,
+		"Content-Type: multipart/form-data; boundary=" + boundary,
+	])
+	var http := HTTPRequest.new()
+	http.timeout = 30.0
+	add_child(http)
+	var err := http.request_raw(STT_URL, headers, HTTPClient.METHOD_POST, body)
+	if err != OK:
+		http.queue_free()
+		return {"ok": false, "text": "", "error": "не удалось отправить (%d)" % err}
+	var r: Array = await http.request_completed
+	http.queue_free()
+	var code: int = r[1]
+	var data = JSON.parse_string((r[3] as PackedByteArray).get_string_from_utf8())
+	if r[0] == HTTPRequest.RESULT_SUCCESS and code == 200 and data is Dictionary:
+		return {"ok": true, "text": str(data.get("text", "")).strip_edges(), "error": ""}
+	var msg := "HTTP %d" % code if code != 0 else "нет сети"
+	if code == 401:
+		msg = "ключ голоса не подходит"
+	elif data is Dictionary and data.get("error") is Dictionary:
+		msg += ": " + str(data["error"].get("message", ""))
+	return {"ok": false, "text": "", "error": msg}
