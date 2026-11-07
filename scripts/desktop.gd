@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.12"
+const VERSION := "0.13"
 const SAVE_PATH := "user://save.cfg"
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
