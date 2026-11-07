@@ -12,8 +12,9 @@ signal call_ended(reason: String)  # "hung_up" | "card_given" | "operator"
 signal card_dictated(card: String)
 
 const MAX_TRUST := 100
-const MIN_GAIN := 8       # минимальный прирост доверия за не-грубую реплику
 const REFUSE_PENALTY := 10
+const START_TRUST_MIN := 20
+const START_TRUST_MAX := 45
 
 var profile: Dictionary
 var trust: int
@@ -22,12 +23,13 @@ var history: Array = []  # сообщения для модели: user = опе
 var active := true
 var busy := false
 var card_given := false
+var last_operator_line := ""
 var _card_answer := ""  # "agree" | "refuse" | "" на текущий ход
 
 
 func _init(p: Dictionary) -> void:
 	profile = p
-	trust = int(p.get("start_trust", 50))
+	trust = randi_range(START_TRUST_MIN, START_TRUST_MAX)  # каждый звонок — случайное небольшое доверие
 	card_number = Callers.fake_card()
 
 
@@ -39,11 +41,16 @@ func _system_prompt() -> String:
 Характер: %s.
 Сейчас твоё доверие к оператору: %d из 100. Чем ниже доверие, тем холоднее и подозрительнее ты отвечаешь.
 
-Ты легковерный человек и быстро проникаешься к оператору. Оцени последнюю реплику оператора ЩЕДРО: обычная вежливая фраза даёт +10..+15, внимание к твоей проблеме или попадание в твой характер +15..+30. Минус только за откровенную грубость или оскорбления, и не больше -10.
+Оцени последнюю реплику оператора честно, как живой человек:
+- бессмыслица, детский лепет, набор звуков, издевательство, грубость: от -10 до -20;
+- реплика не по теме, уход от твоей проблемы, странные или подозрительные просьбы: от -3 до -10;
+- просто вежливая, но общая фраза: от 0 до +5;
+- оператор понял твою проблему, предлагает решение, говорит уверенно и по делу: от +5 до +12;
+- оператор отлично попал в твой характер и интересы: от +12 до +20.
 Никогда сам не называй номер карты.
 
 Ответь ТОЛЬКО JSON-объектом, без пояснений:
-{"reply": "реплика персонажа на грамотном русском, 1-3 предложения", "trust_delta": целое число от -10 до 30}""" % [
+{"reply": "реплика персонажа на грамотном русском, 1-3 предложения", "trust_delta": целое число от -20 до 20}""" % [
 		profile["name"], profile["age"], profile["source"], profile["reason"], profile["personality"], trust]
 
 
@@ -78,7 +85,7 @@ static func parse_reply(raw: String) -> Dictionary:
 	if a != -1 and b > a:
 		var d = JSON.parse_string(raw.substr(a, b - a + 1))
 		if d is Dictionary and d.has("reply"):
-			return {"reply": str(d["reply"]), "trust_delta": clampi(int(d.get("trust_delta", 0)), -10, 30)}
+			return {"reply": str(d["reply"]), "trust_delta": clampi(int(d.get("trust_delta", 0)), -20, 20)}
 	return {"reply": raw.strip_edges(), "trust_delta": 0}
 
 
@@ -93,6 +100,7 @@ func say(text: String) -> void:
 	if not active or busy or text.strip_edges().is_empty():
 		return
 	history.append({"role": "user", "content": "Оператор: " + text})
+	last_operator_line = text
 	_card_answer = ""
 	if not card_given and asks_for_card(text):
 		_card_answer = "agree" if randi() % 100 < trust else "refuse"  # шанс = доверие в %
@@ -106,6 +114,24 @@ func say(text: String) -> void:
 	elif _card_answer == "refuse":
 		_set_trust(-REFUSE_PENALTY)
 	_card_answer = ""
+
+
+## Похожа ли реплика на бессмыслицу: мало настоящих слов или одни повторы.
+static func is_gibberish(text: String) -> bool:
+	var words := []
+	var re := RegEx.create_from_string("[а-яёa-z]{2,}")
+	for m in re.search_all(text.to_lower()):
+		words.append(m.get_string())
+	if words.size() == 0:
+		return true
+	var uniq := {}
+	for w in words:
+		uniq[w] = true
+	var short_ok := ["да", "нет", "ок", "ага", "угу", "так", "вот", "хорошо"]
+	if words.all(func(w): return w in short_ok):
+		return false  # короткий ответ «да»/«нет» пусть оценивает модель
+	var long_words := words.filter(func(w): return w.length() >= 4)
+	return long_words.is_empty() or (uniq.size() == 1 and words.size() >= 3)
 
 
 ## Просит ли реплика игрока номер карты.
@@ -136,8 +162,10 @@ func _ask_model(apply_trust: bool) -> void:
 	caller_spoke.emit(d["reply"])
 	if apply_trust:
 		var delta: int = d["trust_delta"]
-		if delta >= 0:
-			delta = maxi(delta, MIN_GAIN)  # нейтральная фраза тоже немного помогает
+		if _card_answer != "":
+			delta = 0  # просьбу о карте решает бросок, а не оценка модели
+		if is_gibberish(last_operator_line) and delta > -10:
+			delta = -10  # «бе-бе-бе» никогда не вызывает доверия
 		_set_trust(delta)
 
 

@@ -367,9 +367,19 @@ func _build_terminal() -> Control:
 	card_input.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
 	card_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	card_input.custom_minimum_size.y = 120
-	card_input.add_theme_font_size_override("font_size", 42)
+	card_input.add_theme_font_size_override("font_size", 32)
 	card_input.text_changed.connect(_format_card_input)
-	v.add_child(card_input)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	card_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(card_input)
+	var paste_btn := _big_button("Вставить", C_ACCENT, func():
+		card_input.text = DisplayServer.clipboard_get()
+		_format_card_input(card_input.text), 120)
+	paste_btn.size_flags_horizontal = Control.SIZE_FILL
+	paste_btn.custom_minimum_size.x = 190
+	row.add_child(paste_btn)
+	v.add_child(row)
 
 	v.add_child(_big_button("Списать $%d" % CHARGE, C_GREEN, _on_charge, 130))
 
@@ -549,6 +559,11 @@ func _on_thinking(on: bool) -> void:
 func _on_card_dictated(card: String) -> void:
 	dictated_card = card
 	_add_bubble(session.profile["name"], "✉ " + card, false)
+	var copy_btn := _big_button("⧉ Скопировать номер", C_BLUE, func():
+		DisplayServer.clipboard_set(card.replace(" ", ""))
+		_add_note("Номер скопирован. Вставьте его в терминале.", C_BLUE), 90)
+	copy_btn.add_theme_font_size_override("font_size", 28)
+	chat_list.add_child(copy_btn)
 	_add_note("Клиент прислал номер карты. Откройте терминал!", C_GREEN)
 	_set_controls()
 
