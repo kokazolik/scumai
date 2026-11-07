@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.20"
+const VERSION := "0.21"
 const OLD_SAVE_PATH := "user://save.cfg"   # сохранение до 0.20, переносится в слот 1
 const SETTINGS_PATH := "user://settings.cfg"
 const SLOTS := 6
@@ -113,6 +113,9 @@ var menu: Control
 var menu_stats: Label
 var menu_play_btn: Button
 var overlay_scrolls: Array = []  # прокрутки поверх звонка, их тоже тянем пальцем
+var font_bold: Font
+var font_black: Font
+var shop_tab := 0
 
 var voice_hint_shown := false
 var recorder: VoiceRecorder
@@ -121,13 +124,10 @@ var transcribing := false
 
 func _ready() -> void:
 	randomize()
+	_load_fonts()
 	theme = _make_theme()
 	_load()
-	var bg := ColorRect.new()
-	bg.color = C_BG
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
+	add_child(_make_bg())
 
 	main_margin = MarginContainer.new()
 	main_margin.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -254,9 +254,50 @@ func _button_box(color: Color) -> StyleBoxFlat:
 	return sb
 
 
+## Nunito с кириллицей. Знаков вроде ₽ и ☎ в нём нет, их берём из запасного шрифта.
+func _load_fonts() -> void:
+	var fb: Array[Font] = [ThemeDB.fallback_font]
+	for pair in [["font_bold", "res://fonts/Nunito-Bold.ttf"], ["font_black", "res://fonts/Nunito-Black.ttf"]]:
+		var f := load(pair[1]) as FontFile
+		if f:
+			f.fallbacks = fb
+			set(pair[0], f)
+	if font_black == null:
+		font_black = font_bold
+
+
+## Тёплый градиентный фон с мягкими пятнами.
+func _make_bg() -> Control:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var g := Gradient.new()
+	g.colors = PackedColorArray([Color("fff7e3"), Color("ffeccd"), Color("ffe1d2")])
+	g.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
+	var gt := GradientTexture2D.new()
+	gt.gradient = g
+	gt.width = 8
+	gt.height = 256
+	gt.fill_from = Vector2(0, 0)
+	gt.fill_to = Vector2(0, 1)
+	var tr := TextureRect.new()
+	tr.texture = gt
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_SCALE
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(tr)
+	for d in [[Vector2(690, 520), 170, Color(1, 0.55, 0.35, 0.07)], [Vector2(40, 900), 130, Color(0.3, 0.45, 1, 0.05)],
+			[Vector2(650, 1350), 210, Color(0.5, 0.3, 1, 0.05)], [Vector2(90, 1520), 90, Color(1, 0.75, 0.1, 0.08)]]:
+		root.add_child(_dot(d[0], d[1], d[2]))
+	return root
+
+
 func _make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font_size = 30
+	if font_bold:
+		t.default_font = font_bold
 	t.set_color("font_color", "Label", C_INK)
 	t.set_stylebox("normal", "Button", _button_box(C_BLUE))
 	t.set_stylebox("hover", "Button", _button_box(C_BLUE.lightened(0.1)))
@@ -337,6 +378,8 @@ func _label(text: String, size := 30, color := C_INK, wrap := false, align := HO
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
 	l.horizontal_alignment = align
+	if size >= 34 and font_black:
+		l.add_theme_font_override("font", font_black)
 	if wrap:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
@@ -352,7 +395,16 @@ func _modal(width := 660) -> Array:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.add_child(center)
-	var card := _card()
+	var card := PanelContainer.new()
+	var cs := _box(C_CARD, 40, 30)
+	cs.content_margin_top = 30
+	cs.content_margin_bottom = 30
+	cs.border_width_top = 10
+	cs.border_color = C_ACCENT
+	cs.shadow_color = Color(0.1, 0.05, 0.2, 0.3)
+	cs.shadow_size = 24
+	cs.shadow_offset = Vector2(0, 10)
+	card.add_theme_stylebox_override("panel", cs)
 	card.custom_minimum_size = Vector2(width, 0)
 	center.add_child(card)
 	var v := VBoxContainer.new()
@@ -383,10 +435,7 @@ func _show_menu() -> void:
 	menu.set_anchors_preset(Control.PRESET_FULL_RECT)
 	menu.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(menu)
-	var bg := ColorRect.new()
-	bg.color = C_BG
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu.add_child(bg)
+	menu.add_child(_make_bg())
 	# Большая оранжевая «трубка» сверху
 	var hero := Panel.new()
 	var hs := _box(C_ACCENT, 0, 0)
@@ -632,57 +681,75 @@ func _moment_card(mo: Dictionary) -> Control:
 
 func _build_header() -> Control:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _shadow_box(C_ACCENT, 30, 22))
+	var hs := _shadow_box(C_ACCENT, 34, 22)
+	hs.border_width_bottom = 7
+	hs.border_color = C_ACCENT.darkened(0.22)
+	hs.content_margin_top = 18
+	hs.content_margin_bottom = 18
+	p.add_theme_stylebox_override("panel", hs)
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 8)
+	outer.add_theme_constant_override("separation", 10)
 	p.add_child(outer)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 14)
 	outer.add_child(h)
 	var menu_btn := Button.new()
 	menu_btn.text = "≡"
-	menu_btn.custom_minimum_size = Vector2(76, 76)
+	menu_btn.custom_minimum_size = Vector2(80, 80)
 	menu_btn.add_theme_font_size_override("font_size", 44)
-	var ms := _box(Color(1, 1, 1, 0.22), 22, 0)
+	var ms := _box(Color(1, 1, 1, 0.22), 26, 0)
 	menu_btn.add_theme_stylebox_override("normal", ms)
 	menu_btn.add_theme_stylebox_override("hover", ms)
-	menu_btn.add_theme_stylebox_override("pressed", _box(Color(1, 1, 1, 0.4), 22, 0))
+	menu_btn.add_theme_stylebox_override("pressed", _box(Color(1, 1, 1, 0.4), 26, 0))
 	menu_btn.pressed.connect(func():
 		input.release_focus()
 		_show_menu())
 	h.add_child(menu_btn)
-	var t := _label("КОНТОРА", 40, Color.WHITE)
-	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(t)
-	balance_label = _label("", 42, Color.WHITE, false, HORIZONTAL_ALIGNMENT_RIGHT)
-	h.add_child(balance_label)
-	var row := HBoxContainer.new()
-	deals_label = _label("", 22, Color(1, 1, 1, 0.9))
-	deals_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 0)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.alignment = BoxContainer.ALIGNMENT_CENTER
+	h.add_child(tv)
+	tv.add_child(_label("КОНТОРА", 36, Color.WHITE))
+	deals_label = _label("", 21, Color(1, 1, 1, 0.88))
 	deals_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	row.add_child(deals_label)
-	quota_label = _label("", 22, Color.WHITE, false, HORIZONTAL_ALIGNMENT_RIGHT)
+	deals_label.clip_text = true
+	deals_label.custom_minimum_size.x = 60
+	tv.add_child(deals_label)
+	var pill := PanelContainer.new()
+	pill.add_theme_stylebox_override("panel", _box(Color.WHITE, 30, 22))
+	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	balance_label = _label("", 36, C_ACCENT.darkened(0.3), false, HORIZONTAL_ALIGNMENT_RIGHT)
+	pill.add_child(balance_label)
+	h.add_child(pill)
+
+	var row := HBoxContainer.new()
+	row.add_child(_label("План смены", 21, Color(1, 1, 1, 0.88)))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
+	quota_label = _label("", 21, Color.WHITE, false, HORIZONTAL_ALIGNMENT_RIGHT)
 	row.add_child(quota_label)
 	outer.add_child(row)
 	quota_bar = ProgressBar.new()
 	quota_bar.show_percentage = false
-	quota_bar.custom_minimum_size.y = 16
-	quota_bar.add_theme_stylebox_override("fill", _box(C_YELLOW, 8, 0))
-	quota_bar.add_theme_stylebox_override("background", _box(Color(1, 1, 1, 0.28), 8, 0))
+	quota_bar.custom_minimum_size.y = 18
+	quota_bar.add_theme_stylebox_override("fill", _box(C_YELLOW, 9, 0))
+	quota_bar.add_theme_stylebox_override("background", _box(Color(0, 0, 0, 0.16), 9, 0))
 	outer.add_child(quota_bar)
 	var hr := HBoxContainer.new()
 	hr.add_theme_constant_override("separation", 10)
 	heat_label = _label("", 20, Color(1, 1, 1, 0.9))
-	heat_label.custom_minimum_size.x = 120
+	heat_label.custom_minimum_size.x = 150
 	hr.add_child(heat_label)
 	heat_bar = ProgressBar.new()
 	heat_bar.show_percentage = false
 	heat_bar.max_value = 100
-	heat_bar.custom_minimum_size.y = 10
+	heat_bar.custom_minimum_size.y = 12
 	heat_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	heat_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	heat_bar.add_theme_stylebox_override("fill", _box(Color("ffe08a"), 5, 0))
-	heat_bar.add_theme_stylebox_override("background", _box(Color(1, 1, 1, 0.22), 5, 0))
+	heat_bar.add_theme_stylebox_override("fill", _box(Color("ffe08a"), 6, 0))
+	heat_bar.add_theme_stylebox_override("background", _box(Color(0, 0, 0, 0.16), 6, 0))
 	hr.add_child(heat_bar)
 	outer.add_child(hr)
 	return p
@@ -1329,172 +1396,342 @@ func _show_finale() -> void:
 	v.add_child(_big_button("Продолжить царствовать", C_GREEN, func(): m[0].queue_free(), 110))
 
 
+const SHOP_TABS := [["Навыки", "✦"], ["Схемы", "☎"], ["Оплата", "₽"], ["Улучшения", "▲"]]
+const SHOP_COLORS := ["2f6bff", "ff5a36", "7b4dff", "18b45b"]
+const SHOP_ICONS := {
+	"charm": "♥", "persuade": "☞", "bargain": "%", "cool": "❄", "patience": "◷",
+	"ads": "☎", "rent": "⌂", "prize": "★", "parcel": "✉", "job": "✎", "courses": "▲", "gadgets": "✧",
+	"compens": "✚", "healer": "☯", "prince": "♚", "lottery": "⚖", "crypto": "◈", "fund": "△", "stars": "✦",
+	"air": "☁", "moon": "☾", "mars": "♂", "sun": "☀", "time": "⌛", "immortal": "∞",
+	"card": "▭", "phone": "☏", "gift": "❖", "safe": "▣", "loan": "₽",
+	"script": "✎", "coffee": "☕", "spoof": "☏", "lawyer": "⚖", "base": "▤", "acting": "☺", "office": "▦",
+}
+
+
+## Магазин на весь экран: вкладки, карточки с иконкой, характеристиками и кнопкой покупки.
 func _show_shop() -> void:
-	var m := _modal()
-	var v: VBoxContainer = m[1]
-	v.add_child(_label("$ Магазин конторы", 42, C_ACCENT))
-	var top := _label("", 26, C_MUTED, true)
-	top.custom_minimum_size.x = 580
-	v.add_child(top)
+	if session and session.active:
+		input.release_focus()
+	var page := Control.new()
+	page.set_anchors_preset(Control.PRESET_FULL_RECT)
+	page.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(page)
+	page.add_child(_make_bg())
+	var mg := MarginContainer.new()
+	mg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right", "bottom"]:
+		mg.add_theme_constant_override("margin_" + side, 18)
+	mg.add_theme_constant_override("margin_top", 34)
+	page.add_child(mg)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	mg.add_child(v)
+
+	# Верхняя плашка: назад, название, деньги
+	var bar := PanelContainer.new()
+	var bs := _shadow_box(C_ACCENT, 34, 20)
+	bs.border_width_bottom = 7
+	bs.border_color = C_ACCENT.darkened(0.22)
+	bar.add_theme_stylebox_override("panel", bs)
+	v.add_child(bar)
+	var bv := VBoxContainer.new()
+	bv.add_theme_constant_override("separation", 10)
+	bar.add_child(bv)
+	var bh := HBoxContainer.new()
+	bh.add_theme_constant_override("separation", 14)
+	bv.add_child(bh)
+	var back := Button.new()
+	back.text = "‹"
+	back.custom_minimum_size = Vector2(80, 80)
+	back.add_theme_font_size_override("font_size", 54)
+	var bks := _box(Color(1, 1, 1, 0.22), 26, 0)
+	back.add_theme_stylebox_override("normal", bks)
+	back.add_theme_stylebox_override("hover", bks)
+	back.add_theme_stylebox_override("pressed", _box(Color(1, 1, 1, 0.4), 26, 0))
+	back.pressed.connect(func():
+		page.queue_free()
+		_update_balance()
+		_refresh_menu())
+	bh.add_child(back)
+	var title := _label("Магазин", 44, Color.WHITE)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bh.add_child(title)
+	var pill := PanelContainer.new()
+	pill.add_theme_stylebox_override("panel", _box(Color.WHITE, 30, 22))
+	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var money := _label("", 34, C_ACCENT.darkened(0.3))
+	pill.add_child(money)
+	bh.add_child(pill)
+	# ранг и путь до следующего
+	var rank_row := HBoxContainer.new()
+	var rank_l := _label("", 23, Color.WHITE)
+	rank_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rank_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	rank_l.clip_text = true
+	rank_row.add_child(rank_l)
+	var next_l := _label("", 21, Color(1, 1, 1, 0.85), false, HORIZONTAL_ALIGNMENT_RIGHT)
+	rank_row.add_child(next_l)
+	bv.add_child(rank_row)
+	var rank_bar := ProgressBar.new()
+	rank_bar.show_percentage = false
+	rank_bar.custom_minimum_size.y = 14
+	rank_bar.add_theme_stylebox_override("fill", _box(C_YELLOW, 7, 0))
+	rank_bar.add_theme_stylebox_override("background", _box(Color(0, 0, 0, 0.16), 7, 0))
+	bv.add_child(rank_bar)
+
+	# Вкладки
+	var tabs_panel := PanelContainer.new()
+	var tps := _shadow_box(C_CARD, 34, 8)
+	tps.content_margin_top = 8
+	tps.content_margin_bottom = 8
+	tabs_panel.add_theme_stylebox_override("panel", tps)
+	v.add_child(tabs_panel)
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 6)
+	tabs_panel.add_child(tabs)
+	var tab_btns := []
+	for i in SHOP_TABS.size():
+		var tb := Button.new()
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.custom_minimum_size.y = 82
+		tb.add_theme_font_size_override("font_size", 22)
+		tb.clip_text = true
+		tabs.add_child(tb)
+		tab_btns.append(tb)
+
 	var sc := ScrollContainer.new()
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sc.custom_minimum_size = Vector2(600, 700)
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	overlay_scrolls.append(sc)
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	list.add_theme_constant_override("separation", 12)
+	list.add_theme_constant_override("separation", 14)
 	sc.add_child(list)
 	v.add_child(sc)
+
 	var holder := []  # лямбда не видит саму себя, поэтому храним её в массиве
 	var refresh := func():
 		var r := Upgrades.rank_index(earned_total)
-		var nxt := ""
+		money.text = _rub(balance)
+		rank_l.text = "♛ %s · ур. %d" % [Upgrades.RANKS[r]["name"], Upgrades.operator_level(deals)]
 		if r + 1 < Upgrades.RANKS.size():
-			nxt = "\nДо ранга «%s»: ещё %s заработка." % [Upgrades.RANKS[r + 1]["name"], _rub(Upgrades.RANKS[r + 1]["earned"] - earned_total)]
-		top.text = "На счету %s · ранг: %s%s" % [_rub(balance), Upgrades.RANKS[r]["name"], nxt]
+			var lo: int = Upgrades.RANKS[r]["earned"]
+			var hi: int = Upgrades.RANKS[r + 1]["earned"]
+			next_l.text = "до ранга ещё " + _rub(hi - earned_total)
+			rank_bar.max_value = hi - lo
+			rank_bar.value = earned_total - lo
+		else:
+			next_l.text = "вершина"
+			rank_bar.max_value = 1
+			rank_bar.value = 1
+		var pts := _skill_points()
+		for i in tab_btns.size():
+			var tb: Button = tab_btns[i]
+			var tcol := Color(SHOP_COLORS[i])
+			var on := i == shop_tab
+			tb.text = SHOP_TABS[i][1] + " " + SHOP_TABS[i][0] + (" •" if i == 0 and pts > 0 else "")
+			var st := _box(tcol if on else Color(0, 0, 0, 0), 28, 6)
+			for k in ["normal", "hover", "pressed", "focus"]:
+				tb.add_theme_stylebox_override(k, st)
+			for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+				tb.add_theme_color_override(k, Color.WHITE if on else C_MUTED)
 		for c in list.get_children():
 			c.queue_free()
-		var pts := _skill_points()
-		list.add_child(_label("Навыки", 32, C_ACCENT))
-		list.add_child(_label("Уровень оператора %d. Свободных очков: %d. Очки дают за сделки." % [Upgrades.operator_level(deals), pts], 22, C_MUTED, true))
-		for skd in Upgrades.SKILLS:
-			var sl := _skill(skd["id"])
-			var srow := HBoxContainer.new()
-			srow.add_theme_constant_override("separation", 10)
-			var sinfo := VBoxContainer.new()
-			sinfo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			sinfo.add_child(_label("%s  %d/%d" % [skd["name"], sl, Upgrades.SKILL_MAX], 27, C_INK, true))
-			sinfo.add_child(_label(skd["desc"], 21, C_MUTED, true))
-			srow.add_child(sinfo)
-			var skid: String = skd["id"]
-			var plus := _big_button("+", C_BLUE if (pts > 0 and sl < Upgrades.SKILL_MAX) else Color("b9bccb"), func():
-				if _skill_points() <= 0 or _skill(skid) >= Upgrades.SKILL_MAX:
-					return
-				skills[skid] = _skill(skid) + 1
-				_save()
-				holder[0].call(), 76)
-			plus.custom_minimum_size.x = 90
-			plus.size_flags_horizontal = Control.SIZE_SHRINK_END
-			srow.add_child(plus)
-			list.add_child(srow)
-		list.add_child(_label("Схемы", 32, C_ACCENT))
-		list.add_child(_label("Каждая схема приводит клиентов побогаче. Купленные складываются: +2,5%% к бюджету клиентов за схему и доход в конце смены (сейчас %s)." % _rub(Upgrades.passive_income(schemes)), 22, C_MUTED, true))
-		for sc_item in Upgrades.SCHEMES:
-			if sc_item["price"] == 0:
-				continue
-			var owned: bool = sc_item["id"] in schemes
-			var scard := PanelContainer.new()
-			var ssb := _box(Color("fff1ec") if not owned else Color("eafaf0"), 24, 22)
-			ssb.border_width_left = 8
-			ssb.border_color = C_ACCENT if not owned else C_GREEN
-			scard.add_theme_stylebox_override("panel", ssb)
-			var sv := VBoxContainer.new()
-			sv.add_theme_constant_override("separation", 6)
-			scard.add_child(sv)
-			sv.add_child(_label(sc_item["name"], 29, C_INK, true))
-			sv.add_child(_label(sc_item["desc"], 23, C_MUTED, true))
-			sv.add_child(_label("Клиенты ×%s богаче · +%s за смену · жара ×%s" % [str(sc_item["mult"]), _rub(sc_item["passive"]), str(sc_item["heat"])], 22, C_ACCENT.darkened(0.2), true))
-			var sb2: Button
-			if owned:
-				sb2 = _big_button("✔ Работает", Color("b9bccb"), Callable(), 76)
-				sb2.disabled = true
-			elif r < sc_item["rank"]:
-				sb2 = _big_button("Нужен ранг «%s»" % Upgrades.RANKS[sc_item["rank"]]["name"], Color("b9bccb"), Callable(), 76)
-				sb2.disabled = true
-			else:
-				var sprice: int = sc_item["price"]
-				var sid: String = sc_item["id"]
-				sb2 = _big_button("Запустить за " + _rub(sprice), C_ACCENT if balance >= sprice else Color("b9bccb"), func():
-					if balance < sprice:
-						return
-					balance -= sprice
-					schemes.append(sid)
-					next_profile = {}  # следующий клиент уже придёт и по новой схеме
-					prefetch_gen += 1
-					_maybe_tutorial("s_" + sid, Tutorials.SCHEMES.get(sid, []))
-					_save()
-					_update_balance()
-					holder[0].call(), 76)
-			sb2.add_theme_font_size_override("font_size", 25)
-			sv.add_child(sb2)
-			list.add_child(scard)
-		list.add_child(_label("Способы оплаты", 32, C_ACCENT))
-		list.add_child(_label("Чем круче способ, тем больше денег клиент может отдать, но уговорить труднее. Карта и перевод по номеру есть сразу. Способ работает, когда ты называешь его в разговоре.", 22, C_MUTED, true))
-		for mt in Upgrades.METHODS:
-			if mt["price"] == 0:
-				continue
-			var mown: bool = mt["id"] in pay_methods
-			var mcard := PanelContainer.new()
-			var msb := _box(Color("f1f0ff") if not mown else Color("eafaf0"), 24, 22)
-			msb.border_width_left = 8
-			msb.border_color = C_PURPLE if not mown else C_GREEN
-			mcard.add_theme_stylebox_override("panel", msb)
-			var mv := VBoxContainer.new()
-			mv.add_theme_constant_override("separation", 6)
-			mcard.add_child(mv)
-			mv.add_child(_label(mt["name"], 29, C_INK, true))
-			mv.add_child(_label(mt["desc"], 23, C_MUTED, true))
-			mv.add_child(_label("Суммы до ×%s · шанс %d%% · жара ×%s" % [str(mt["cap"]), mt["chance"], str(mt["heat"])], 22, C_PURPLE.darkened(0.2), true))
-			var mb: Button
-			if mown:
-				mb = _big_button("✔ Доступен", Color("b9bccb"), Callable(), 76)
-				mb.disabled = true
-			elif r < mt["rank"]:
-				mb = _big_button("Нужен ранг «%s»" % Upgrades.RANKS[mt["rank"]]["name"], Color("b9bccb"), Callable(), 76)
-				mb.disabled = true
-			else:
-				var mprice: int = mt["price"]
-				var mid: String = mt["id"]
-				mb = _big_button("Открыть за " + _rub(mprice), C_PURPLE if balance >= mprice else Color("b9bccb"), func():
-					if balance < mprice:
-						return
-					balance -= mprice
-					pay_methods.append(mid)
-					_maybe_tutorial("m_" + mid, Tutorials.METHODS.get(mid, []))
-					_save()
-					_update_balance()
-					holder[0].call(), 76)
-			mb.add_theme_font_size_override("font_size", 25)
-			mv.add_child(mb)
-			list.add_child(mcard)
-		list.add_child(_label("Улучшения", 32, C_ACCENT))
-		for u in Upgrades.LIST:
-			var lvl := Upgrades.level(upgrades, u["id"])
-			var maxl: int = u["prices"].size()
-			var card := PanelContainer.new()
-			card.add_theme_stylebox_override("panel", _box(Color("fff8ea"), 24, 22))
-			var cv := VBoxContainer.new()
-			cv.add_theme_constant_override("separation", 6)
-			card.add_child(cv)
-			var head := _label(u["name"] + ("  ур. %d/%d" % [lvl, maxl] if maxl > 1 else ""), 29, C_INK, true)
-			cv.add_child(head)
-			cv.add_child(_label(u["desc"], 23, C_MUTED, true))
-			var b: Button
-			if lvl >= maxl:
-				b = _big_button("✔ Куплено", Color("b9bccb"), Callable(), 76)
-				b.disabled = true
-			elif r < u["rank"]:
-				b = _big_button("Нужен ранг «%s»" % Upgrades.RANKS[u["rank"]]["name"], Color("b9bccb"), Callable(), 76)
-				b.disabled = true
-			else:
-				var price: int = u["prices"][lvl]
-				var id: String = u["id"]
-				b = _big_button("Купить за " + _rub(price), C_GREEN if balance >= price else Color("b9bccb"), func():
-					if balance < price:
-						return
-					balance -= price
-					upgrades[id] = lvl + 1
-					_save()
-					_update_balance()
-					holder[0].call(), 76)
-			b.add_theme_font_size_override("font_size", 25)
-			cv.add_child(b)
-			list.add_child(card)
+		var col := Color(SHOP_COLORS[shop_tab])
+		var redraw: Callable = func(): holder[0].call()
+		match shop_tab:
+			0: _shop_skills(list, col, pts, redraw)
+			1: _shop_schemes(list, col, r, redraw)
+			2: _shop_methods(list, col, r, redraw)
+			3: _shop_upgrades(list, col, r, redraw)
+		var pad := Control.new()
+		pad.custom_minimum_size.y = 20
+		list.add_child(pad)
 	holder.append(refresh)
+	for i in tab_btns.size():
+		var idx := i
+		tab_btns[i].pressed.connect(func():
+			shop_tab = idx
+			sc.scroll_vertical = 0
+			holder[0].call())
 	refresh.call()
-	v.add_child(_big_button("Закрыть", C_MUTED, func():
-		m[0].queue_free()
-		_refresh_menu(), 96))
+	page.modulate.a = 0.0
+	create_tween().tween_property(page, "modulate:a", 1.0, 0.15)
+
+
+## Пояснение над списком вкладки.
+func _shop_intro(list: VBoxContainer, col: Color, text: String) -> void:
+	var p := PanelContainer.new()
+	var sb := _box(col.lerp(Color.WHITE, 0.86), 26, 22)
+	sb.border_width_left = 8
+	sb.border_color = col
+	p.add_theme_stylebox_override("panel", sb)
+	p.add_child(_label(text, 22, col.darkened(0.35), true))
+	list.add_child(p)
+
+
+func _pill(text: String, col: Color) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := _box(col.lerp(Color.WHITE, 0.84), 16, 14)
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	p.add_theme_stylebox_override("panel", sb)
+	p.add_child(_label(text, 20, col.darkened(0.3)))
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return p
+
+
+## Карточка товара. state: "buy" (кнопка), "owned" (куплено), "locked" (нужен ранг).
+func _shop_card(id: String, col: Color, title: String, desc: String, pills: Array, lvl: int, maxl: int,
+		state: String, btn_text: String, price: int, cb: Callable) -> Control:
+	var card := PanelContainer.new()
+	var cs := _shadow_box(C_CARD, 30, 22)
+	cs.content_margin_top = 20
+	cs.content_margin_bottom = 20
+	if state == "owned":
+		cs.border_width_left = 8
+		cs.border_color = C_GREEN
+	card.add_theme_stylebox_override("panel", cs)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	card.add_child(v)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 18)
+	v.add_child(top)
+	var badge := Panel.new()
+	badge.custom_minimum_size = Vector2(92, 92)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var bcol := col if state != "locked" else Color("a9acbd")
+	var bsb := _box(bcol, 28, 0)
+	bsb.border_width_bottom = 5
+	bsb.border_color = bcol.darkened(0.25)
+	badge.add_theme_stylebox_override("panel", bsb)
+	var ic := _label(SHOP_ICONS.get(id, "★"), 44, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER)
+	ic.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ic.set_anchors_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(ic)
+	top.add_child(badge)
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 6)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(info)
+	info.add_child(_label(title, 29, C_INK if state != "locked" else C_MUTED, true))
+	info.add_child(_label(desc, 22, C_MUTED, true))
+	if maxl > 1:
+		var pips := HBoxContainer.new()
+		pips.add_theme_constant_override("separation", 6)
+		for i in maxl:
+			var pp := Panel.new()
+			pp.custom_minimum_size = Vector2(38, 12)
+			pp.add_theme_stylebox_override("panel", _box(col if i < lvl else C_LINE, 6, 0))
+			pips.add_child(pp)
+		pips.add_child(_label("  %d/%d" % [lvl, maxl], 20, C_MUTED))
+		info.add_child(pips)
+	if not pills.is_empty():
+		var fl := HFlowContainer.new()
+		fl.add_theme_constant_override("h_separation", 8)
+		fl.add_theme_constant_override("v_separation", 8)
+		for t in pills:
+			fl.add_child(_pill(t, col if state != "locked" else C_MUTED))
+		v.add_child(fl)
+	match state:
+		"owned":
+			var ok := PanelContainer.new()
+			ok.add_theme_stylebox_override("panel", _box(C_GREEN.lerp(Color.WHITE, 0.85), 22, 18))
+			ok.add_child(_label("✔ " + btn_text, 25, C_GREEN.darkened(0.25), false, HORIZONTAL_ALIGNMENT_CENTER))
+			v.add_child(ok)
+		"locked":
+			var lk := PanelContainer.new()
+			lk.add_theme_stylebox_override("panel", _box(Color("eceef4"), 22, 18))
+			lk.add_child(_label(btn_text, 24, C_MUTED, true, HORIZONTAL_ALIGNMENT_CENTER))
+			v.add_child(lk)
+		_:
+			var can := price <= 0 or balance >= price
+			var b := _big_button(btn_text if can else "Не хватает " + _rub(price - balance), col if can else Color("c3c6d3"), cb if can else Callable(), 84)
+			b.add_theme_font_size_override("font_size", 27)
+			v.add_child(b)
+	return card
+
+
+func _shop_skills(list: VBoxContainer, col: Color, pts: int, redraw: Callable) -> void:
+	_shop_intro(list, col, "Уровень оператора %d. Свободных очков: %d.\nОчки дают за сделки: чем больше закрыл, тем выше уровень." % [Upgrades.operator_level(deals), pts])
+	for skd in Upgrades.SKILLS:
+		var sl := _skill(skd["id"])
+		var skid: String = skd["id"]
+		var state := "owned" if sl >= Upgrades.SKILL_MAX else ("buy" if pts > 0 else "locked")
+		var txt := "Максимум" if state == "owned" else ("Прокачать · 1 очко" if pts > 0 else "Нет свободных очков")
+		list.add_child(_shop_card(skid, col, skd["name"], skd["desc"], [], sl, Upgrades.SKILL_MAX, state, txt, 0, func():
+			if _skill_points() <= 0 or _skill(skid) >= Upgrades.SKILL_MAX:
+				return
+			skills[skid] = _skill(skid) + 1
+			_save()
+			redraw.call()))
+
+
+func _shop_schemes(list: VBoxContainer, col: Color, r: int, redraw: Callable) -> void:
+	_shop_intro(list, col, "Каждая схема приводит клиентов побогаче. Купленные складываются: +2,5%% к бюджету клиентов за схему и доход в конце смены (сейчас %s). Схем: %d из %d." % [_rub(Upgrades.passive_income(schemes)), schemes.size(), Upgrades.SCHEMES.size()])
+	for it in Upgrades.SCHEMES:
+		var owned: bool = it["id"] in schemes
+		var sid: String = it["id"]
+		var sprice: int = it["price"]
+		var pills := ["Клиенты ×%s" % str(it["mult"]), "Жара ×%s" % str(it["heat"])]
+		if it["passive"] > 0:
+			pills.insert(1, "+%s за смену" % _rub(it["passive"]))
+		var state := "owned" if owned else ("locked" if r < it["rank"] else "buy")
+		var txt := "Работает" if owned else ("Нужен ранг «%s»" % Upgrades.RANKS[it["rank"]]["name"] if state == "locked" else "Запустить · " + _rub(sprice))
+		list.add_child(_shop_card(sid, col, it["name"], it["desc"], pills, 0, 0, state, txt, sprice, func():
+			if balance < sprice or sid in schemes:
+				return
+			balance -= sprice
+			schemes.append(sid)
+			next_profile = {}  # следующий клиент уже придёт и по новой схеме
+			prefetch_gen += 1
+			_save()
+			_update_balance()
+			redraw.call()
+			_maybe_tutorial("s_" + sid, Tutorials.SCHEMES.get(sid, []))))
+
+
+func _shop_methods(list: VBoxContainer, col: Color, r: int, redraw: Callable) -> void:
+	_shop_intro(list, col, "Чем круче способ, тем больше денег клиент может отдать, но уговорить труднее. Способ работает, когда ты называешь его в разговоре.")
+	for mt in Upgrades.METHODS:
+		var mown: bool = mt["id"] in pay_methods
+		var mid: String = mt["id"]
+		var mprice: int = mt["price"]
+		var pills := ["Суммы до ×%s" % str(mt["cap"]), "Жара ×%s" % str(mt["heat"])]
+		if mt["chance"] != 0:
+			pills.insert(1, "Шанс %d%%" % mt["chance"])
+		var state := "owned" if mown else ("locked" if r < mt["rank"] else "buy")
+		var txt := "Доступен" if mown else ("Нужен ранг «%s»" % Upgrades.RANKS[mt["rank"]]["name"] if state == "locked" else "Открыть · " + _rub(mprice))
+		list.add_child(_shop_card(mid, col, mt["name"], mt["desc"], pills, 0, 0, state, txt, mprice, func():
+			if balance < mprice or mid in pay_methods:
+				return
+			balance -= mprice
+			pay_methods.append(mid)
+			_save()
+			_update_balance()
+			redraw.call()
+			_maybe_tutorial("m_" + mid, Tutorials.METHODS.get(mid, []))))
+
+
+func _shop_upgrades(list: VBoxContainer, col: Color, r: int, redraw: Callable) -> void:
+	_shop_intro(list, col, "Постоянные улучшения конторы. У многих несколько уровней, каждый следующий дороже.")
+	for u in Upgrades.LIST:
+		var lvl := Upgrades.level(upgrades, u["id"])
+		var maxl: int = u["prices"].size()
+		var id: String = u["id"]
+		var state := "owned" if lvl >= maxl else ("locked" if r < u["rank"] else "buy")
+		var price: int = 0 if lvl >= maxl else u["prices"][lvl]
+		var txt := "Куплено полностью" if state == "owned" else ("Нужен ранг «%s»" % Upgrades.RANKS[u["rank"]]["name"] if state == "locked" else ("Купить · " if lvl == 0 else "Улучшить · ") + _rub(price))
+		list.add_child(_shop_card(id, col, u["name"], u["desc"], [], lvl, maxl, state, txt, price, func():
+			if balance < price or Upgrades.level(upgrades, id) != lvl:
+				return
+			balance -= price
+			upgrades[id] = lvl + 1
+			_save()
+			_update_balance()
+			redraw.call()))
 
 
 ## Пока идёт звонок, нейронка придумывает следующего клиента.
@@ -1671,12 +1908,12 @@ func _on_call_ended(reason: String) -> void:
 
 func _update_balance() -> void:
 	balance_label.text = _rub(balance)
-	deals_label.text = _rank_name() + " · смена %d · звонок %d из %d" % [shift, shift_calls, _calls_max()]
-	quota_label.text = "план %s / %s" % [_rub(shift_earned), _rub(quota)]
+	deals_label.text = "Смена %d · звонок %d из %d" % [shift, shift_calls, _calls_max()]
+	quota_label.text = "%s / %s" % [_rub(shift_earned), _rub(quota)]
 	quota_bar.max_value = quota
 	quota_bar.value = mini(shift_earned, quota)
 	heat_bar.value = heat
-	heat_label.text = "Жара %d%%" % heat
+	heat_label.text = "♨ Жара %d%%" % heat
 	var hcol := Color("ffe08a") if heat < 50 else (Color("ffb04a") if heat < 80 else Color("2b0d0d"))
 	(heat_bar.get_theme_stylebox("fill") as StyleBoxFlat).bg_color = hcol
 
