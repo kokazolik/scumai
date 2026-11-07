@@ -34,6 +34,7 @@ var card_given := false
 var last_operator_line := ""
 var agreed_price := 0  # сколько клиент согласился заплатить, ₽
 var budget := 0        # сколько у клиента примерно есть денег, ₽
+var offered_max := 0     # самая большая цена, которую оператор называл за звонок
 var paid := false        # деньги уже получены (карта списана или перевод)
 var _card_answer := ""
 var _transfer_answer := ""  # "agree" | "refuse" | "no_price" | ""  # "agree" | "refuse" | "" на текущий ход
@@ -133,6 +134,8 @@ func say(text: String) -> void:
 		return
 	history.append({"role": "user", "content": "Оператор: " + text})
 	last_operator_line = text
+	if not has_corp_phone(text):
+		offered_max = maxi(offered_max, mentioned_price(text))
 	_card_answer = ""
 	_transfer_answer = ""
 	if not paid and has_corp_phone(text):
@@ -184,15 +187,29 @@ static func is_gibberish(text: String) -> bool:
 static func mentioned_price(text: String) -> int:
 	var best := 0
 	var t := text.to_lower()
-	var re := RegEx.create_from_string("(\\d[\\d\\s]*\\d|\\d)(\\s*(тыс|к(?![а-яё])))?")
+	var re := RegEx.create_from_string("(\\d[\\d\\s.,]*\\d|\\d)(\\s*(тыс|к(?![а-яё])))?")
 	for m in re.search_all(t):
-		var digits := m.get_string(1).replace(" ", "")
-		if digits.length() > 7:
+		var raw := m.get_string(1).replace(" ", "").replace("\u00a0", "")
+		var parts := raw.replace(",", ".").split(".")
+		var n := 0.0
+		if parts.size() == 1:
+			n = float(raw)
+		else:
+			var thousands := true  # «14.000», «1,500,000» — точки и запятые между тройками цифр
+			for i in range(1, parts.size()):
+				if parts[i].length() != 3:
+					thousands = false
+			if thousands:
+				n = float("".join(parts))
+			elif parts.size() == 2:
+				n = float(parts[0] + "." + parts[1])  # «2,5 тыс»
+			else:
+				continue
+		if str(int(n)).length() > 7:
 			continue  # это номер телефона или карты, а не цена
-		var n := int(digits)
 		if m.get_string(2) != "":
-			n *= 1000
-		best = maxi(best, n)
+			n *= 1000.0
+		best = maxi(best, int(round(n)))
 	return best
 
 
@@ -236,7 +253,7 @@ func _ask_model(apply_trust: bool) -> void:
 	history.append({"role": "assistant", "content": d["reply"] if d["reply"] != "" else "(молчит)"})
 	if d["reply"] != "":
 		caller_spoke.emit(d["reply"])
-	var offered := mentioned_price(last_operator_line)
+	var offered := maxi(mentioned_price(last_operator_line), offered_max)
 	if apply_trust and d["agreed_price"] > 0 and d["agreed_price"] <= mini(budget, offered) and d["agreed_price"] != agreed_price:
 		agreed_price = d["agreed_price"]
 		price_agreed.emit(agreed_price)
