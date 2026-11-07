@@ -4,8 +4,11 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.19"
-const SAVE_PATH := "user://save.cfg"
+const VERSION := "0.20"
+const OLD_SAVE_PATH := "user://save.cfg"   # сохранение до 0.20, переносится в слот 1
+const SETTINGS_PATH := "user://settings.cfg"
+const SLOTS := 6
+const SAVE_KEYS := ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods", "skills", "play_seconds", "finale_shown", "tutorials_seen"]
 const SHIFT_CALLS := 8       # звонков в смене
 const FIRST_QUOTA := 15000   # план первой смены, ₽
 const QUOTA_GROWTH := 1.08    # на сколько растёт план каждую выполненную смену
@@ -48,6 +51,9 @@ var pay_methods: Array = ["card", "phone"]  # купленные способы 
 var skills: Dictionary = {}    # навыки оператора {id: уровень}
 var play_seconds := 0.0
 var finale_shown := false
+var tutorials_seen: Array = []
+var tutorials_off := false
+var active_slot := 1
 var dictated_gift := ""
 var pinned_gift_btn: Button
 var cur_scheme: Dictionary = {}
@@ -160,18 +166,37 @@ func _ready() -> void:
 
 # ---------- сохранение ----------
 
+static func _slot_path(n: int) -> String:
+	return "user://slot_%d.cfg" % n
+
+
 func _save() -> void:
 	var c := ConfigFile.new()
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods", "skills", "play_seconds", "finale_shown"]:
+	for k in SAVE_KEYS:
 		c.set_value("game", k, get(k))
-	c.save(SAVE_PATH)
+	c.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
+	c.save(_slot_path(active_slot))
+
+
+func _save_settings() -> void:
+	var c := ConfigFile.new()
+	c.set_value("settings", "active_slot", active_slot)
+	c.set_value("settings", "tutorials_off", tutorials_off)
+	c.save(SETTINGS_PATH)
 
 
 func _load() -> void:
+	var st := ConfigFile.new()
+	if st.load(SETTINGS_PATH) == OK:
+		active_slot = clampi(int(st.get_value("settings", "active_slot", 1)), 1, SLOTS)
+		tutorials_off = bool(st.get_value("settings", "tutorials_off", false))
+	if FileAccess.file_exists(OLD_SAVE_PATH) and not FileAccess.file_exists(_slot_path(1)):
+		DirAccess.copy_absolute(OLD_SAVE_PATH, _slot_path(1))
+		DirAccess.remove_absolute(OLD_SAVE_PATH)
 	var c := ConfigFile.new()
-	if c.load(SAVE_PATH) != OK:
+	if c.load(_slot_path(active_slot)) != OK:
 		return
-	for k in ["balance", "deals", "shift", "quota", "shift_earned", "shift_calls", "total_calls", "best_shift", "shift_log", "last_moments", "earned_total", "heat", "raids", "upgrades", "schemes", "pay_methods", "skills", "play_seconds", "finale_shown"]:
+	for k in SAVE_KEYS:
 		if c.has_section_key("game", k):
 			set(k, c.get_value("game", k))
 	if not "ads" in schemes:  # сохранения до 0.18: первой схемы «Объявления» тогда не было
@@ -192,7 +217,9 @@ func _reset_progress() -> void:
 	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
 	shift_log = []; last_moments = []
 	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["ads"]; pay_methods = ["card", "phone"]
-	skills = {}; play_seconds = 0.0; finale_shown = false
+	skills = {}; play_seconds = 0.0; finale_shown = false; tutorials_seen = []
+	next_profile = {}
+	prefetch_gen += 1
 	_clear_chat()
 	_save()
 	_update_balance()
@@ -417,6 +444,10 @@ func _show_menu() -> void:
 	row2.add_child(_big_button("Ключи", C_YELLOW, func(): _show_key_screen(false), 100))
 	v.add_child(row2)
 	var row3 := HBoxContainer.new()
+	row3.add_theme_constant_override("separation", 14)
+	var slots_btn := _big_button("Сохранения", C_GREEN.darkened(0.15), _show_slots, 80)
+	slots_btn.add_theme_font_size_override("font_size", 26)
+	row3.add_child(slots_btn)
 	var reset_btn := _big_button("Новая игра", Color("b9bccb"), Callable(), 80)
 	reset_btn.pressed.connect(func():
 		if reset_btn.text != "Точно? Нажми ещё":
@@ -500,6 +531,13 @@ func _show_help() -> void:
 	overlay_scrolls.append(sc)
 	sc.add_child(l)
 	v.add_child(sc)
+	var replay := _chip_button("↺ Показывать обучение заново", C_BLUE, func():
+		tutorials_seen = []
+		tutorials_off = false
+		_save()
+		_save_settings()
+		_add_note("Обучение включено: оно появится на следующем звонке.", C_BLUE))
+	v.add_child(replay)
 	v.add_child(_big_button("Понятно", C_GREEN, func(): m[0].queue_free(), 110))
 
 
@@ -1089,6 +1127,7 @@ func _next_call() -> void:
 		caller_info.text += "\nБаза: на карте около %s, всего до %s. %s" % [_rub(session.base_budget), _rub(session.budget), p["personality"]]
 	_set_avatar(p["name"])
 	_add_note("☎ Входящий звонок...")
+	_maybe_tutorial("s_" + cur_scheme["id"], Tutorials.SCHEMES.get(cur_scheme["id"], []))
 	_on_trust(session.trust, 0)
 	_update_balance()
 	_save()
@@ -1150,6 +1189,132 @@ func _raid() -> void:
 	l.custom_minimum_size.x = 580
 	v.add_child(l)
 	v.add_child(_big_button("Работаем дальше", C_ACCENT, func(): m[0].queue_free(), 110))
+
+
+## Обучение по схеме или способу оплаты: один раз, с кнопкой «Пропустить».
+func _maybe_tutorial(key: String, pages: Array) -> void:
+	if pages.is_empty() or tutorials_off or key in tutorials_seen:
+		return
+	tutorials_seen.append(key)
+	_save()
+	_show_tutorial(pages, 0)
+
+
+func _show_tutorial(pages: Array, i: int) -> void:
+	input.release_focus()
+	var m := _modal()
+	var v: VBoxContainer = m[1]
+	var head := _label("Обучение · %d из %d" % [i + 1, pages.size()] if pages.size() > 1 else "Обучение", 22, C_MUTED)
+	v.add_child(head)
+	v.add_child(_label(pages[i][0], 38, C_ACCENT, true))
+	var body := _label(pages[i][1], 27, C_INK, true)
+	body.custom_minimum_size.x = 580
+	v.add_child(body)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	var last := i + 1 >= pages.size()
+	row.add_child(_big_button("Пропустить", C_MUTED, func(): m[0].queue_free(), 96))
+	row.add_child(_big_button("Понятно" if last else "Далее ›", C_GREEN, func():
+		m[0].queue_free()
+		if not last:
+			_show_tutorial(pages, i + 1), 96))
+	v.add_child(row)
+	v.add_child(_chip_button("Больше не показывать обучение", C_MUTED, func():
+		tutorials_off = true
+		_save_settings()
+		m[0].queue_free()))
+
+
+## Слоты сохранений: игра всегда пишет в текущий слот, здесь можно переключиться или скопировать игру в другой.
+func _show_slots() -> void:
+	var m := _modal()
+	var v: VBoxContainer = m[1]
+	v.add_child(_label("Сохранения", 42, C_ACCENT))
+	v.add_child(_label("Игра сохраняется сама в текущий слот. «Играть» загружает слот, «Сохранить сюда» копирует текущую игру в слот.", 22, C_MUTED, true))
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 10)
+	v.add_child(list)
+	var holder := []
+	var refresh := func():
+		for ch in list.get_children():
+			ch.queue_free()
+		for n in range(1, SLOTS + 1):
+			var c := ConfigFile.new()
+			var has := c.load(_slot_path(n)) == OK
+			var card := PanelContainer.new()
+			var cur := n == active_slot
+			var sb := _box(Color("eafaf0") if cur else Color("fff8ea"), 22, 14)
+			if cur:
+				sb.border_width_left = 8
+				sb.border_color = C_GREEN
+			card.add_theme_stylebox_override("panel", sb)
+			var cv := VBoxContainer.new()
+			cv.add_theme_constant_override("separation", 4)
+			card.add_child(cv)
+			var title := "Слот %d" % n + ("  · текущий" if cur else "")
+			cv.add_child(_label(title, 26, C_INK))
+			var info := "Пусто"
+			if has:
+				var e: int = c.get_value("game", "earned_total", 0)
+				var secs: float = c.get_value("game", "play_seconds", 0.0)
+				info = "%s · смена %d · на счету %s\n%d ч %d мин в игре · %s" % [Upgrades.RANKS[Upgrades.rank_index(e)]["name"],
+					int(c.get_value("game", "shift", 1)), _rub(int(c.get_value("game", "balance", 0))),
+					int(secs / 3600.0), int(secs / 60.0) % 60, str(c.get_value("meta", "saved_at", "")).replace("T", " ").substr(0, 16)]
+			cv.add_child(_label(info, 21, C_MUTED, true))
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 10)
+			var slot := n
+			if not cur:
+				row.add_child(_big_button("Играть" if has else "Новая игра", C_BLUE, func():
+					_switch_slot(slot)
+					holder[0].call(), 56))
+				var save_btn := _big_button("Сохранить сюда", C_ACCENT, Callable(), 56)
+				save_btn.pressed.connect(func():
+					if has and save_btn.text != "Перезаписать?":
+						save_btn.text = "Перезаписать?"
+						return
+					active_slot = slot
+					_save()
+					_save_settings()
+					holder[0].call())
+				row.add_child(save_btn)
+				for b in row.get_children():
+					b.add_theme_font_size_override("font_size", 23)
+				cv.add_child(row)
+			list.add_child(card)
+	holder.append(refresh)
+	refresh.call()
+	v.add_child(_big_button("Закрыть", C_MUTED, func():
+		m[0].queue_free()
+		_refresh_menu(), 90))
+
+
+func _switch_slot(n: int) -> void:
+	_save()  # текущая игра не теряется
+	_drop_session()
+	session = null
+	_close_terminal()
+	active_slot = n
+	_save_settings()
+	# сбрасываем всё к началу и читаем слот (пустой слот = новая игра)
+	balance = 0; deals = 0; shift = 1; quota = FIRST_QUOTA
+	shift_earned = 0; shift_calls = 0; total_calls = 0; best_shift = 0
+	shift_log = []; last_moments = []
+	earned_total = 0; heat = 0; raids = 0; upgrades = {}; schemes = ["ads"]; pay_methods = ["card", "phone"]
+	skills = {}; play_seconds = 0.0; finale_shown = false; tutorials_seen = []
+	_load()
+	next_profile = {}
+	prefetch_gen += 1
+	dictated_card = ""
+	dictated_gift = ""
+	pinned_card_btn.hide()
+	pinned_gift_btn.hide()
+	caller_name.text = "Ждём звонка"
+	caller_info.text = ""
+	_clear_chat()
+	_update_balance()
+	_set_controls()
+	_refresh_menu()
 
 
 func _show_finale() -> void:
@@ -1246,6 +1411,7 @@ func _show_shop() -> void:
 					schemes.append(sid)
 					next_profile = {}  # следующий клиент уже придёт и по новой схеме
 					prefetch_gen += 1
+					_maybe_tutorial("s_" + sid, Tutorials.SCHEMES.get(sid, []))
 					_save()
 					_update_balance()
 					holder[0].call(), 76)
@@ -1284,6 +1450,7 @@ func _show_shop() -> void:
 						return
 					balance -= mprice
 					pay_methods.append(mid)
+					_maybe_tutorial("m_" + mid, Tutorials.METHODS.get(mid, []))
 					_save()
 					_update_balance()
 					holder[0].call(), 76)
