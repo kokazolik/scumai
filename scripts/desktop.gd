@@ -4,7 +4,7 @@ extends Control
 ## переписка, поле ввода с микрофоном, кнопки), платёжный терминал,
 ## итоги смены с «прикольными моментами». Весь интерфейс собирается кодом.
 
-const VERSION := "0.21"
+const VERSION := "0.22"
 const OLD_SAVE_PATH := "user://save.cfg"   # сохранение до 0.20, переносится в слот 1
 const SETTINGS_PATH := "user://settings.cfg"
 const SLOTS := 6
@@ -110,10 +110,14 @@ var term_result: Label
 
 # Наложенные экраны
 var menu: Control
-var menu_stats: Label
+var menu_rank_l: Label
+var menu_sub_l: Label
+var menu_rank_bar: ProgressBar
+var menu_stat_labels: Array = []
 var menu_play_btn: Button
 var overlay_scrolls: Array = []  # прокрутки поверх звонка, их тоже тянем пальцем
 var font_bold: Font
+var ringing: Control
 var font_black: Font
 var shop_tab := 0
 
@@ -330,13 +334,15 @@ func _make_theme() -> Theme:
 	return t
 
 
-func _big_button(text: String, color: Color, cb: Callable, height := 110) -> Button:
+func _big_button(text: String, color: Color, cb: Callable, height := 110, icon := "") -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size.y = height
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.add_theme_font_size_override("font_size", 32)
 	_paint_button(b, color)
+	if icon != "":
+		_set_btn_icon(b, icon, int(minf(height * 0.42, 48)))
 	if cb.is_valid():
 		b.pressed.connect(cb)
 	return b
@@ -349,9 +355,11 @@ func _paint_button(b: Button, color: Color) -> void:
 	var dark := color.get_luminance() > 0.6
 	for s in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(s, C_INK if dark else Color.WHITE)
+	for s in ["icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color", "icon_hover_pressed_color"]:
+		b.add_theme_color_override(s, C_INK if dark else Color.WHITE)
 
 
-func _chip_button(text: String, color: Color, cb: Callable) -> Button:
+func _chip_button(text: String, color: Color, cb: Callable, icon := "") -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size.y = 68
@@ -362,6 +370,8 @@ func _chip_button(text: String, color: Color, cb: Callable) -> Button:
 	b.add_theme_stylebox_override("pressed", _box(color.lerp(Color.WHITE, 0.6), 34, 20))
 	for s in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(s, color.darkened(0.2))
+	if icon != "":
+		_set_btn_icon(b, icon, 30)
 	b.pressed.connect(cb)
 	return b
 
@@ -383,6 +393,63 @@ func _label(text: String, size := 30, color := C_INK, wrap := false, align := HO
 	if wrap:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
+
+
+## Нарисованные значки лежат в res://icons (белые), здесь они перекрашиваются.
+func _tex(name: String) -> Texture2D:
+	var path := "res://icons/%s.png" % name
+	return load(path) if ResourceLoader.exists(path) else null
+
+
+func _icon(name: String, size: float, color := Color.WHITE) -> TextureRect:
+	var t := TextureRect.new()
+	t.texture = _tex(name)
+	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	t.custom_minimum_size = Vector2(size, size)
+	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	t.modulate = color
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return t
+
+
+## Значок в цветном скруглённом квадрате.
+func _badge(name: String, size: float, color: Color, radius := 0) -> Panel:
+	var p := Panel.new()
+	p.custom_minimum_size = Vector2(size, size)
+	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	p.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var sb := _box(color, radius if radius > 0 else int(size * 0.3), 0)
+	sb.border_width_bottom = int(size * 0.06)
+	sb.border_color = color.darkened(0.25)
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := _icon(name, size * 0.56, Color.WHITE)
+	ic.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_child(ic)
+	return p
+
+
+func _set_btn_icon(b: Button, name: String, size := 40) -> void:
+	b.icon = _tex(name) if name != "" else null
+	b.add_theme_constant_override("icon_max_width", size)
+	b.add_theme_constant_override("h_separation", 12)
+	var col: Color = b.get_theme_color("font_color")
+	for k in ["icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color", "icon_hover_pressed_color"]:
+		b.add_theme_color_override(k, col)
+	b.add_theme_color_override("icon_disabled_color", Color(1, 1, 1, 0.7))
+
+
+## Строка «значок + заголовок» для окон.
+func _title_row(icon: String, text: String, color: Color, size := 40) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	h.add_child(_badge(icon, size * 1.5, color))
+	var l := _label(text, size, color.darkened(0.1), true)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	h.add_child(l)
+	return h
 
 
 ## Полупрозрачный фон и карточка по центру. Возвращает [фон, содержимое карточки].
@@ -436,83 +503,170 @@ func _show_menu() -> void:
 	menu.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(menu)
 	menu.add_child(_make_bg())
-	# Большая оранжевая «трубка» сверху
+	# Оранжевая шапка с телефоном и летающими значками
 	var hero := Panel.new()
 	var hs := _box(C_ACCENT, 0, 0)
-	hs.corner_radius_bottom_left = 90
-	hs.corner_radius_bottom_right = 90
+	hs.corner_radius_bottom_left = 80
+	hs.corner_radius_bottom_right = 80
+	hs.border_width_bottom = 10
+	hs.border_color = C_ACCENT.darkened(0.2)
 	hero.add_theme_stylebox_override("panel", hs)
 	hero.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	hero.offset_bottom = 470
+	hero.offset_bottom = 520
+	hero.clip_contents = true
 	menu.add_child(hero)
-	for d in [[Vector2(560, 60), 120, 0.12], [Vector2(70, 330), 80, 0.1], [Vector2(640, 380), 46, 0.16]]:
+	for d in [[Vector2(620, 40), 150, 0.1], [Vector2(60, 420), 110, 0.08], [Vector2(700, 470), 60, 0.12], [Vector2(120, 60), 40, 0.12]]:
 		hero.add_child(_dot(d[0], d[1], Color(1, 1, 1, d[2])))
+	var floaters := [["coin", Vector2(60, 90), 76, C_YELLOW], ["star", Vector2(570, 70), 66, C_PURPLE],
+		["card", Vector2(610, 190), 62, C_BLUE], ["gift", Vector2(40, 200), 56, C_GREEN], ["flame", Vector2(470, 30), 48, C_RED]]
+	for i in floaters.size():
+		var f: Array = floaters[i]
+		var bd := _badge(f[0], f[2], f[3])
+		bd.position = f[1]
+		bd.rotation = (0.2 if i % 2 == 0 else -0.2)
+		hero.add_child(bd)
+		var ft := create_tween().set_loops().set_trans(Tween.TRANS_SINE)
+		ft.tween_property(bd, "position:y", f[1].y - 14, 1.3 + i * 0.17)
+		ft.tween_property(bd, "position:y", f[1].y, 1.3 + i * 0.17)
 
 	var m := MarginContainer.new()
 	m.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right"]:
-		m.add_theme_constant_override("margin_" + side, 44)
-	m.add_theme_constant_override("margin_top", 90)
-	m.add_theme_constant_override("margin_bottom", 40)
+		m.add_theme_constant_override("margin_" + side, 36)
+	m.add_theme_constant_override("margin_top", 70)
+	m.add_theme_constant_override("margin_bottom", 30)
 	menu.add_child(m)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 18)
 	m.add_child(v)
 
-	var phone := _label("☎", 100, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER)
-	v.add_child(phone)
+	# Телефон в белом круге, иногда звенит
+	var ring := Panel.new()
+	ring.custom_minimum_size = Vector2(190, 190)
+	ring.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var rs := _box(Color.WHITE, 95, 0)
+	rs.shadow_color = Color(0.4, 0.1, 0, 0.25)
+	rs.shadow_size = 18
+	rs.shadow_offset = Vector2(0, 8)
+	ring.add_theme_stylebox_override("panel", rs)
+	var ph := _icon("phone", 112, C_ACCENT)
+	ph.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ring.add_child(ph)
+	v.add_child(ring)
+	ring.pivot_offset = Vector2(95, 95)
 	var tw := create_tween().set_loops()
-	phone.pivot_offset = Vector2(310, 80)
-	tw.tween_property(phone, "rotation", 0.12, 0.08)
-	tw.tween_property(phone, "rotation", -0.12, 0.08)
-	tw.tween_property(phone, "rotation", 0.08, 0.08)
-	tw.tween_property(phone, "rotation", 0.0, 0.08)
-	tw.tween_interval(1.6)
-	v.add_child(_label("КОНТОРА", 88, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(_label("Мы перезвоним. Вы заплатите.", 28, Color(1, 1, 1, 0.85), false, HORIZONTAL_ALIGNMENT_CENTER))
+	tw.tween_property(ring, "rotation", 0.14, 0.07)
+	tw.tween_property(ring, "rotation", -0.14, 0.07)
+	tw.tween_property(ring, "rotation", 0.1, 0.07)
+	tw.tween_property(ring, "rotation", -0.1, 0.07)
+	tw.tween_property(ring, "rotation", 0.0, 0.07)
+	tw.tween_interval(1.8)
+	v.add_child(_label("КОНТОРА", 84, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(_label("Мы перезвоним. Вы заплатите.", 27, Color(1, 1, 1, 0.9), false, HORIZONTAL_ALIGNMENT_CENTER))
 	var gap := Control.new()
-	gap.custom_minimum_size.y = 24
+	gap.custom_minimum_size.y = 8
 	v.add_child(gap)
 
-	var stats_card := _card()
-	menu_stats = _label("", 26, C_MUTED, true, HORIZONTAL_ALIGNMENT_CENTER)
-	stats_card.add_child(menu_stats)
-	v.add_child(stats_card)
+	# Карточка игрока: ранг, прогресс, деньги, план, жара
+	var pc := _card()
+	v.add_child(pc)
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 12)
+	pc.add_child(pv)
+	var ph2 := HBoxContainer.new()
+	ph2.add_theme_constant_override("separation", 16)
+	pv.add_child(ph2)
+	ph2.add_child(_badge("crown", 84, C_YELLOW))
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 0)
+	rv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rv.alignment = BoxContainer.ALIGNMENT_CENTER
+	ph2.add_child(rv)
+	menu_rank_l = _label("", 32, C_INK)
+	rv.add_child(menu_rank_l)
+	menu_sub_l = _label("", 22, C_MUTED, true)
+	rv.add_child(menu_sub_l)
+	menu_rank_bar = ProgressBar.new()
+	menu_rank_bar.show_percentage = false
+	menu_rank_bar.custom_minimum_size.y = 16
+	menu_rank_bar.add_theme_stylebox_override("fill", _box(C_YELLOW, 8, 0))
+	pv.add_child(menu_rank_bar)
+	var stats := HBoxContainer.new()
+	stats.add_theme_constant_override("separation", 10)
+	pv.add_child(stats)
+	menu_stat_labels = []
+	for st in [["coin", C_GREEN], ["target", C_BLUE], ["flame", C_RED]]:
+		var sp := PanelContainer.new()
+		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sp.add_theme_stylebox_override("panel", _box(Color(st[1]).lerp(Color.WHITE, 0.87), 20, 12))
+		var sh := HBoxContainer.new()
+		sh.add_theme_constant_override("separation", 8)
+		sp.add_child(sh)
+		sh.add_child(_icon(st[0], 34, st[1]))
+		var sl := _label("", 22, Color(st[1]).darkened(0.35))
+		sl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		sl.clip_text = true
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sh.add_child(sl)
+		menu_stat_labels.append(sl)
+		stats.add_child(sp)
 
-	menu_play_btn = _big_button("", C_GREEN, _on_menu_play, 130)
-	menu_play_btn.add_theme_font_size_override("font_size", 38)
+	var sp1 := Control.new()
+	sp1.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(sp1)
+	menu_play_btn = _big_button("", C_GREEN, _on_menu_play, 140, "ring_call")
+	menu_play_btn.add_theme_font_size_override("font_size", 36)
 	v.add_child(menu_play_btn)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	row.add_child(_big_button("$ Магазин", C_ACCENT, _show_shop, 100))
-	row.add_child(_big_button("★ Моменты", C_PURPLE, _show_last_moments, 100))
-	v.add_child(row)
-	var row2 := HBoxContainer.new()
-	row2.add_theme_constant_override("separation", 14)
-	row2.add_child(_big_button("? Как играть", C_BLUE, _show_help, 100))
-	row2.add_child(_big_button("Ключи", C_YELLOW, func(): _show_key_screen(false), 100))
-	v.add_child(row2)
-	var row3 := HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 14)
-	var slots_btn := _big_button("Сохранения", C_GREEN.darkened(0.15), _show_slots, 80)
-	slots_btn.add_theme_font_size_override("font_size", 26)
-	row3.add_child(slots_btn)
-	var reset_btn := _big_button("Новая игра", Color("b9bccb"), Callable(), 80)
-	reset_btn.pressed.connect(func():
-		if reset_btn.text != "Точно? Нажми ещё":
-			reset_btn.text = "Точно? Нажми ещё"
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	v.add_child(grid)
+	grid.add_child(_tile("Магазин", "cart", C_ACCENT, _show_shop))
+	grid.add_child(_tile("Моменты", "star", C_PURPLE, _show_last_moments))
+	grid.add_child(_tile("Как играть", "help", C_BLUE, _show_help))
+	grid.add_child(_tile("Ключи", "key", Color("f2a516"), func(): _show_key_screen(false)))
+	grid.add_child(_tile("Сохранения", "save", Color("13a39a"), _show_slots))
+	var reset_tile := _tile("Новая игра", "refresh", Color("9a9db3"), Callable())
+	var reset_l: Label = reset_tile.get_meta("label")
+	reset_tile.pressed.connect(func():
+		if reset_l.text != "Точно?":
+			reset_l.text = "Точно?"
 			return
-		reset_btn.text = "Новая игра"
+		reset_l.text = "Новая игра"
 		_reset_progress()
 		_refresh_menu())
-	reset_btn.add_theme_font_size_override("font_size", 26)
-	row3.add_child(reset_btn)
-	v.add_child(row3)
+	grid.add_child(reset_tile)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(spacer)
 	v.add_child(_label("версия " + VERSION + " · все персонажи и номера выдуманы", 20, C_MUTED, false, HORIZONTAL_ALIGNMENT_CENTER))
 	_refresh_menu()
+
+
+## Плитка меню: крупный значок и подпись.
+func _tile(text: String, icon: String, color: Color, cb: Callable) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, 176)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_stylebox_override("normal", _button_box(color))
+	b.add_theme_stylebox_override("hover", _button_box(color.lightened(0.08)))
+	b.add_theme_stylebox_override("pressed", _box(color.darkened(0.2)))
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 8)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(v)
+	var ic := _icon(icon, 66, Color.WHITE)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(ic)
+	var l := _label(text, 23, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER)
+	v.add_child(l)
+	b.set_meta("label", l)
+	if cb.is_valid():
+		b.pressed.connect(cb)
+	return b
 
 
 func _dot(pos: Vector2, r: float, c: Color) -> Panel:
@@ -529,16 +683,40 @@ func _refresh_menu() -> void:
 		return
 	var in_call := session != null and session.active
 	if in_call:
-		menu_play_btn.text = "▶ Вернуться к звонку"
+		menu_play_btn.text = "Вернуться к звонку"
 	elif _has_progress():
-		menu_play_btn.text = "▶ Продолжить смену %d" % shift
+		menu_play_btn.text = "Продолжить смену %d" % shift
 	else:
-		menu_play_btn.text = "▶ Начать работу"
-	if _has_progress():
-		menu_stats.text = "%s · ур. %d · смена %d\nПлан %s / %s · на счету %s\nСхем: %d · жара %d%% · в игре %d ч %d мин" % [
-			_rank_name(), Upgrades.operator_level(deals), shift, _rub(shift_earned), _rub(quota), _rub(balance), schemes.size(), heat, int(play_seconds / 3600.0), int(play_seconds / 60.0) % 60]
+		menu_play_btn.text = "Начать работу"
+	var r := Upgrades.rank_index(earned_total)
+	menu_rank_l.text = Upgrades.RANKS[r]["name"]
+	if r + 1 < Upgrades.RANKS.size():
+		var lo: int = Upgrades.RANKS[r]["earned"]
+		var hi: int = Upgrades.RANKS[r + 1]["earned"]
+		menu_rank_bar.max_value = hi - lo
+		menu_rank_bar.value = earned_total - lo
+		menu_sub_l.text = "Ур. %d · смена %d · до ранга «%s» %s" % [Upgrades.operator_level(deals), shift, Upgrades.RANKS[r + 1]["name"], _rub(hi - earned_total)]
 	else:
-		menu_stats.text = "Ты оператор конторы. Тебе звонят люди с объявлений. Придумай услугу, назови цену и получи деньги.\nПлан первой смены: " + _rub(FIRST_QUOTA)
+		menu_rank_bar.max_value = 1
+		menu_rank_bar.value = 1
+		menu_sub_l.text = "Ур. %d · смена %d · вершина карьеры" % [Upgrades.operator_level(deals), shift]
+	if not _has_progress():
+		menu_sub_l.text = "Тебе звонят люди с объявлений. Придумай услугу, назови цену, получи деньги."
+	menu_stat_labels[0].text = _rub(balance)
+	if quota < 1000000:
+		menu_stat_labels[1].text = "%d/%d тыс" % [shift_earned / 1000, quota / 1000]
+	else:
+		menu_stat_labels[1].text = ("%.1f/%.1f млн" % [shift_earned / 1000000.0, quota / 1000000.0]).replace(".", ",")
+	menu_stat_labels[2].text = "%d%%" % heat
+
+
+## 1 250 000 -> «1,25 млн», 15 000 -> «15 тыс»
+static func _short_rub(n: int) -> String:
+	if n >= 1000000:
+		return (("%.2f" % (n / 1000000.0)).rstrip("0").rstrip(".") + " млн").replace(".", ",")
+	if n >= 1000:
+		return str(int(n / 1000.0)) + " тыс"
+	return str(n)
 
 
 func _on_menu_play() -> void:
@@ -557,7 +735,7 @@ func _on_menu_play() -> void:
 func _show_help() -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
-	v.add_child(_label("Как играть", 44, C_ACCENT))
+	v.add_child(_title_row("help", "Как играть", C_BLUE))
 	var text := """Тебе звонят люди, которые нашли контору по объявлению. Придумай им услугу, назови цену и добейся согласия.
 
 • Шанс — вероятность, что клиент отдаст карту или переведёт деньги. Бред и грубость его снижают.
@@ -594,7 +772,7 @@ func _show_help() -> void:
 func _show_key_screen(then_play: bool) -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
-	v.add_child(_label("Ключ ИИ (OpenRouter)", 38, C_ACCENT))
+	v.add_child(_title_row("key", "Ключ ИИ (OpenRouter)", Color("f2a516"), 34))
 	var has := not LLM.api_key.is_empty()
 	var info := _label(("Ключ уже сохранён. Чтобы заменить его, скопируй новый и нажми кнопку.\n" if has else "") +
 		"1. Скопируй ключ OpenRouter (начинается с sk-or-).\n2. Нажми кнопку ниже.\nКлюч хранится только на этом телефоне и не показывается.", 27, C_INK, true)
@@ -612,12 +790,12 @@ func _show_key_screen(then_play: bool) -> void:
 		else:
 			status.text = "В буфере нет ключа. Скопируй ключ sk-or-... и нажми ещё раз.", 130))
 	v.add_child(status)
-	v.add_child(_label("Ключ голоса (бесплатно)", 34, C_PURPLE))
+	v.add_child(_title_row("mic", "Ключ голоса (бесплатно)", C_PURPLE, 30))
 	var vinfo := _label(("Ключ голоса сохранён: микрофон в игре слушает сам.\n" if not LLM.voice_key.is_empty() else "") +
 		"Зарегистрируйся на console.groq.com, открой API Keys, создай ключ (начинается с gsk_), скопируй и нажми кнопку.", 25, C_INK, true)
 	vinfo.custom_minimum_size.x = 580
 	v.add_child(vinfo)
-	v.add_child(_chip_button("Открыть console.groq.com/keys", C_PURPLE, func(): OS.shell_open("https://console.groq.com/keys")))
+	v.add_child(_chip_button("Открыть console.groq.com/keys", C_PURPLE, func(): OS.shell_open("https://console.groq.com/keys"), "key"))
 	var vstatus := _label("", 26, C_RED, true, HORIZONTAL_ALIGNMENT_CENTER)
 	v.add_child(_big_button("Вставить ключ голоса", C_PURPLE, func():
 		var k := DisplayServer.clipboard_get().strip_edges()
@@ -635,7 +813,7 @@ func _show_key_screen(then_play: bool) -> void:
 func _show_last_moments() -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
-	v.add_child(_label("★ Моменты прошлой смены", 40, C_PURPLE))
+	v.add_child(_title_row("star", "Моменты прошлой смены", C_PURPLE, 36))
 	if last_moments.is_empty():
 		var l := _label("Пока пусто. Отработай смену, и здесь появятся самые смешные моменты разговоров.", 27, C_MUTED, true)
 		l.custom_minimum_size.x = 580
@@ -694,9 +872,10 @@ func _build_header() -> Control:
 	h.add_theme_constant_override("separation", 14)
 	outer.add_child(h)
 	var menu_btn := Button.new()
-	menu_btn.text = "≡"
 	menu_btn.custom_minimum_size = Vector2(80, 80)
-	menu_btn.add_theme_font_size_override("font_size", 44)
+	menu_btn.icon = _tex("menu")
+	menu_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_btn.add_theme_constant_override("icon_max_width", 40)
 	var ms := _box(Color(1, 1, 1, 0.22), 26, 0)
 	menu_btn.add_theme_stylebox_override("normal", ms)
 	menu_btn.add_theme_stylebox_override("hover", ms)
@@ -717,13 +896,19 @@ func _build_header() -> Control:
 	deals_label.custom_minimum_size.x = 60
 	tv.add_child(deals_label)
 	var pill := PanelContainer.new()
-	pill.add_theme_stylebox_override("panel", _box(Color.WHITE, 30, 22))
+	pill.add_theme_stylebox_override("panel", _box(Color.WHITE, 30, 16))
 	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	balance_label = _label("", 36, C_ACCENT.darkened(0.3), false, HORIZONTAL_ALIGNMENT_RIGHT)
-	pill.add_child(balance_label)
+	var ph := HBoxContainer.new()
+	ph.add_theme_constant_override("separation", 8)
+	pill.add_child(ph)
+	ph.add_child(_icon("coin", 40, C_YELLOW.darkened(0.1)))
+	balance_label = _label("", 34, C_ACCENT.darkened(0.3), false, HORIZONTAL_ALIGNMENT_RIGHT)
+	ph.add_child(balance_label)
 	h.add_child(pill)
 
 	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.add_child(_icon("target", 26, Color.WHITE))
 	row.add_child(_label("План смены", 21, Color(1, 1, 1, 0.88)))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -739,8 +924,9 @@ func _build_header() -> Control:
 	outer.add_child(quota_bar)
 	var hr := HBoxContainer.new()
 	hr.add_theme_constant_override("separation", 10)
+	hr.add_child(_icon("flame", 26, Color.WHITE))
 	heat_label = _label("", 20, Color(1, 1, 1, 0.9))
-	heat_label.custom_minimum_size.x = 150
+	heat_label.custom_minimum_size.x = 120
 	hr.add_child(heat_label)
 	heat_bar = ProgressBar.new()
 	heat_bar.show_percentage = false
@@ -802,17 +988,17 @@ func _build_caller_card() -> Control:
 	chips_box = chips
 	chips.add_theme_constant_override("h_separation", 10)
 	chips.add_theme_constant_override("v_separation", 10)
-	chips.add_child(_chip_button("⧉ Наш номер " + CallSession.CORP_PHONE, C_ACCENT, func():
+	chips.add_child(_chip_button("Наш номер " + CallSession.CORP_PHONE, C_ACCENT, func():
 		DisplayServer.clipboard_set(CallSession.CORP_PHONE)
-		_add_note("Номер для перевода скопирован. Продиктуйте его клиенту.", C_BLUE)))
+		_add_note("Номер для перевода скопирован. Продиктуйте его клиенту.", C_BLUE), "copy"))
 	pinned_card_btn = _chip_button("", C_GREEN, func():
 		DisplayServer.clipboard_set(dictated_card.replace(" ", ""))
-		_add_note("Номер карты скопирован. Вставьте его в терминале.", C_BLUE))
+		_add_note("Номер карты скопирован. Вставьте его в терминале.", C_BLUE), "card")
 	pinned_card_btn.hide()
 	chips.add_child(pinned_card_btn)
 	pinned_gift_btn = _chip_button("", C_PURPLE, func():
 		DisplayServer.clipboard_set(dictated_gift)
-		_add_note("Код подарочной карты скопирован. Вставьте его в терминале.", C_BLUE))
+		_add_note("Код подарочной карты скопирован. Вставьте его в терминале.", C_BLUE), "gift")
 	pinned_gift_btn.hide()
 	chips.add_child(pinned_gift_btn)
 	v.add_child(chips)
@@ -868,7 +1054,8 @@ func _build_input_row() -> Control:
 	mic_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mic_btn.add_child(mic_icon)
 	h.add_child(mic_btn)
-	send_btn = _big_button("➤", C_ACCENT, _on_send, INPUT_MIN_H)
+	send_btn = _big_button("", C_ACCENT, _on_send, INPUT_MIN_H, "send")
+	send_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	send_btn.size_flags_horizontal = Control.SIZE_FILL
 	send_btn.size_flags_vertical = Control.SIZE_SHRINK_END
 	send_btn.custom_minimum_size.x = 100
@@ -880,9 +1067,9 @@ func _build_input_row() -> Control:
 func _build_actions() -> Control:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 10)
-	terminal_btn = _big_button("▤ Терминал", C_BLUE, _open_terminal, 100)
-	hang_btn = _big_button("✖ Сбросить", C_RED, _on_hang_up, 100)
-	next_btn = _big_button("☎ Дальше", C_YELLOW, _next_call, 100)
+	terminal_btn = _big_button("Терминал", C_BLUE, _open_terminal, 100, "terminal")
+	hang_btn = _big_button("Сбросить", C_RED, _on_hang_up, 100, "handset")
+	next_btn = _big_button("Дальше", C_YELLOW, _next_call, 100, "ring_call")
 	for b in [terminal_btn, hang_btn, next_btn]:
 		b.add_theme_font_size_override("font_size", 27)
 		h.add_child(b)
@@ -921,7 +1108,11 @@ func _build_terminal() -> Control:
 	var sv := VBoxContainer.new()
 	sv.add_theme_constant_override("separation", 6)
 	screen.add_child(sv)
-	sv.add_child(_label("▤ PayTerminal 2.0", 34, Color("7fe3a6")))
+	var th := HBoxContainer.new()
+	th.add_theme_constant_override("separation", 12)
+	th.add_child(_icon("terminal", 40, Color("7fe3a6")))
+	th.add_child(_label("PayTerminal 2.0", 34, Color("7fe3a6")))
+	sv.add_child(th)
 	term_hint = _label("", 25, Color("c8d3f5"), true)
 	sv.add_child(term_hint)
 	v.add_child(screen)
@@ -1063,9 +1254,9 @@ func _charge_gift() -> void:
 func _on_gift_dictated(code: String) -> void:
 	dictated_gift = code
 	_log_line(session.profile["name"], "(диктует коды подарочных карт)")
-	pinned_gift_btn.text = "⧉ Код " + code
+	pinned_gift_btn.text = "Код " + code
 	pinned_gift_btn.show()
-	_add_bubble(session.profile["name"], "✉ " + code, false)
+	_add_bubble(session.profile["name"], "Код подарочных карт: " + code, false)
 	_add_note("Клиент продиктовал код подарочной карты. Активируйте его в терминале!", C_GREEN, true)
 	_set_controls()
 
@@ -1193,7 +1384,7 @@ func _next_call() -> void:
 	if Upgrades.level(upgrades, "base") > 0:
 		caller_info.text += "\nБаза: на карте около %s, всего до %s. %s" % [_rub(session.base_budget), _rub(session.budget), p["personality"]]
 	_set_avatar(p["name"])
-	_add_note("☎ Входящий звонок...")
+	_add_ringing()
 	_maybe_tutorial("s_" + cur_scheme["id"], Tutorials.SCHEMES.get(cur_scheme["id"], []))
 	_on_trust(session.trust, 0)
 	_update_balance()
@@ -1296,7 +1487,7 @@ func _show_tutorial(pages: Array, i: int) -> void:
 func _show_slots() -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
-	v.add_child(_label("Сохранения", 42, C_ACCENT))
+	v.add_child(_title_row("save", "Сохранения", Color("13a39a")))
 	v.add_child(_label("Игра сохраняется сама в текущий слот. «Играть» загружает слот, «Сохранить сюда» копирует текущую игру в слот.", 22, C_MUTED, true))
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 10)
@@ -1387,7 +1578,9 @@ func _switch_slot(n: int) -> void:
 func _show_finale() -> void:
 	var m := _modal()
 	var v: VBoxContainer = m[1]
-	v.add_child(_label("♛ КОРОЛЬ СКАМА", 52, C_YELLOW.darkened(0.25), false, HORIZONTAL_ALIGNMENT_CENTER))
+	var cb := _badge("crown", 150, C_YELLOW)
+	v.add_child(cb)
+	v.add_child(_label("КОРОЛЬ СКАМА", 52, C_YELLOW.darkened(0.25), false, HORIZONTAL_ALIGNMENT_CENTER))
 	var h := int(play_seconds / 3600.0)
 	var mins := int(play_seconds / 60.0) % 60
 	var l := _label("Ты прошёл путь от стажёра до короля телефонного скама.\n\nЗаработано за игру: %s\nСделок: %d · звонков: %d · облав: %d\nВремя в игре: %d ч %d мин\n\nКонтора продолжает работать: можно играть дальше и скупить всё до конца." % [_rub(earned_total), deals, total_calls, raids, h, mins], 27, C_INK, true, HORIZONTAL_ALIGNMENT_CENTER)
@@ -1396,15 +1589,16 @@ func _show_finale() -> void:
 	v.add_child(_big_button("Продолжить царствовать", C_GREEN, func(): m[0].queue_free(), 110))
 
 
-const SHOP_TABS := [["Навыки", "✦"], ["Схемы", "☎"], ["Оплата", "₽"], ["Улучшения", "▲"]]
+const SHOP_TABS := [["Навыки", "sparkles"], ["Схемы", "megaphone"], ["Оплата", "card"], ["Улучшения", "chart"]]
 const SHOP_COLORS := ["2f6bff", "ff5a36", "7b4dff", "18b45b"]
 const SHOP_ICONS := {
-	"charm": "♥", "persuade": "☞", "bargain": "%", "cool": "❄", "patience": "◷",
-	"ads": "☎", "rent": "⌂", "prize": "★", "parcel": "✉", "job": "✎", "courses": "▲", "gadgets": "✧",
-	"compens": "✚", "healer": "☯", "prince": "♚", "lottery": "⚖", "crypto": "◈", "fund": "△", "stars": "✦",
-	"air": "☁", "moon": "☾", "mars": "♂", "sun": "☀", "time": "⌛", "immortal": "∞",
-	"card": "▭", "phone": "☏", "gift": "❖", "safe": "▣", "loan": "₽",
-	"script": "✎", "coffee": "☕", "spoof": "☏", "lawyer": "⚖", "base": "▤", "acting": "☺", "office": "▦",
+	"charm": "heart", "persuade": "speech", "bargain": "percent", "cool": "snowflake", "patience": "clock",
+	"ads": "megaphone", "rent": "house", "prize": "trophy", "parcel": "parcel", "job": "briefcase", "courses": "gradcap",
+	"gadgets": "wand", "compens": "pill", "healer": "crystal", "prince": "diamond_ring", "lottery": "scroll",
+	"crypto": "bitcoin", "fund": "pyramid", "stars": "star", "air": "cloud", "moon": "moon", "mars": "rocket",
+	"sun": "sun", "time": "hourglass", "immortal": "infinity",
+	"card": "card", "phone": "smartphone", "gift": "gift", "safe": "safe", "loan": "bank",
+	"script": "book", "coffee": "cup", "spoof": "antenna", "lawyer": "scales", "base": "database", "acting": "mask", "office": "building",
 }
 
 
@@ -1441,9 +1635,10 @@ func _show_shop() -> void:
 	bh.add_theme_constant_override("separation", 14)
 	bv.add_child(bh)
 	var back := Button.new()
-	back.text = "‹"
 	back.custom_minimum_size = Vector2(80, 80)
-	back.add_theme_font_size_override("font_size", 54)
+	back.icon = _tex("back")
+	back.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	back.add_theme_constant_override("icon_max_width", 36)
 	var bks := _box(Color(1, 1, 1, 0.22), 26, 0)
 	back.add_theme_stylebox_override("normal", bks)
 	back.add_theme_stylebox_override("hover", bks)
@@ -1453,18 +1648,25 @@ func _show_shop() -> void:
 		_update_balance()
 		_refresh_menu())
 	bh.add_child(back)
+	bh.add_child(_icon("cart", 50, Color.WHITE))
 	var title := _label("Магазин", 44, Color.WHITE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bh.add_child(title)
 	var pill := PanelContainer.new()
-	pill.add_theme_stylebox_override("panel", _box(Color.WHITE, 30, 22))
+	pill.add_theme_stylebox_override("panel", _box(Color.WHITE, 30, 16))
 	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var money := _label("", 34, C_ACCENT.darkened(0.3))
-	pill.add_child(money)
+	var mh := HBoxContainer.new()
+	mh.add_theme_constant_override("separation", 8)
+	pill.add_child(mh)
+	mh.add_child(_icon("coin", 38, C_YELLOW.darkened(0.1)))
+	var money := _label("", 32, C_ACCENT.darkened(0.3))
+	mh.add_child(money)
 	bh.add_child(pill)
 	# ранг и путь до следующего
 	var rank_row := HBoxContainer.new()
+	rank_row.add_theme_constant_override("separation", 8)
+	rank_row.add_child(_icon("crown", 28, C_YELLOW))
 	var rank_l := _label("", 23, Color.WHITE)
 	rank_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rank_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -1495,8 +1697,13 @@ func _show_shop() -> void:
 		var tb := Button.new()
 		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tb.custom_minimum_size.y = 82
-		tb.add_theme_font_size_override("font_size", 22)
+		tb.add_theme_font_size_override("font_size", 20)
 		tb.clip_text = true
+		tb.icon = _tex(SHOP_TABS[i][1])
+		tb.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tb.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+		tb.add_theme_constant_override("icon_max_width", 34)
+		tb.custom_minimum_size.y = 96
 		tabs.add_child(tb)
 		tab_btns.append(tb)
 
@@ -1514,7 +1721,7 @@ func _show_shop() -> void:
 	var refresh := func():
 		var r := Upgrades.rank_index(earned_total)
 		money.text = _rub(balance)
-		rank_l.text = "♛ %s · ур. %d" % [Upgrades.RANKS[r]["name"], Upgrades.operator_level(deals)]
+		rank_l.text = "%s · ур. %d" % [Upgrades.RANKS[r]["name"], Upgrades.operator_level(deals)]
 		if r + 1 < Upgrades.RANKS.size():
 			var lo: int = Upgrades.RANKS[r]["earned"]
 			var hi: int = Upgrades.RANKS[r + 1]["earned"]
@@ -1530,12 +1737,13 @@ func _show_shop() -> void:
 			var tb: Button = tab_btns[i]
 			var tcol := Color(SHOP_COLORS[i])
 			var on := i == shop_tab
-			tb.text = SHOP_TABS[i][1] + " " + SHOP_TABS[i][0] + (" •" if i == 0 and pts > 0 else "")
+			tb.text = SHOP_TABS[i][0] + (" •" if i == 0 and pts > 0 else "")
 			var st := _box(tcol if on else Color(0, 0, 0, 0), 28, 6)
 			for k in ["normal", "hover", "pressed", "focus"]:
 				tb.add_theme_stylebox_override(k, st)
-			for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
-				tb.add_theme_color_override(k, Color.WHITE if on else C_MUTED)
+			for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color",
+					"icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color", "icon_hover_pressed_color"]:
+				tb.add_theme_color_override(k, Color.WHITE if on else tcol)
 		for c in list.get_children():
 			c.queue_free()
 		var col := Color(SHOP_COLORS[shop_tab])
@@ -1599,18 +1807,8 @@ func _shop_card(id: String, col: Color, title: String, desc: String, pills: Arra
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 18)
 	v.add_child(top)
-	var badge := Panel.new()
-	badge.custom_minimum_size = Vector2(92, 92)
+	var badge := _badge(SHOP_ICONS.get(id, "star"), 96, col if state != "locked" else Color("a9acbd"))
 	badge.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	var bcol := col if state != "locked" else Color("a9acbd")
-	var bsb := _box(bcol, 28, 0)
-	bsb.border_width_bottom = 5
-	bsb.border_color = bcol.darkened(0.25)
-	badge.add_theme_stylebox_override("panel", bsb)
-	var ic := _label(SHOP_ICONS.get(id, "★"), 44, Color.WHITE, false, HORIZONTAL_ALIGNMENT_CENTER)
-	ic.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	ic.set_anchors_preset(Control.PRESET_FULL_RECT)
-	badge.add_child(ic)
 	top.add_child(badge)
 	var info := VBoxContainer.new()
 	info.add_theme_constant_override("separation", 6)
@@ -1639,16 +1837,26 @@ func _shop_card(id: String, col: Color, title: String, desc: String, pills: Arra
 		"owned":
 			var ok := PanelContainer.new()
 			ok.add_theme_stylebox_override("panel", _box(C_GREEN.lerp(Color.WHITE, 0.85), 22, 18))
-			ok.add_child(_label("✔ " + btn_text, 25, C_GREEN.darkened(0.25), false, HORIZONTAL_ALIGNMENT_CENTER))
+			var oh := HBoxContainer.new()
+			oh.alignment = BoxContainer.ALIGNMENT_CENTER
+			oh.add_theme_constant_override("separation", 10)
+			oh.add_child(_icon("check", 30, C_GREEN.darkened(0.2)))
+			oh.add_child(_label(btn_text, 25, C_GREEN.darkened(0.25)))
+			ok.add_child(oh)
 			v.add_child(ok)
 		"locked":
 			var lk := PanelContainer.new()
 			lk.add_theme_stylebox_override("panel", _box(Color("eceef4"), 22, 18))
-			lk.add_child(_label(btn_text, 24, C_MUTED, true, HORIZONTAL_ALIGNMENT_CENTER))
+			var lh := HBoxContainer.new()
+			lh.alignment = BoxContainer.ALIGNMENT_CENTER
+			lh.add_theme_constant_override("separation", 10)
+			lh.add_child(_icon("lock", 30, C_MUTED))
+			lh.add_child(_label(btn_text, 24, C_MUTED))
+			lk.add_child(lh)
 			v.add_child(lk)
 		_:
 			var can := price <= 0 or balance >= price
-			var b := _big_button(btn_text if can else "Не хватает " + _rub(price - balance), col if can else Color("c3c6d3"), cb if can else Callable(), 84)
+			var b := _big_button(btn_text if can else "Не хватает " + _rub(price - balance), col if can else Color("c3c6d3"), cb if can else Callable(), 84, "coin" if price > 0 else "sparkles")
 			b.add_theme_font_size_override("font_size", 27)
 			v.add_child(b)
 	return card
@@ -1775,9 +1983,10 @@ func _set_controls() -> void:
 	send_btn.disabled = not talking
 	mic_btn.disabled = not (talking or recorder.recording)
 	hang_btn.disabled = not live
-	terminal_btn.text = "▤ Терминал ●" if (dictated_card != "" or dictated_gift != "") else "▤ Терминал"
+	terminal_btn.text = "Терминал •" if (dictated_card != "" or dictated_gift != "") else "Терминал"
 	var last := shift_calls >= _calls_max()
-	next_btn.text = ("★ Итоги" if last else "☎ Дальше") if not live else ("★ Итоги" if last else "☎ Дальше")
+	next_btn.text = "Итоги" if last else "Дальше"
+	next_btn.icon = _tex("trophy" if last else "ring_call")
 	_paint_button(next_btn, C_GREEN if (not live and session != null) else C_YELLOW)
 	if mic_icon:
 		mic_icon.modulate.a = 0.6 if mic_btn.disabled else 1.0
@@ -1791,7 +2000,49 @@ func _scroll_down() -> void:
 	chat_scroll.scroll_vertical = int(chat_scroll.get_v_scroll_bar().max_value)
 
 
+## Пока клиент не заговорил, в пустой переписке «звонит» телефон.
+func _add_ringing() -> void:
+	var c := VBoxContainer.new()
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.custom_minimum_size.y = 420
+	c.alignment = BoxContainer.ALIGNMENT_CENTER
+	c.add_theme_constant_override("separation", 22)
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(220, 220)
+	holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(holder)
+	for i in 2:
+		var wave := Panel.new()
+		wave.add_theme_stylebox_override("panel", _box(Color(C_GREEN, 0.25), 110, 0))
+		wave.size = Vector2(220, 220)
+		wave.pivot_offset = Vector2(110, 110)
+		wave.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(wave)
+		var wt := create_tween().set_loops()
+		wt.bind_node(wave)
+		wave.scale = Vector2(0.5, 0.5)
+		wt.tween_interval(i * 0.7)
+		wt.tween_property(wave, "scale", Vector2(1, 1), 1.4).from(Vector2(0.5, 0.5))
+		wt.parallel().tween_property(wave, "modulate:a", 0.0, 1.4).from(1.0)
+	var b := _badge("ring_call", 120, C_GREEN, 60)
+	b.position = Vector2(50, 50)
+	b.pivot_offset = Vector2(60, 60)
+	holder.add_child(b)
+	var bt := create_tween().set_loops()
+	bt.bind_node(b)
+	for a in [0.18, -0.18, 0.12, -0.12, 0.0]:
+		bt.tween_property(b, "rotation", a, 0.06)
+	bt.tween_interval(0.8)
+	c.add_child(_label("Входящий звонок…", 30, C_GREEN.darkened(0.2), false, HORIZONTAL_ALIGNMENT_CENTER))
+	chat_list.add_child(c)
+	ringing = c
+
+
 func _add_bubble(who: String, text: String, mine: bool) -> void:
+	if is_instance_valid(ringing):
+		ringing.queue_free()
+		ringing = null
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bubble := PanelContainer.new()
@@ -1825,14 +2076,29 @@ func _add_bubble(who: String, text: String, mine: bool) -> void:
 
 ## Служебная заметка по центру переписки. strong — яркая плашка для важного.
 func _add_note(text: String, color := C_MUTED, strong := false) -> void:
+	var icon := ""
+	for pre in [["✔ ", "check"], ["★ ", "star"], ["✖ ", "lock"]]:
+		if text.begins_with(pre[0]):
+			text = text.substr(2)
+			icon = pre[1]
+	if icon == "" and strong and color == C_GREEN:
+		icon = "coin" if text.contains("₽") else "check"
 	var c := CenterContainer.new()
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var p := PanelContainer.new()
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_theme_stylebox_override("panel", _box(color.lerp(Color.WHITE, 0.6 if strong else 0.88), 20, 18))
 	var l := _label(text, 23, color.darkened(0.25) if strong else color, true, HORIZONTAL_ALIGNMENT_CENTER)
-	l.custom_minimum_size.x = mini(560, 40 + text.length() * 13)
-	p.add_child(l)
+	l.custom_minimum_size.x = mini(500 if icon != "" else 560, 40 + text.length() * 13)
+	if icon != "":
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 10)
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(_icon(icon, 34, color.darkened(0.25) if strong else color))
+		h.add_child(l)
+		p.add_child(h)
+	else:
+		p.add_child(l)
 	c.add_child(p)
 	chat_list.add_child(c)
 	_scroll_down()
@@ -1869,12 +2135,12 @@ func _on_thinking(on: bool) -> void:
 func _on_card_dictated(card: String) -> void:
 	dictated_card = card
 	_log_line(session.profile["name"], "(присылает номер своей карты)")
-	pinned_card_btn.text = "⧉ Карта " + card
+	pinned_card_btn.text = "Карта " + card
 	pinned_card_btn.show()
-	_add_bubble(session.profile["name"], "✉ " + card, false)
-	var copy_btn := _big_button("⧉ Скопировать номер", C_BLUE, func():
+	_add_bubble(session.profile["name"], "Номер моей карты: " + card, false)
+	var copy_btn := _big_button("Скопировать номер", C_BLUE, func():
 		DisplayServer.clipboard_set(card.replace(" ", ""))
-		_add_note("Номер скопирован. Вставьте его в терминале.", C_BLUE), 86)
+		_add_note("Номер скопирован. Вставьте его в терминале.", C_BLUE), 86, "copy")
 	copy_btn.add_theme_font_size_override("font_size", 27)
 	chat_list.add_child(copy_btn)
 	_add_note("Клиент прислал номер карты. Откройте терминал!", C_GREEN, true)
@@ -1913,7 +2179,7 @@ func _update_balance() -> void:
 	quota_bar.max_value = quota
 	quota_bar.value = mini(shift_earned, quota)
 	heat_bar.value = heat
-	heat_label.text = "♨ Жара %d%%" % heat
+	heat_label.text = "Жара %d%%" % heat
 	var hcol := Color("ffe08a") if heat < 50 else (Color("ffb04a") if heat < 80 else Color("2b0d0d"))
 	(heat_bar.get_theme_stylebox("fill") as StyleBoxFlat).bg_color = hcol
 
@@ -1946,13 +2212,14 @@ func _show_shift_result() -> void:
 	var m := _modal()
 	var dim: Control = m[0]
 	var v: VBoxContainer = m[1]
+	v.add_child(_badge("trophy" if ok else "flame", 120, C_GREEN if ok else C_RED))
 	v.add_child(_label("ПЛАН ВЫПОЛНЕН!" if ok else "ПЛАН ПРОВАЛЕН", 50, C_GREEN if ok else C_RED, false, HORIZONTAL_ALIGNMENT_CENTER))
 	var info := _label("Смена %d: заработано %s из %s.\n%s" % [shift, _rub(shift_earned), _rub(quota),
 		("Следующий план: " + _rub(next_quota)) if ok else "Начальник недоволен. Смена начинается заново."] +
 		("\nСтарые схемы принесли ещё %s на счёт." % _rub(passive) if passive > 0 else ""), 27, C_INK, true, HORIZONTAL_ALIGNMENT_CENTER)
 	info.custom_minimum_size.x = 580
 	v.add_child(info)
-	v.add_child(_label("★ Лучшие моменты смены", 34, C_PURPLE))
+	v.add_child(_title_row("star", "Лучшие моменты смены", C_PURPLE, 30))
 	var holder := VBoxContainer.new()
 	v.add_child(holder)
 	var wait := _label("Вспоминаем смену…", 26, C_MUTED, true)
@@ -1977,7 +2244,7 @@ func _show_shift_result() -> void:
 		dim.queue_free()
 		_clear_chat()
 		_next_call(), 120))
-	v.add_child(_big_button("$ Магазин", C_ACCENT, _show_shop, 90))
+	v.add_child(_big_button("Магазин", C_ACCENT, _show_shop, 90, "cart"))
 	v.add_child(_big_button("В меню", C_MUTED, func():
 		dim.queue_free()
 		_clear_chat()
@@ -2054,7 +2321,7 @@ func _keyboard_dictation() -> void:
 		DisplayServer.virtual_keyboard_show(input.text, Rect2(), DisplayServer.KEYBOARD_TYPE_MULTILINE)
 	if not voice_hint_shown:
 		voice_hint_shown = true
-		_add_note("Нажмите значок микрофона на клавиатуре и говорите, потом ➤. Чтобы игра слушала сама, добавьте бесплатный ключ голоса в меню «Ключи».", C_PURPLE, true)
+		_add_note("Нажмите значок микрофона на клавиатуре и говорите, потом кнопку отправки. Чтобы игра слушала сама, добавьте бесплатный ключ голоса в меню «Ключи».", C_PURPLE, true)
 	status_label.text = "Диктуйте через микрофон на клавиатуре"
 
 
