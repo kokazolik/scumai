@@ -794,7 +794,8 @@ func _update_game() -> void:
 	_update_chat()
 	if refs.has("journal"):
 		var jk := JSON.stringify([Game.state.campaign.get("quests", []), Game.state.campaign.get("npcs", []), Game.state.campaign.get("chronicle", ""), Game.state.campaign.get("quest", ""),
-			Game.state.campaign.get("rep", {}), Game.state.campaign.get("threads", []), Game.state.get("companions", [])])
+			Game.state.campaign.get("rep", {}), Game.state.campaign.get("threads", []), Game.state.get("companions", []),
+			Game.state.campaign.get("goal", ""), Game.state.campaign.get("goal_steps", []), Game.state.map.get("targets", [])])
 		if jk != refs.journal_key:
 			refs.journal_key = jk
 			_build_journal(refs.journal)
@@ -1055,7 +1056,7 @@ func _update_combat_box() -> void:
 	var my_turn := Game.combat_actor() == Game.my_pname()
 	var strip := ScrollContainer.new()
 	strip.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	strip.custom_minimum_size = Vector2(0, 124)
+	strip.custom_minimum_size = Vector2(0, 138)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	strip.add_child(row)
@@ -1064,7 +1065,7 @@ func _update_combat_box() -> void:
 		var sel: bool = i == _target and my_turn
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
-		b.custom_minimum_size = Vector2(200, 118)
+		b.custom_minimum_size = Vector2(210, 132)
 		var est := UISkin.button_styles("red" if sel else "dark", 8)
 		for k in est:
 			b.add_theme_stylebox_override(k, est[k])
@@ -1089,6 +1090,20 @@ func _update_combat_box() -> void:
 		var ac := _label(("🎯 · " if sel else "") + ("🏹 тыл · " if str(en.get("pos", "front")) == "back" else "") + "КД %d · %d/%d" % [int(en.ac), int(en.hp), int(en.max_hp)], 16, C_ACCENT if sel else C_MUTED)
 		ac.autowrap_mode = TextServer.AUTOWRAP_OFF
 		v.add_child(ac)
+		var dtl := []
+		for k in en.get("vuln", []):
+			dtl.append("×2 " + str(k))
+		for k in en.get("res", []):
+			dtl.append("½ " + str(k))
+		if int(en.get("regen", 0)) > 0:
+			dtl.append("регенерация")
+		if dtl.size() > 0:
+			var dl := _label(", ".join(dtl), 13, Color("ffcf9a"))
+			dl.autowrap_mode = TextServer.AUTOWRAP_OFF
+			dl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			dl.clip_text = true
+			dl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			v.add_child(dl)
 		var ec: Dictionary = en.get("conds", {})
 		if not ec.is_empty():
 			v.add_child(_cond_row(ec, 22))
@@ -1245,7 +1260,7 @@ func _bottom_mode() -> String:
 			if Game.state.combat.get("wait", false):
 				return "thinking"
 			if Game.combat_actor() == me and not h.is_empty() and int(h.hp) > 0:
-				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)]
+				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)] + JSON.stringify([Game.state.combat.get("used", {}).get(me, {}), Game.state.combat.get("hidden", {}), Game.state.combat.get("env", []), Game.state.combat.get("high", {}), h.get("second_wind", false), int(h.get("inspire", 0)), _target])
 			return "cwait" + Game.combat_actor()
 		"play":
 			if h.is_empty():
@@ -1482,34 +1497,53 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 			if d.type in ["potion", "scroll", "bomb", "coat"]:
 				any = true
 				var idx: int = i
-				var bt := _menu_button("%s — %s" % [R.item_name(h.items[i]), R.item_desc(h.items[i])], C_RED.darkened(0.3) if d.type == "bomb" else C_GREEN.darkened(0.3), func():
+				var icost := Game.action_cost(me, {"t": "item", "idx": i})
+				var bt := _menu_button("%s%s — %s" % ["⚡ " if icost == "b" else "", R.item_name(h.items[i]), R.item_desc(h.items[i])], C_RED.darkened(0.3) if d.type == "bomb" else C_GREEN.darkened(0.3), func():
 					_combat_menu = ""
 					Game.combat_action({"t": "item", "idx": idx, "target": _target if d.type == "bomb" or (d.type == "scroll" and R.SPELLS[str(d.spell)].kind != "heal") else me}))
+				bt.disabled = _spent(icost)
 				b.add_child(_with_icon(bt, Icons.for_item(h.items[i]), 34))
 				var partner := _partner()
-				if d.type == "potion" and partner != "":
+				if d.type == "potion" and partner != "" and not _spent(icost):
 					b.add_child(_menu_button("   › напоить %s" % Game.hero_of(partner).get("name", ""), C_GREEN.darkened(0.45), func():
 						_combat_menu = ""
 						Game.combat_action({"t": "item", "idx": idx, "target": partner})))
 		if not any:
 			b.add_child(_label("Нет зелий, свитков и бомб", 22, C_MUTED))
+		b.add_child(_label("⚡ — бонусное действие: зелье можно выпить и всё равно атаковать в этот ход.", 16, C_MUTED))
 		b.add_child(_small_wide_button("Назад", C_CARD2, func():
 			_combat_menu = ""
 			_bottom_key = ""
 			_update_bottom()))
 		return
 	var ai := R.attack_info(h)
+	var c: Dictionary = Game.state.combat
+	var used: Dictionary = c.get("used", {}).get(me, {})
+	var moved: bool = c.get("moved", {}).get(me, false)
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
-	var l := _label("Твой ход! Цель: нажми на врага сверху.", 19, C_ACCENT)
-	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var l := _label("Твой ход!", 22, C_ACCENT)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	top.add_child(l)
+	var pips := HBoxContainer.new()
+	pips.add_theme_constant_override("separation", 6)
+	pips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pips.add_child(_econ_pip("act_attack", "Действие", not used.get("a", false), C_RED))
+	pips.add_child(_econ_pip("act_bonus", "Бонус", not used.get("b", false), C_ACCENT))
+	pips.add_child(_econ_pip("act_flee", "Шаг", not moved, C_BLUE))
+	top.add_child(pips)
+	b.add_child(top)
 	var front := Game.hero_pos(me) == "front"
+	var mrow := HBoxContainer.new()
+	mrow.add_theme_constant_override("separation", 8)
+	var hint := _label(("Ты впереди: прикрываешь тыл. Отход — враг ударит вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит.") + ("  Ты в тени: враги тебя не видят." if c.get("hidden", {}).get(me, false) else "") + ("  Ты на возвышенности: +2 к стрельбе." if c.get("high", {}).get(me, false) else ""), 16, C_MUTED)
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mrow.add_child(hint)
 	var mv := _tiny_button("⇄ В тыл" if front else "⇄ Вперёд", C_BLUE, func(): Game.combat_action({"t": "move"}))
 	mv.custom_minimum_size = Vector2(170, 50)
-	mv.disabled = Game.state.combat.get("moved", {}).get(me, false)
-	top.add_child(mv)
-	b.add_child(top)
+	mv.disabled = moved
+	mrow.add_child(mv)
+	b.add_child(mrow)
 	if not h.get("conds", {}).is_empty():
 		var cf := HFlowContainer.new()
 		cf.add_theme_constant_override("h_separation", 8)
@@ -1518,48 +1552,116 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		b.add_child(cf)
 		for k in h.conds:
 			b.add_child(_label("%s: %s" % [R.CONDS[k].name, R.CONDS[k].desc], 16, _cond_color(str(k))))
-	b.add_child(_label(("Ты впереди: прикрываешь тех, кто в тылу. Отход — враг ударит вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит. Стрелы бьют хуже."), 16, C_MUTED))
 	var g := GridContainer.new()
 	g.columns = 2
 	g.add_theme_constant_override("h_separation", 8)
 	g.add_theme_constant_override("v_separation", 8)
-	var acts := [["%s (%+d, %s%+d)" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus], C_RED, func(): Game.combat_action({"t": "attack", "target": _target}), "act_ranged" if ai.ranged else "act_attack"]]
+	var acts := [["%s (%+d, %s%+d)" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus], C_RED, func(): Game.combat_action({"t": "attack", "target": _target}), "act_ranged" if ai.ranged else "act_attack", "a"]]
 	if R.known_spells(h).size() > 0:
 		acts.append(["Заклинание", C_PURPLE, func():
 			_combat_menu = "spell"
 			_bottom_key = ""
-			_update_bottom(), "act_spell"])
+			_update_bottom(), "act_spell", "menu"])
 	acts.append(["Предмет", C_GREEN.darkened(0.3), func():
 		_combat_menu = "item"
 		_bottom_key = ""
-		_update_bottom(), "act_item"])
-	acts.append(["Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"}), "act_dodge"])
+		_update_bottom(), "act_item", "menu"])
+	acts.append(["Толкнуть", C_RED.darkened(0.35), func(): Game.combat_action({"t": "shove", "target": _target}), "act_shove", "a"])
+	var hide_cost := Game.action_cost(me, {"t": "hide"})
+	if not c.get("hidden", {}).get(me, false):
+		acts.append([("⚡ " if hide_cost == "b" else "") + "Спрятаться", Color("3a4256"), func(): Game.combat_action({"t": "hide"}), "act_hide", hide_cost])
+	acts.append(["Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"}), "act_dodge", "a"])
 	var hp_partner := _partner()
 	if hp_partner != "" and int(Game.hero_of(hp_partner).get("hp", 0)) > 0:
-		acts.append(["Отвлечь врага", C_GREEN.darkened(0.45), func(): Game.combat_action({"t": "help", "target": hp_partner}), "act_help"])
+		acts.append(["Отвлечь врага", C_GREEN.darkened(0.45), func(): Game.combat_action({"t": "help", "target": hp_partner}), "act_help", "a"])
+	if hp_partner != "":
+		var ph := Game.hero_of(hp_partner)
+		if int(ph.get("hp", 1)) <= 0 and not ph.get("dead", false) and not ph.get("stable", false):
+			acts.append(["Перевязать %s" % ph.get("name", ""), C_GREEN.darkened(0.2), func(): Game.combat_action({"t": "stabilize", "target": hp_partner}), "act_stabilize", "a"])
 	if h.get("second_wind", false):
-		acts.append(["Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"}), "act_second_wind"])
+		acts.append(["⚡ Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"}), "act_second_wind", "b"])
 	if int(h.get("inspire", 0)) > 0:
 		var partner := _partner()
 		if partner != "":
-			acts.append(["Вдохновить (%d)" % int(h.inspire), C_ACCENT.darkened(0.3), func(): Game.combat_action({"t": "inspire", "target": partner}), "act_inspire"])
-	acts.append(["Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"}), "act_flee"])
+			acts.append(["⚡ Вдохновить (%d)" % int(h.inspire), C_ACCENT.darkened(0.3), func(): Game.combat_action({"t": "inspire", "target": partner}), "act_inspire", "b"])
+	acts.append(["Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"}), "act_flee", "a"])
 	for a in acts:
 		var bt := _with_icon(_button(a[0], a[1], a[2]), Icons.tex(a[3]), 34)
 		bt.custom_minimum_size = Vector2(0, 62)
 		bt.add_theme_font_size_override("font_size", 21)
 		bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bt.disabled = _spent(str(a[4]))
 		g.add_child(bt)
 	b.add_child(g)
+	# окружение
+	var envs: Array = c.get("env", [])
+	var shown := false
+	for i in envs.size():
+		var e: Dictionary = envs[i]
+		if e.used or not R.ENV.has(str(e.id)):
+			continue
+		var d: Dictionary = R.ENV[str(e.id)]
+		if not shown:
+			b.add_child(_label("Окружение", 19, C_ACCENT))
+			shown = true
+		var idx: int = i
+		var ebt: Button
+		if str(d.kind) == "edge":
+			b.add_child(_with_icon(_info_line("%s рядом: «Толкнуть» сбросит врага вниз (%s)." % [d.name, R.dice_ru(str(d.dmg))]), Icons.tex("env_" + str(e.id)), 30))
+			continue
+		if str(d.kind) == "high":
+			if c.get("high", {}).get(me, false):
+				continue
+			ebt = _menu_button("%s — %s" % [d.name, d.desc], Color("3b4a3a"), func(): Game.combat_action({"t": "env", "idx": idx}))
+			if front:
+				ebt = _menu_button("%s — сначала отойди в тыл" % d.name, Color("3b4a3a"), func(): pass)
+			ebt.disabled = moved or front
+		else:
+			ebt = _menu_button("%s — %s" % [d.name, d.desc], Color("5a3a22"), func(): Game.combat_action({"t": "env", "idx": idx, "target": _target}))
+			ebt.disabled = _spent("a")
+		b.add_child(_with_icon(ebt, Icons.tex("env_" + str(e.id)), 34))
 	var row := HBoxContainer.new()
 	var free := LineEdit.new()
 	free.placeholder_text = "Своё действие: опрокинуть стол…"
 	free.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	free.editable = not _spent("a")
 	row.add_child(free)
 	row.add_child(_small_button("▶", C_ACCENT, func():
-		if free.text.strip_edges() != "":
+		if free.text.strip_edges() != "" and not _spent("a"):
 			Game.combat_action({"t": "free", "text": free.text})))
 	b.add_child(row)
+	var end := _with_icon(_button("Завершить ход", C_ACCENT if used.get("a", false) else C_CARD2, func(): Game.combat_action({"t": "end"})), Icons.tex("act_end"), 34)
+	end.custom_minimum_size = Vector2(0, 64)
+	b.add_child(end)
+
+
+## Потрачено ли действие ("a") или бонусное действие ("b") в этом ходу.
+func _spent(cost: String) -> bool:
+	var u: Dictionary = Game.state.combat.get("used", {}).get(Game.my_pname(), {})
+	if cost == "a":
+		return u.get("a", false)
+	if cost == "b":
+		return u.get("b", false)
+	return false
+
+
+func _econ_pip(icon: String, text: String, avail: bool, col: Color) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", UISkin.panel("inset", 8))
+	var r := HBoxContainer.new()
+	r.add_theme_constant_override("separation", 4)
+	r.add_child(_icon_rect(Icons.tex(icon), 24, col if avail else C_MUTED.darkened(0.5)))
+	var lb := _label(text, 15, C_INK if avail else C_MUTED.darkened(0.3))
+	lb.autowrap_mode = TextServer.AUTOWRAP_OFF
+	r.add_child(lb)
+	p.add_child(r)
+	return p
+
+
+func _info_line(text: String) -> Button:
+	var bt := _menu_button(text, C_CARD2, func(): pass)
+	bt.disabled = true
+	return bt
 
 
 const SPELL_TINT := {
@@ -1685,7 +1787,7 @@ func _build_spellbook(b: VBoxContainer, h: Dictionary) -> void:
 		nl.custom_minimum_size = Vector2(0, 40)
 		nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(nl)
-		var badge := _label(str(f.cost_short), 14, tint if sid != pick else Color("5a2a10"))
+		var badge := _label(("⚡" if sp.get("bonus", false) else "") + str(f.cost_short), 14, tint if sid != pick else Color("5a2a10"))
 		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(badge)
@@ -1715,7 +1817,11 @@ func _build_spellbook(b: VBoxContainer, h: Dictionary) -> void:
 		d.add_child(_label("💥 %s · 🎯 %s" % [f.amount, f.who], 19, C_INK))
 		d.add_child(_label("🎲 " + str(f.how), 17, C_MUTED))
 		d.add_child(_label("✦ " + str(f.cost), 17, C_ACCENT if int(f.slot) >= 0 else C_RED))
-		if int(f.slot) >= 0:
+		var scost := "b" if sp.get("bonus", false) else "a"
+		d.add_child(_label("⚡ Бонусное действие: после него ещё можно атаковать." if scost == "b" else "⚔ Основное действие хода.", 16, C_ACCENT if scost == "b" else C_MUTED))
+		if int(f.slot) >= 0 and Game.phase == "combat" and _spent(scost):
+			d.add_child(_label("В этом ходу уже потрачено.", 16, C_RED))
+		elif int(f.slot) >= 0:
 			var cast := _button("Сотворить «%s»" % sp.name, C_PURPLE, func():
 				var target = _target
 				if sp.kind in ["heal", "buff"]:
@@ -1771,6 +1877,19 @@ func _build_journal(v: VBoxContainer) -> void:
 	main.add_child(_section_title("Главная цель"))
 	main.add_child(_label(str(c.get("quest", "пока неизвестна")), 23, C_INK))
 	v.add_child(main.get_parent())
+	if str(c.get("goal", "")) != "":
+		var gc := _card()
+		gc.add_child(_section_title("Цель группы сейчас"))
+		var gr := HBoxContainer.new()
+		gr.add_theme_constant_override("separation", 12)
+		gr.add_child(_icon_rect(Icons.tex("ui_map_pin"), 40, C_RED.lightened(0.2)))
+		var gl := _label(str(c.goal), 23, C_ACCENT)
+		gl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		gr.add_child(gl)
+		gc.add_child(gr)
+		_add_steps(gc, c.get("goal_steps", []))
+		_add_target_note(gc, "★" + str(c.goal))
+		v.add_child(gc.get_parent())
 	var qs: Array = c.get("quests", [])
 	var act := _card()
 	act.add_child(_section_title("Задания"))
@@ -1886,8 +2005,40 @@ func _quest_row(q: Dictionary, icon: String, col: Color) -> Control:
 	qv.add_child(_label(str(q.t), 22, C_INK if q.s == "active" else C_MUTED))
 	if str(q.get("d", "")) != "" and q.s == "active":
 		qv.add_child(_label(str(q.d), 18, C_MUTED))
+	_add_steps(qv, q.get("st", []))
+	if q.s == "active":
+		_add_target_note(qv, str(q.t))
 	row.add_child(qv)
 	return row
+
+
+## Пункты задания: ✓ сделано, ○ осталось.
+func _add_steps(box: Control, steps: Array) -> void:
+	if steps.is_empty():
+		return
+	var n_ok := 0
+	for e in steps:
+		if e.ok:
+			n_ok += 1
+	box.add_child(_label("Выполнено %d из %d" % [n_ok, steps.size()], 16, C_GREEN if n_ok == steps.size() else C_MUTED))
+	for e in steps:
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 8)
+		var mark := _label("✓" if e.ok else "○", 20, C_GREEN if e.ok else C_ACCENT)
+		mark.autowrap_mode = TextServer.AUTOWRAP_OFF
+		r.add_child(mark)
+		var tl := _label(str(e.t), 19, C_MUTED.darkened(0.1) if e.ok else C_INK)
+		tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(tl)
+		box.add_child(r)
+
+
+## Если место задания отмечено на карте — сколько событий до него.
+func _add_target_note(box: Control, quest: String) -> void:
+	for t in Game.state.map.get("targets", []):
+		if MapView._same_place(str(t.get("q", "")), quest):
+			var left := int(t.get("left", 0))
+			box.add_child(_label("📍 %s отмечено на карте · %s" % [t.name, ("в пути ещё %d %s" % [left, MapView._events_word(left)]) if left > 0 else "цель рядом"], 17, C_RED.lightened(0.35)))
 
 
 var choice_pop: Control
@@ -3070,6 +3221,9 @@ func _tiny_button(text: String, color: Color, cb: Callable) -> Button:
 func _with_icon(b: Button, tex: Texture2D, w := 40) -> Button:
 	b.icon = tex
 	b.add_theme_constant_override("icon_max_width", w)
+	for ch in b.get_children():
+		if ch is Label:
+			ch.offset_left = w + 26   # текст обёрнутой кнопки не налезает на иконку
 	return b
 
 
@@ -3314,6 +3468,24 @@ func _autotest_tick() -> void:
 		"combat":
 			if Game.combat_actor() == me:
 				var h := Game.my_hero()
+				var u: Dictionary = Game.state.combat.get("used", {}).get(me, {})
+				if u.get("a", false):
+					if not u.get("b", false) and h.get("second_wind", false) and int(h.hp) < int(h.max_hp):
+						Game.combat_action({"t": "second_wind"})
+					else:
+						Game.combat_action({"t": "end"})
+					return
+				var envs: Array = Game.state.combat.get("env", [])
+				for ei in envs.size():
+					if not envs[ei].used and R.ENV[str(envs[ei].id)].kind in ["one", "aoe"] and _auto == "client":
+						Game.combat_action({"t": "env", "idx": ei, "target": -1})
+						return
+				if int(Game.state.combat.round) == 1 and _auto == "host" and not Game.state.combat.get("hidden", {}).get(me, false) and _auto_n % 2 == 1:
+					Game.combat_action({"t": "hide"})
+					return
+				if int(Game.state.combat.round) == 3 and _auto_n % 2 == 0:
+					Game.combat_action({"t": "shove", "target": -1})
+					return
 				if int(Game.state.combat.round) == 2 and not Game.state.combat.get("moved", {}).get(me, false) and _auto_n % 2 == 0:
 					Game.combat_action({"t": "move"})
 					return

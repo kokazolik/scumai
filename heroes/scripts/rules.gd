@@ -189,20 +189,20 @@ const SLOT_NAMES := {"weapon": "Оружие", "offhand": "Щит", "armor": "Д
 ## weapon: dmg, ability (СИЛ / ЛОВ / fin = лучшая из двух), ranged, two (двуручное).
 ## armor: ac, dex_max (-1 = без ограничения), cat. Бонусы: ac, attack, damage, save, abil {}, skill {}.
 const ITEMS := {
-	"dagger": {"name": "Кинжал", "type": "weapon", "dmg": "1d4", "ability": "fin", "price": 2},
-	"shortsword": {"name": "Короткий меч", "type": "weapon", "dmg": "1d6", "ability": "fin", "price": 10},
-	"rapier": {"name": "Рапира", "type": "weapon", "dmg": "1d8", "ability": "fin", "price": 25},
-	"longsword": {"name": "Длинный меч", "type": "weapon", "dmg": "1d8", "ability": "СИЛ", "price": 15},
-	"greatsword": {"name": "Двуручный меч", "type": "weapon", "dmg": "2d6", "ability": "СИЛ", "two": true, "price": 50},
-	"battleaxe": {"name": "Боевой топор", "type": "weapon", "dmg": "1d8", "ability": "СИЛ", "price": 10},
-	"greataxe": {"name": "Секира", "type": "weapon", "dmg": "1d12", "ability": "СИЛ", "two": true, "price": 30},
-	"mace": {"name": "Булава", "type": "weapon", "dmg": "1d6", "ability": "СИЛ", "price": 5},
-	"warhammer": {"name": "Боевой молот", "type": "weapon", "dmg": "1d8", "ability": "СИЛ", "price": 15},
-	"quarterstaff": {"name": "Боевой посох", "type": "weapon", "dmg": "1d6", "ability": "СИЛ", "price": 1},
-	"spear": {"name": "Копьё", "type": "weapon", "dmg": "1d6", "ability": "СИЛ", "price": 1},
-	"shortbow": {"name": "Короткий лук", "type": "weapon", "dmg": "1d6", "ability": "ЛОВ", "ranged": true, "two": true, "price": 25},
-	"longbow": {"name": "Длинный лук", "type": "weapon", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "price": 50},
-	"crossbow": {"name": "Лёгкий арбалет", "type": "weapon", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "price": 25},
+	"dagger": {"name": "Кинжал", "type": "weapon", "dt": "колющий", "dmg": "1d4", "ability": "fin", "price": 2},
+	"shortsword": {"name": "Короткий меч", "type": "weapon", "dt": "колющий", "dmg": "1d6", "ability": "fin", "price": 10},
+	"rapier": {"name": "Рапира", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "fin", "price": 25},
+	"longsword": {"name": "Длинный меч", "type": "weapon", "dt": "рубящий", "dmg": "1d8", "ability": "СИЛ", "price": 15},
+	"greatsword": {"name": "Двуручный меч", "type": "weapon", "dt": "рубящий", "dmg": "2d6", "ability": "СИЛ", "two": true, "price": 50},
+	"battleaxe": {"name": "Боевой топор", "type": "weapon", "dt": "рубящий", "dmg": "1d8", "ability": "СИЛ", "price": 10},
+	"greataxe": {"name": "Секира", "type": "weapon", "dt": "рубящий", "dmg": "1d12", "ability": "СИЛ", "two": true, "price": 30},
+	"mace": {"name": "Булава", "type": "weapon", "dt": "дробящий", "dmg": "1d6", "ability": "СИЛ", "price": 5},
+	"warhammer": {"name": "Боевой молот", "type": "weapon", "dt": "дробящий", "dmg": "1d8", "ability": "СИЛ", "price": 15},
+	"quarterstaff": {"name": "Боевой посох", "type": "weapon", "dt": "дробящий", "dmg": "1d6", "ability": "СИЛ", "price": 1},
+	"spear": {"name": "Копьё", "type": "weapon", "dt": "колющий", "dmg": "1d6", "ability": "СИЛ", "price": 1},
+	"shortbow": {"name": "Короткий лук", "type": "weapon", "dt": "колющий", "dmg": "1d6", "ability": "ЛОВ", "ranged": true, "two": true, "price": 25},
+	"longbow": {"name": "Длинный лук", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "price": 50},
+	"crossbow": {"name": "Лёгкий арбалет", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "price": 25},
 
 	"padded": {"name": "Стёганый доспех", "type": "armor", "ac": 11, "dex_max": -1, "cat": "лёгкий", "price": 5},
 	"leather": {"name": "Кожаный доспех", "type": "armor", "ac": 11, "dex_max": -1, "cat": "лёгкий", "price": 10},
@@ -309,23 +309,23 @@ static func check_adv(h: Dictionary) -> int:
 
 ## Заклинания. kind: attack (бросок атаки), save (спасбросок цели), auto (без промаха), heal, buff, sleep.
 const SPELLS := {
-	"fire_bolt": {"col": "ff7a3d", "name": "Огненный снаряд", "lvl": 0, "kind": "attack", "dmg": "1d10", "desc": "сгусток огня, 1к10"},
-	"ray_of_frost": {"col": "7fd4ff", "name": "Луч холода", "lvl": 0, "kind": "attack", "dmg": "1d8", "desc": "ледяной луч, 1к8"},
-	"sacred_flame": {"col": "ffd75e", "name": "Священное пламя", "lvl": 0, "kind": "save", "save": "ЛОВ", "dmg": "1d8", "desc": "свет с небес, 1к8"},
-	"vicious_mockery": {"col": "ff8fd0", "name": "Злая насмешка", "lvl": 0, "kind": "save", "save": "МДР", "dmg": "1d4", "cond": "frightened", "desc": "обидная шутка, 1к4, пугает"},
-	"magic_missile": {"col": "b98cff", "name": "Волшебная стрела", "lvl": 1, "kind": "auto", "dmg": "3d4+3", "desc": "три стрелы без промаха"},
-	"burning_hands": {"col": "ff7a3d", "name": "Огненные ладони", "lvl": 1, "kind": "save", "save": "ЛОВ", "dmg": "3d6", "aoe": true, "desc": "веер огня по всем врагам, 3к6"},
-	"thunderwave": {"col": "8fb4ff", "name": "Громовая волна", "lvl": 1, "kind": "save", "save": "ТЕЛ", "dmg": "2d8", "aoe": true, "cond": "prone", "desc": "удар грома по всем, 2к8, сбивает с ног"},
-	"guiding_bolt": {"col": "ffd75e", "name": "Направленный снаряд", "lvl": 1, "kind": "attack", "dmg": "4d6", "cond": "blinded", "desc": "луч света, 4к6, слепит"},
+	"fire_bolt": {"dt": "огонь", "col": "ff7a3d", "name": "Огненный снаряд", "lvl": 0, "kind": "attack", "dmg": "1d10", "desc": "сгусток огня, 1к10"},
+	"ray_of_frost": {"dt": "холод", "col": "7fd4ff", "name": "Луч холода", "lvl": 0, "kind": "attack", "dmg": "1d8", "desc": "ледяной луч, 1к8"},
+	"sacred_flame": {"dt": "излучение", "col": "ffd75e", "name": "Священное пламя", "lvl": 0, "kind": "save", "save": "ЛОВ", "dmg": "1d8", "desc": "свет с небес, 1к8"},
+	"vicious_mockery": {"dt": "психический", "col": "ff8fd0", "name": "Злая насмешка", "lvl": 0, "kind": "save", "save": "МДР", "dmg": "1d4", "cond": "frightened", "desc": "обидная шутка, 1к4, пугает"},
+	"magic_missile": {"dt": "силовой", "col": "b98cff", "name": "Волшебная стрела", "lvl": 1, "kind": "auto", "dmg": "3d4+3", "desc": "три стрелы без промаха"},
+	"burning_hands": {"dt": "огонь", "col": "ff7a3d", "name": "Огненные ладони", "lvl": 1, "kind": "save", "save": "ЛОВ", "dmg": "3d6", "aoe": true, "desc": "веер огня по всем врагам, 3к6"},
+	"thunderwave": {"dt": "звук", "col": "8fb4ff", "name": "Громовая волна", "lvl": 1, "kind": "save", "save": "ТЕЛ", "dmg": "2d8", "aoe": true, "cond": "prone", "desc": "удар грома по всем, 2к8, сбивает с ног"},
+	"guiding_bolt": {"dt": "излучение", "col": "ffd75e", "name": "Направленный снаряд", "lvl": 1, "kind": "attack", "dmg": "4d6", "cond": "blinded", "desc": "луч света, 4к6, слепит"},
 	"sleep": {"col": "a9a0ff", "name": "Усыпление", "lvl": 1, "kind": "sleep", "dmg": "5d8", "desc": "усыпляет слабых врагов"},
 	"cure_wounds": {"col": "6fe3a0", "name": "Лечение ран", "lvl": 1, "kind": "heal", "dmg": "1d8", "desc": "лечит 1к8 + мод."},
-	"healing_word": {"col": "6fe3a0", "name": "Лечащее слово", "lvl": 1, "kind": "heal", "dmg": "1d4", "desc": "лечит 1к4 + мод. издалека"},
-	"shield_of_faith": {"col": "ffe08a", "name": "Щит веры", "lvl": 1, "kind": "buff", "ac": 2, "desc": "+2 КД союзнику до конца боя"},
-	"scorching_ray": {"col": "ff7a3d", "name": "Палящий луч", "lvl": 2, "kind": "attack", "dmg": "2d6", "rays": 3, "desc": "три луча по 2к6"},
-	"shatter": {"col": "8fb4ff", "name": "Дребезги", "lvl": 2, "kind": "save", "save": "ТЕЛ", "dmg": "3d8", "aoe": true, "desc": "звон по всем, 3к8"},
-	"spiritual_weapon": {"col": "ffe08a", "name": "Духовное оружие", "lvl": 2, "kind": "attack", "dmg": "2d8", "desc": "призрачный молот, 2к8"},
-	"mass_healing_word": {"col": "6fe3a0", "name": "Лечащее слово для всех", "lvl": 3, "kind": "heal", "dmg": "1d4", "all": true, "desc": "лечит всех союзников"},
-	"fireball": {"col": "ff5a2a", "name": "Огненный шар", "lvl": 3, "kind": "save", "save": "ЛОВ", "dmg": "8d6", "aoe": true, "desc": "взрыв по всем врагам, 8к6"},
+	"healing_word": {"bonus": true, "col": "6fe3a0", "name": "Лечащее слово", "lvl": 1, "kind": "heal", "dmg": "1d4", "desc": "лечит 1к4 + мод. издалека"},
+	"shield_of_faith": {"bonus": true, "col": "ffe08a", "name": "Щит веры", "lvl": 1, "kind": "buff", "ac": 2, "desc": "+2 КД союзнику до конца боя"},
+	"scorching_ray": {"dt": "огонь", "col": "ff7a3d", "name": "Палящий луч", "lvl": 2, "kind": "attack", "dmg": "2d6", "rays": 3, "desc": "три луча по 2к6"},
+	"shatter": {"dt": "звук", "col": "8fb4ff", "name": "Дребезги", "lvl": 2, "kind": "save", "save": "ТЕЛ", "dmg": "3d8", "aoe": true, "desc": "звон по всем, 3к8"},
+	"spiritual_weapon": {"bonus": true, "dt": "силовой", "col": "ffe08a", "name": "Духовное оружие", "lvl": 2, "kind": "attack", "dmg": "2d8", "desc": "призрачный молот, 2к8"},
+	"mass_healing_word": {"bonus": true, "col": "6fe3a0", "name": "Лечащее слово для всех", "lvl": 3, "kind": "heal", "dmg": "1d4", "all": true, "desc": "лечит всех союзников"},
+	"fireball": {"dt": "огонь", "col": "ff5a2a", "name": "Огненный шар", "lvl": 3, "kind": "save", "save": "ЛОВ", "dmg": "8d6", "aoe": true, "desc": "взрыв по всем врагам, 8к6"},
 }
 
 ## Монстры (упрощённые статблоки SRD). atk — бонус атаки, multi — атак за ход.
@@ -336,25 +336,61 @@ const MONSTERS := {
 	"cultist": {"name": "Сектант", "bow": true, "ac": 12, "hp": 9, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
 	"goblin": {"name": "Гоблин", "bow": true, "ac": 15, "hp": 7, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50},
 	"wolf": {"name": "Волк", "on_hit": {"cond": "prone", "save": "СИЛ", "dc": 11, "rounds": 1}, "ac": 13, "hp": 11, "atk": 4, "dmg": "2d4+2", "dex": 2, "xp": 50},
-	"skeleton": {"name": "Скелет", "ac": 13, "hp": 13, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 2, "МДР": -1}},
-	"zombie": {"name": "Зомби", "ac": 8, "hp": 22, "atk": 3, "dmg": "1d6+1", "dex": -2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 3, "МДР": -2}},
-	"giant_spider_small": {"name": "Пещерный паук", "on_hit": {"cond": "poisoned", "save": "ТЕЛ", "dc": 11, "rounds": 3}, "drop": "venom_sac", "ac": 13, "hp": 12, "atk": 4, "dmg": "1d6+2", "dex": 3, "xp": 50},
+	"skeleton": {"name": "Скелет", "vuln": ["дробящий"], "ac": 13, "hp": 13, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 2, "МДР": -1}},
+	"zombie": {"name": "Зомби", "fort": true, "ac": 8, "hp": 22, "atk": 3, "dmg": "1d6+1", "dex": -2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 3, "МДР": -2}},
+	"giant_spider_small": {"name": "Пещерный паук", "vuln": ["огонь"], "on_hit": {"cond": "poisoned", "save": "ТЕЛ", "dc": 11, "rounds": 3}, "drop": "venom_sac", "ac": 13, "hp": 12, "atk": 4, "dmg": "1d6+2", "dex": 3, "xp": 50},
 	"orc": {"name": "Орк", "ac": 13, "hp": 15, "atk": 5, "dmg": "1d12+3", "dex": 1, "xp": 100},
 	"hobgoblin": {"name": "Хобгоблин", "bow": true, "ac": 18, "hp": 11, "atk": 3, "dmg": "1d8+1", "dex": 1, "xp": 100},
-	"shadow": {"name": "Тень", "on_hit": {"cond": "frightened", "save": "МДР", "dc": 10, "rounds": 2}, "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100, "undead": true},
-	"bandit_captain": {"name": "Главарь бандитов", "ac": 15, "hp": 65, "atk": 5, "dmg": "1d6+3", "multi": 2, "dex": 3, "xp": 450},
-	"ghoul": {"name": "Гуль", "on_hit": {"cond": "stunned", "save": "ТЕЛ", "dc": 10, "rounds": 1}, "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200, "undead": true},
+	"shadow": {"name": "Тень", "res": ["рубящий", "колющий", "дробящий"], "vuln": ["излучение"], "on_hit": {"cond": "frightened", "save": "МДР", "dc": 10, "rounds": 2}, "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100, "undead": true},
+	"bandit_captain": {"name": "Главарь бандитов", "boss": true, "ac": 15, "hp": 65, "atk": 5, "dmg": "1d6+3", "multi": 2, "dex": 3, "xp": 450},
+	"ghoul": {"name": "Гуль", "vuln": ["излучение"], "on_hit": {"cond": "stunned", "save": "ТЕЛ", "dc": 10, "rounds": 1}, "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200, "undead": true},
 	"dire_wolf": {"name": "Лютоволк", "on_hit": {"cond": "prone", "save": "СИЛ", "dc": 13, "rounds": 1}, "ac": 14, "hp": 37, "atk": 5, "dmg": "2d6+3", "dex": 2, "xp": 200},
-	"giant_spider": {"name": "Гигантский паук", "on_hit": {"cond": "poisoned", "save": "ТЕЛ", "dc": 12, "rounds": 3}, "drop": "venom_sac", "ac": 14, "hp": 26, "atk": 5, "dmg": "1d8+3", "dex": 3, "xp": 200},
+	"giant_spider": {"name": "Гигантский паук", "vuln": ["огонь"], "on_hit": {"cond": "poisoned", "save": "ТЕЛ", "dc": 12, "rounds": 3}, "drop": "venom_sac", "ac": 14, "hp": 26, "atk": 5, "dmg": "1d8+3", "dex": 3, "xp": 200},
 	"bugbear": {"name": "Багбир", "ac": 16, "hp": 27, "atk": 4, "dmg": "2d8+2", "dex": 2, "xp": 200},
 	"harpy": {"name": "Гарпия", "on_hit": {"cond": "frightened", "save": "МДР", "dc": 11, "rounds": 2}, "ac": 11, "hp": 38, "atk": 3, "dmg": "2d4+1", "multi": 2, "dex": 1, "xp": 200},
-	"ogre": {"name": "Огр", "ac": 11, "hp": 59, "atk": 6, "dmg": "2d8+4", "dex": -1, "xp": 450, "saves": {"ТЕЛ": 3, "МДР": -2}},
-	"wight": {"name": "Умертвие", "ac": 14, "hp": 45, "atk": 4, "dmg": "1d8+2", "multi": 2, "dex": 2, "xp": 700, "undead": true, "saves": {"ТЕЛ": 3}},
-	"minotaur": {"name": "Минотавр", "ac": 14, "hp": 76, "atk": 6, "dmg": "2d12+4", "dex": 0, "xp": 700, "saves": {"ТЕЛ": 3}},
-	"troll": {"name": "Тролль", "ac": 15, "hp": 84, "atk": 7, "dmg": "2d6+4", "multi": 3, "dex": 1, "xp": 1800, "saves": {"ТЕЛ": 5, "МДР": -1}},
-	"wyvern": {"name": "Виверна", "ac": 13, "hp": 110, "atk": 7, "dmg": "2d6+4", "multi": 2, "dex": 0, "xp": 1800},
-	"young_dragon": {"name": "Молодой дракон", "on_hit": {"cond": "frightened", "save": "МДР", "dc": 13, "rounds": 2}, "ac": 18, "hp": 136, "atk": 9, "dmg": "2d10+5", "multi": 3, "dex": 1, "xp": 3900, "saves": {"ТЕЛ": 5, "МДР": 4, "ЛОВ": 4}},
+	"ogre": {"name": "Огр", "boss": true, "ac": 11, "hp": 59, "atk": 6, "dmg": "2d8+4", "dex": -1, "xp": 450, "saves": {"ТЕЛ": 3, "МДР": -2}},
+	"wight": {"name": "Умертвие", "res": ["рубящий", "колющий", "дробящий"], "vuln": ["излучение"], "ac": 14, "hp": 45, "atk": 4, "dmg": "1d8+2", "multi": 2, "dex": 2, "xp": 700, "undead": true, "saves": {"ТЕЛ": 3}},
+	"minotaur": {"name": "Минотавр", "boss": true, "ac": 14, "hp": 76, "atk": 6, "dmg": "2d12+4", "dex": 0, "xp": 700, "saves": {"ТЕЛ": 3}},
+	"troll": {"name": "Тролль", "regen": 10, "vuln": ["огонь"], "ac": 15, "hp": 84, "atk": 7, "dmg": "2d6+4", "multi": 3, "dex": 1, "xp": 1800, "saves": {"ТЕЛ": 5, "МДР": -1}},
+	"wyvern": {"name": "Виверна", "boss": true, "ac": 13, "hp": 110, "atk": 7, "dmg": "2d6+4", "multi": 2, "dex": 0, "xp": 1800},
+	"young_dragon": {"name": "Молодой дракон", "res": ["огонь"], "boss": true, "on_hit": {"cond": "frightened", "save": "МДР", "dc": 13, "rounds": 2}, "ac": 18, "hp": 136, "atk": 9, "dmg": "2d10+5", "multi": 3, "dex": 1, "xp": 3900, "saves": {"ТЕЛ": 5, "МДР": 4, "ЛОВ": 4}},
 }
+
+## Типы урона. Враги бывают уязвимы (×2) или стойки (½) к некоторым.
+const DT_GEN := {"рубящий": "рубящему", "колющий": "колющему", "дробящий": "дробящему", "огонь": "огню", "холод": "холоду",
+	"излучение": "излучению", "психический": "психическому", "силовой": "силовому", "звук": "звуку", "яд": "яду"}
+
+## Предметы окружения в бою (как в тактических RPG: бочки, люстры, обрывы).
+## kind: aoe — по всем врагам впереди, one — по выбранному врагу, edge — сталкивать с обрыва, high — возвышенность.
+const ENV := {
+	"barrel": {"name": "Бочка с маслом", "icon": "env_barrel", "kind": "aoe", "dmg": "3d6", "dt": "огонь", "save": "ЛОВ", "dc": 13, "desc": "поджечь: взрыв по врагам впереди, 3к6 огнём"},
+	"chandelier": {"name": "Люстра", "icon": "env_chandelier", "kind": "one", "dmg": "2d8", "dt": "дробящий", "save": "ЛОВ", "dc": 12, "cond": "prone", "desc": "обрушить на врага: 2к8 и сбивает с ног"},
+	"brazier": {"name": "Жаровня", "icon": "env_brazier", "kind": "one", "dmg": "2d6", "dt": "огонь", "save": "ЛОВ", "dc": 12, "desc": "опрокинуть угли на врага: 2к6 огнём"},
+	"rocks": {"name": "Шаткие камни", "icon": "env_rocks", "kind": "one", "dmg": "2d10", "dt": "дробящий", "save": "ЛОВ", "dc": 13, "desc": "обрушить камнепад: 2к10"},
+	"oil": {"name": "Скользкая жижа", "icon": "env_oil", "kind": "aoe", "dmg": "", "dt": "", "save": "ЛОВ", "dc": 12, "cond": "prone", "desc": "разлить под ноги врагам: падают"},
+	"web": {"name": "Старая паутина", "icon": "env_web", "kind": "one", "dmg": "", "dt": "", "save": "СИЛ", "dc": 12, "cond": "stunned", "desc": "сбросить на врага: запутывает на раунд"},
+	"cliff": {"name": "Обрыв", "icon": "env_cliff", "kind": "edge", "dmg": "3d6", "dt": "дробящий", "desc": "толкнуть врага вниз: 3к6 от падения", "keep": true},
+	"high": {"name": "Возвышенность", "icon": "env_high", "kind": "high", "desc": "занять (тратит перемещение): +2 к стрельбе и заклинаниям-атакам", "keep": true},
+}
+const ENV_BY_PLACE := {
+	"tavern": ["chandelier", "barrel", "brazier"], "village": ["barrel", "high", "oil"], "city": ["barrel", "chandelier", "high"],
+	"forest": ["high", "rocks", "web"], "road": ["high", "rocks", "barrel"], "cave": ["rocks", "cliff", "web"],
+	"dungeon": ["brazier", "chandelier", "oil", "web"], "castle": ["chandelier", "brazier", "high"], "ruins": ["rocks", "high", "cliff"],
+}
+
+
+static func weapon_dt(w: Dictionary) -> String:
+	if str(w.get("dt", "")) != "":
+		return str(w.dt)
+	var n := str(w.get("name", "")).to_lower()
+	for k in ["меч", "топор", "секир", "сабл", "клинок", "тесак", "коса", "серп"]:
+		if n.contains(k) and not n.contains("короткий"):
+			return "рубящий"
+	for k in ["молот", "булав", "посох", "дубин", "кистен", "палиц", "кулак"]:
+		if n.contains(k):
+			return "дробящий"
+	return "колющий"
+
 
 ## Типы мест для карты.
 const PLACE_TYPES := ["village", "city", "tavern", "forest", "road", "cave", "dungeon", "castle", "ruins",
@@ -739,7 +775,7 @@ static func attack_info(h: Dictionary) -> Dictionary:
 	else:
 		dmg_bonus += talent_sum(h, "dmg_onehand")
 	return {"name": str(w.name), "atk": atk, "dice": str(w.dmg), "bonus": dmg_bonus, "crit": 20 - talent_sum(h, "crit"),
-		"ranged": bool(w.get("ranged", false)), "fin": a == "fin" or bool(w.get("ranged", false)),
+		"ranged": bool(w.get("ranged", false)), "fin": a == "fin" or bool(w.get("ranged", false)), "dt": weapon_dt(w),
 		"attacks": 2 if (int(h.level) >= 5 and h.cls in ["Воин", "Следопыт"]) else 1}
 
 

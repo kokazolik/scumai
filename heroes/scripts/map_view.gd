@@ -4,7 +4,8 @@ extends Control
 ##
 ## Формат данных (только JSON-совместимые типы, уходит по сети):
 ##   map = {"nodes": [{"name": String, "type": String, "x": float, "y": float}],
-##          "edges": [[int, int], ...], "cur": int}
+##          "edges": [[int, int], ...], "cur": int,
+##          "targets": [{"name", "type", "x", "y", "left", "total", "q"}]}  — известные по координатам места заданий
 ## Типы: village, city, tavern, forest, road, cave, dungeon, castle, ruins, swamp,
 ##       mountain, lake, camp, temple, tower, field, sea, port (иное — общий значок).
 ##
@@ -105,10 +106,30 @@ static func add_place(map: Dictionary, place_name: String, place_type: String) -
 			return m
 
 	var pos := Vector2.ZERO
-	if not nodes.is_empty():
+	var targets: Array = m["targets"]
+	var ti := target_index(m, title)
+	if ti >= 0:
+		pos = Vector2(targets[ti]["x"], targets[ti]["y"])
+		targets.remove_at(ti)   # дошли: место открывается на карте там, где его и отметили
+	elif not nodes.is_empty():
 		if prev < 0:
 			prev = nodes.size() - 1
 		pos = _find_spot(nodes, edges, prev, key)
+		# в пути к отмеченной цели новые места ложатся вдоль дороги к ней
+		var origin := Vector2(nodes[prev]["x"], nodes[prev]["y"])
+		for t in targets:
+			if int(t["left"]) <= 0:
+				continue
+			var tp := Vector2(t["x"], t["y"])
+			var cand := origin.lerp(tp, 1.0 / (int(t["left"]) + 1.0))
+			cand += (tp - origin).orthogonal().normalized() * (float(hash(key) % 41) - 20.0)
+			var ok := true
+			for n in nodes:
+				if cand.distance_to(Vector2(n["x"], n["y"])) < MIN_GAP * 0.8:
+					ok = false
+			if ok:
+				pos = cand
+			break
 	nodes.append({"name": title, "type": ptype, "x": snappedf(pos.x, 0.1), "y": snappedf(pos.y, 0.1)})
 	var idx := nodes.size() - 1
 	if prev >= 0 and prev != idx:
@@ -138,9 +159,103 @@ static func _sanitize(map) -> Dictionary:
 							and not _has_edge(edges, a, b):
 						edges.append([a, b])
 		cur = int(_num(map.get("cur", -1)))
+	var targets: Array = []
+	if map is Dictionary and map.get("targets") is Array:
+		for t in map.targets:
+			if t is Dictionary and str(t.get("name", "")) != "":
+				targets.append({"name": str(t.name), "type": str(t.get("type", "")), "x": _num(t.get("x", 0.0)), "y": _num(t.get("y", 0.0)),
+					"left": int(_num(t.get("left", 0))), "total": int(_num(t.get("total", 0))), "q": str(t.get("q", ""))})
 	if cur < 0 or cur >= nodes.size():
 		cur = nodes.size() - 1
-	return {"nodes": nodes, "edges": edges, "cur": cur}
+	return {"nodes": nodes, "edges": edges, "cur": cur, "targets": targets}
+
+
+static func _same_place(a: String, b: String) -> bool:
+	a = a.strip_edges().to_lower()
+	b = b.strip_edges().to_lower()
+	if a == "" or b == "":
+		return false
+	if a == b or (a.length() >= 5 and b.contains(a)) or (b.length() >= 5 and a.contains(b)):
+		return true
+	# «Маяк на Скалистом мысу» и «Старый маяк»: общее значимое слово из 5+ букв
+	var wa := a.split(" ", false)
+	for w in b.split(" ", false):
+		if w.length() >= 5 and w in wa:
+			return true
+	return false
+
+
+static func target_index(map: Dictionary, place_name: String) -> int:
+	var targets: Array = map.get("targets", [])
+	for i in targets.size():
+		if _same_place(str(targets[i]["name"]), place_name):
+			return i
+	return -1
+
+
+## Место, о котором известно, где оно (сказали дорогу, есть карта): отмечаем сразу.
+## dist — сколько событий/остановок в пути до него. Сами события на карте не отмечаются.
+static func add_target(map: Dictionary, place_name: String, place_type: String, dist: int, quest: String) -> Dictionary:
+	var m := _sanitize(map)
+	var title := place_name.strip_edges().left(30)
+	if title == "":
+		return m
+	for n in m["nodes"]:
+		if _same_place(str(n["name"]), title):
+			return m   # уже бывали — просто место на карте
+	dist = clampi(dist, 1, 6)
+	var ti := target_index(m, title)
+	if ti >= 0:
+		var t: Dictionary = m["targets"][ti]
+		if quest != "" and str(t["q"]) == "":
+			t["q"] = quest
+		return m
+	if (m["targets"] as Array).size() >= 4:
+		(m["targets"] as Array).pop_front()
+	var origin := Vector2.ZERO
+	var nodes: Array = m["nodes"]
+	var cur: int = m["cur"]
+	if cur >= 0 and cur < nodes.size():
+		origin = Vector2(nodes[cur]["x"], nodes[cur]["y"])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(title.to_lower())
+	var base := rng.randf() * TAU
+	var r := 105.0 * (dist + 1)
+	var best := origin + Vector2.RIGHT.rotated(base) * r
+	var best_score := -1.0
+	for k in 16:
+		var p := origin + Vector2.RIGHT.rotated(base + k * TAU / 16.0) * r
+		var near := 99999.0
+		for n in nodes:
+			near = minf(near, p.distance_to(Vector2(n["x"], n["y"])))
+		for t in m["targets"]:
+			near = minf(near, p.distance_to(Vector2(t["x"], t["y"])))
+		if near > best_score:
+			best_score = near
+			best = p
+		if near > 260.0:
+			break
+	(m["targets"] as Array).append({"name": title, "type": place_type.strip_edges().to_lower(), "x": snappedf(best.x, 0.1), "y": snappedf(best.y, 0.1),
+		"left": dist, "total": dist, "q": quest})
+	return m
+
+
+## Герои прошли ещё одно событие в пути: до отмеченных мест на шаг ближе.
+static func tick_targets(map: Dictionary) -> Dictionary:
+	var m := _sanitize(map)
+	for t in m["targets"]:
+		t["left"] = maxi(0, int(t["left"]) - 1)
+	return m
+
+
+static func drop_targets(map: Dictionary, quest: String) -> Dictionary:
+	var m := _sanitize(map)
+	var keep := []
+	for t in m["targets"]:
+		if quest == "" or not _same_place(str(t["q"]), quest):
+			keep.append(t)
+	m["targets"] = keep
+	return m
 
 
 static func _num(v) -> float:
@@ -241,11 +356,13 @@ func _cur_pos() -> Vector2:
 func _view_target(zoom_to: float) -> Vector2:
 	var nodes := _nodes()
 	var cp := _cur_pos()
-	if nodes.size() < 2:
+	if nodes.size() + (_map.get("targets", []) as Array).size() < 2:
 		return cp
 	var r := Rect2(Vector2(nodes[0]["x"], nodes[0]["y"]), Vector2.ZERO)
 	for n in nodes:
 		r = r.expand(Vector2(n["x"], n["y"]))
+	for t in _map.get("targets", []):
+		r = r.expand(Vector2(t["x"], t["y"]))
 	var view := (size if size.x > 1.0 else Vector2(680, 900)) / maxf(zoom_to, 0.01)
 	var lim := view * 0.18
 	return cp + (r.get_center() - cp).clamp(-lim, lim)
@@ -386,6 +503,8 @@ func _clamp_cam() -> void:
 	var r := Rect2(Vector2(nodes[0]["x"], nodes[0]["y"]), Vector2.ZERO)
 	for n in nodes:
 		r = r.expand(Vector2(n["x"], n["y"]))
+	for t in _map.get("targets", []):
+		r = r.expand(Vector2(t["x"], t["y"]))
 	r = r.grow(160.0)
 	_cam = _cam.clamp(r.position, r.end)
 
@@ -408,6 +527,7 @@ func _draw() -> void:
 		_draw_hint(font)
 	else:
 		_draw_roads()
+		_draw_targets(font)
 		_draw_places(font)
 		_draw_heroes(font)
 	_draw_vignette()
@@ -583,6 +703,66 @@ func _dashed_curve(a: Vector2, b: Vector2, ctrl: Vector2, col: Color, width: flo
 			if left <= 0.001:
 				drawing = not drawing
 				left = dash if drawing else gap
+
+
+## Места заданий, известные по координатам: пунктир от героев, засечки — сколько событий ещё в пути.
+func _draw_targets(font: Font) -> void:
+	var targets: Array = _map.get("targets", [])
+	if targets.is_empty():
+		return
+	var z := _zoom
+	var from := _to_screen(_cur_pos())
+	var pulse := 0.5 + 0.5 * sin(_time * 2.4)
+	for t in targets:
+		var p := _to_screen(Vector2(t["x"], t["y"]))
+		var col := RED
+		col.a = 0.55
+		var d := p - from
+		var ctrl := (from + p) * 0.5 + d.orthogonal().normalized() * d.length() * 0.08
+		_dashed_curve(from, p, ctrl, col, 2.4 * clampf(z, 0.7, 1.4), 5.0 * z, 9.0 * z, 44.0 * z)
+		var left := int(t["left"])
+		for k in left:
+			var tt := float(k + 1) / float(left + 1)
+			var q := from.lerp(ctrl, tt).lerp(ctrl.lerp(p, tt), tt)
+			draw_circle(q, 8.0 * z, PAPER_LIGHT)
+			draw_arc(q, 8.0 * z, 0.0, TAU, 20, RED.darkened(0.2), 2.0, true)
+			var fsq := int(clampf(round(13.0 * z), 9.0, 26.0))
+			var qs := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fsq)
+			draw_string(font, q + Vector2(-qs.x * 0.5, fsq * 0.36), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fsq, RED.darkened(0.3))
+		var glow := GOLD
+		glow.a = 0.14 + 0.1 * pulse
+		draw_circle(p, 46.0 * z, glow)
+		var iz := z * ICON_SCALE * 0.9
+		draw_set_transform(p, 0.0, Vector2(iz, iz))
+		_draw_icon(str(t["type"]), 7)
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+		var rc := RED
+		rc.a = 0.8
+		_dashed_curve(p + Vector2(-42, 0) * z, p + Vector2(42, 0) * z, p + Vector2(0, -58) * z, rc, 2.2, 6.0 * z, 5.0 * z, 0.0)
+		_dashed_curve(p + Vector2(-42, 0) * z, p + Vector2(42, 0) * z, p + Vector2(0, 58) * z, rc, 2.2, 6.0 * z, 5.0 * z, 0.0)
+		# флажок цели
+		var fp := p + Vector2(26, -34) * z
+		draw_line(fp, fp + Vector2(0, 30) * z, INK, 2.0, true)
+		draw_colored_polygon(PackedVector2Array([fp, fp + Vector2(18, 6) * z, fp + Vector2(0, 12) * z]), RED)
+		_draw_label(font, str(t["name"]), p + Vector2(0, 32.0 * z), true)
+		var sub := "цель рядом" if left <= 0 else "в пути: %d %s" % [left, _events_word(left)]
+		var fs := int(clampf(round(16.0 * z), 10.0, 32.0))
+		var sw := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var lines := _wrap(font, str(t["name"]), int(clampf(round(20.0 * z), 11.0, 40.0)), 170.0 * z, 2)
+		var sy := p.y + 32.0 * z + font.get_height(int(clampf(round(20.0 * z), 11.0, 40.0))) * 0.95 * lines.size() + font.get_ascent(fs)
+		var sp := Vector2(p.x - sw * 0.5, sy)
+		var ol := PAPER_LIGHT
+		ol.a = 0.85
+		draw_string_outline(font, sp, sub, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, maxi(3, int(4 * z)), ol)
+		draw_string(font, sp, sub, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, SEPIA)
+
+
+static func _events_word(n: int) -> String:
+	if n % 10 == 1 and n % 100 != 11:
+		return "событие"
+	if n % 10 in [2, 3, 4] and not (n % 100 in [12, 13, 14]):
+		return "события"
+	return "событий"
 
 
 func _draw_places(font: Font) -> void:

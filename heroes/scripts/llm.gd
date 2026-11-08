@@ -161,9 +161,11 @@ func _mock_reply(messages: Array) -> String:
 		d.story = "Враги повержены."
 	elif turn == 0:
 		d.combat = [{"id": "goblin", "count": 2}]
+		d.env = ["barrel", "cliff", "high"]
 		d.story = "Из кустов выскакивают гоблины!"
 	elif turn == 1:
-		d.quests = [{"title": "Найти пропавшую козу", "note": "Бабка Агафья просила поискать у реки", "status": "new"}]
+		d.quests = [{"title": "Найти пропавшую козу", "note": "Бабка Агафья просила поискать у реки", "status": "new", "steps": ["Расспросить пастуха", "Найти следы у реки", "Вернуть козу"], "place": {"name": "Волчий овраг", "type": "forest", "dist": 2}}]
+		d.goal = {"t": "Доплыть до маяка на Скалистом мысу", "steps": ["Найти лодку", "Пережить бурю", "Подняться на маяк"], "place": {"name": "Маяк на Скалистом мысу", "type": "tower", "dist": 3}}
 		d.npcs = [{"name": "Бабка Агафья", "note": "Старушка с козой, знает все слухи", "attitude": 1}, {"name": "Кузнец Михей", "note": "ворчливый кузнец", "attitude": 2}]
 		d.rep = [{"name": "Деревня Верба", "change": 1, "why": "помогли старушке"}]
 		d.consequences = ["Пощадили гоблина Шныря — может вернуться"]
@@ -177,4 +179,8 @@ func _mock_reply(messages: Array) -> String:
 		d.changes[0]["add"] = ["potion_heal", "herb", "herb", "venom_sac"]
 	elif turn == 3 and randi() % 2 == 0:
 		d.vote = {"q": "Кого спасать первым?", "opts": ["Мельника", "Старосту"]}
+	elif turn == 3:
+		d.place = {"name": "Хутор у брода %d" % (randi() % 50), "type": "village"}
+		d.goal = {"t": "Доплыть до маяка на Скалистом мысу", "done_steps": ["Найти лодку"]}
+		d.quests = [{"title": "Найти пропавшую козу", "status": "new", "done_steps": ["Расспросить пастуха"]}]
 	return JSON.stringify(d)
