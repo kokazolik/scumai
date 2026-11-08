@@ -403,6 +403,10 @@ func _build_create_done() -> void:
 	var err := _label("", 24, C_RED)
 	refs.err = err
 	content.add_child(err)
+	if Net.is_host():
+		var rb := _small_wide_button("Повторить", C_ACCENT, Game.retry_world)
+		refs.retry = rb
+		content.add_child(rb)
 	content.add_child(_expander())
 	content.add_child(_button("Выйти", C_CARD2, _leave))
 
@@ -490,7 +494,7 @@ func _build_story_tab() -> void:
 
 func _update() -> void:
 	if refs.has("key_btn"):
-		refs.key_btn.text = "Ключ ИИ: есть ✓" if LLM.has_key() else "Ключ ИИ: вставить из буфера"
+		refs.key_btn.text = "Ключ ИИ: есть ✔" if LLM.has_key() else "Ключ ИИ: вставить из буфера"
 	if refs.has("err"):
 		var e := error_text
 		if Net.is_online() and str(Game.state.get("error", "")) != "":
@@ -503,8 +507,10 @@ func _update() -> void:
 		var names := []
 		for id in Net.players:
 			var pn := str(Net.players[id])
-			names.append(("★ " if id == 1 else "• ") + pn + ("  (ты)" if id == Net.my_id() else ""))
+			names.append(("⭐ " if id == 1 else "• ") + pn + ("  (ты)" if id == Net.my_id() else ""))
 		refs.players.text = "\n".join(names)
+	if refs.has("retry"):
+		refs.retry.visible = str(Game.state.get("error", "")) != ""
 	if refs.has("start"):
 		refs.start.text = ("Начать (%d в отряде)" % Net.players.size()) if LLM.has_key() else "Нужен ключ ИИ: вставить"
 	if screen == "game":
@@ -584,7 +590,7 @@ func _log_entry(e: Dictionary) -> Control:
 		"loot":
 			return _label("💰 " + str(e.t), 21, C_ACCENT)
 		"lvl":
-			return _label("★ " + str(e.t), 24, C_ACCENT)
+			return _label("⭐ " + str(e.t), 24, C_ACCENT)
 	return _label(str(e.t), 21, C_MUTED)
 
 
@@ -633,7 +639,7 @@ func _update_combat_box() -> void:
 		var en: Dictionary = c.enemies[i]
 		var row := HBoxContainer.new()
 		var b := Button.new()
-		b.text = ("◎ " if i == _target and my_turn else "") + "%s%s  КД %d" % [en.name, " 💤" if en.asleep else "", int(en.ac)]
+		b.text = ("🎯 " if i == _target and my_turn else "") + "%s%s  КД %d" % [en.name, " 💤" if en.asleep else "", int(en.ac)]
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.add_theme_font_size_override("font_size", 22)
@@ -665,6 +671,8 @@ func _bottom_mode() -> String:
 		"thinking":
 			return "thinking"
 		"combat":
+			if Game.state.combat.get("wait", false):
+				return "thinking"
 			if Game.combat_actor() == me and not h.is_empty() and int(h.hp) > 0:
 				return "myturn%d_%d_%s_%d_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size()]
 			return "cwait" + Game.combat_actor()
@@ -794,6 +802,11 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 				b.add_child(_menu_button("%s — %s" % [R.item_name(h.items[i]), R.item_desc(h.items[i])], C_GREEN.darkened(0.3), func():
 					_combat_menu = ""
 					Game.combat_action({"t": "item", "idx": idx, "target": _target if d.type == "scroll" and R.SPELLS[str(d.spell)].kind != "heal" else me})))
+				var partner := _partner()
+				if d.type == "potion" and partner != "":
+					b.add_child(_menu_button("   › напоить %s" % Game.hero_of(partner).get("name", ""), C_GREEN.darkened(0.45), func():
+						_combat_menu = ""
+						Game.combat_action({"t": "item", "idx": idx, "target": partner})))
 		if not any:
 			b.add_child(_label("Нет зелий и свитков", 22, C_MUTED))
 		b.add_child(_small_wide_button("Назад", C_CARD2, func():
@@ -810,7 +823,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	g.add_theme_constant_override("v_separation", 8)
 	var acts := [["⚔ %s (%+d, %s%+d)" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus], C_RED, func(): Game.combat_action({"t": "attack", "target": _target})]]
 	if R.known_spells(h).size() > 0:
-		acts.append(["✦ Заклинание", C_PURPLE, func():
+		acts.append(["✨ Заклинание", C_PURPLE, func():
 			_combat_menu = "spell"
 			_bottom_key = ""
 			_update_bottom()])
@@ -820,11 +833,11 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		_update_bottom()])
 	acts.append(["🛡 Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"})])
 	if h.get("second_wind", false):
-		acts.append(["♥ Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"})])
+		acts.append(["❤ Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"})])
 	if int(h.get("inspire", 0)) > 0:
 		var partner := _partner()
 		if partner != "":
-			acts.append(["♪ Вдохновить (%d)" % int(h.inspire), C_ACCENT.darkened(0.3), func(): Game.combat_action({"t": "inspire", "target": partner})])
+			acts.append(["🎵 Вдохновить (%d)" % int(h.inspire), C_ACCENT.darkened(0.3), func(): Game.combat_action({"t": "inspire", "target": partner})])
 	acts.append(["🏃 Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"})])
 	for a in acts:
 		var bt := _button(a[0], a[1], a[2])
@@ -838,7 +851,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	free.placeholder_text = "Своё действие: опрокинуть стол…"
 	free.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(free)
-	row.add_child(_small_button("➤", C_ACCENT, func():
+	row.add_child(_small_button("▶", C_ACCENT, func():
 		if free.text.strip_edges() != "":
 			Game.combat_action({"t": "free", "text": free.text})))
 	b.add_child(row)
@@ -902,7 +915,7 @@ func _build_sheet(v: VBoxContainer) -> void:
 		var s1 := _label("%s %d" % [a, R.score(h, a)], 26, C_ACCENT)
 		s1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cell.add_child(s1)
-		var s2 := _label("мод %+d · спас %+d%s" % [R.amod(h, a), R.save_bonus(h, a), "●" if prof_save else ""], 18, C_MUTED)
+		var s2 := _label("мод %+d · спас %+d%s" % [R.amod(h, a), R.save_bonus(h, a), "•" if prof_save else ""], 18, C_MUTED)
 		s2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cell.add_child(s2)
 		g.add_child(cell)
@@ -914,7 +927,7 @@ func _build_sheet(v: VBoxContainer) -> void:
 	at.add_child(_label("Атака: %s %+d, урон %s%+d%s" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus, " ×2" if int(ai.attacks) > 1 else ""], 24, C_INK))
 	at.add_child(_label("Умения: " + str(R.CLASSES[h.cls].features), 21, C_MUTED))
 	if h.get("second_wind", false) and not in_combat:
-		at.add_child(_small_wide_button("♥ Второе дыхание (1к10+%d)" % int(h.level), C_GREEN.darkened(0.3), func(): Game.inv("second_wind", {})))
+		at.add_child(_small_wide_button("❤ Второе дыхание (1к10+%d)" % int(h.level), C_GREEN.darkened(0.3), func(): Game.inv("second_wind", {})))
 	v.add_child(at.get_parent())
 
 	var spells := R.known_spells(h)
@@ -931,10 +944,10 @@ func _build_sheet(v: VBoxContainer) -> void:
 		v.add_child(sc.get_parent())
 
 	var sk := _card()
-	sk.add_child(_label("Навыки (● — владеешь)", 22, C_MUTED))
+	sk.add_child(_label("Навыки (• — владеешь)", 22, C_MUTED))
 	var lines := []
 	for s in R.SKILLS:
-		lines.append("%s%s %+d" % ["● " if s in h.skills else "   ", s, R.skill_bonus(h, s)])
+		lines.append("%s%s %+d" % ["• " if s in h.skills else "   ", s, R.skill_bonus(h, s)])
 	var g2 := GridContainer.new()
 	g2.columns = 2
 	for l in lines:
@@ -983,7 +996,7 @@ func _build_sheet(v: VBoxContainer) -> void:
 		if shop_open:
 			row.add_child(_tiny_button("Продать %d" % maxi(1, R.item_price(it) / 2), C_ACCENT.darkened(0.3), func(): Game.inv("sell", {"idx": idx})))
 		elif not in_combat:
-			row.add_child(_tiny_button("✕", C_CARD2, func(): Game.inv("drop", {"idx": idx})))
+			row.add_child(_tiny_button("✖", C_CARD2, func(): Game.inv("drop", {"idx": idx})))
 		bag.add_child(row)
 	if partner != "" and int(h.gold) >= 10 and not in_combat:
 		bag.add_child(_small_wide_button("Дать другу 10 золота", C_ACCENT.darkened(0.4), func(): Game.inv("give_gold", {"to": partner, "amount": 10})))
@@ -1181,6 +1194,9 @@ func _save_name() -> void:
 
 func _load_fonts() -> void:
 	var fb: Array[Font] = [ThemeDB.fallback_font]
+	var emoji := load("res://fonts/NotoEmoji.ttf") as FontFile
+	if emoji:
+		fb.push_front(emoji)
 	for pair in [["font_bold", "res://fonts/Nunito-Bold.ttf"], ["font_black", "res://fonts/Nunito-Black.ttf"]]:
 		var f := load(pair[1]) as FontFile
 		if f:
@@ -1387,6 +1403,19 @@ func _autotest_tick() -> void:
 		get_tree().quit(1)
 		return
 	var me := Game.my_pname()
+	var shot := OS.get_environment("ALIBI_SHOT")
+	if shot != "" and _auto_n % 2 == 0:
+		get_viewport().get_texture().get_image().save_png("%s/%s_%03d_%s_%s.png" % [shot, _auto, _auto_n, Game.phase, tab])
+		if _auto == "client" and screen == "game":
+			var want := "story"
+			if int(Game.state.turn) in [3, 4]:
+				want = "sheet"
+			elif int(Game.state.turn) in [6, 7]:
+				want = "map"
+			if want != tab:
+				tab = want
+				screen = ""
+				_refresh()
 	match Game.phase:
 		"lobby":
 			if _auto == "host" and Net.players.size() >= 2:

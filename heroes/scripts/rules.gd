@@ -31,39 +31,39 @@ const RACES := {
 }
 
 const CLASSES := {
-	"Воин": {"hd": 10, "saves": ["СИЛ", "ТЕЛ"], "main": "СИЛ",
+	"Воин": {"armor": ["лёгкий", "средний", "тяжёлый", "shield"], "hd": 10, "saves": ["СИЛ", "ТЕЛ"], "main": "СИЛ",
 		"scores": {"СИЛ": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ХАР": 10, "ИНТ": 8},
 		"skills": ["Атлетика", "Запугивание", "Восприятие"],
 		"start": [["longsword", true], ["chain_mail", true], ["shield", true], ["traveler_clothes", true], ["potion_heal", false]],
 		"features": "Второе дыхание (раз за отдых лечит 1к10+уровень), Дополнительная атака с 5 уровня",
 		"desc": "Крепкий боец в тяжёлой броне"},
-	"Маг": {"hd": 6, "saves": ["ИНТ", "МДР"], "main": "ИНТ", "caster": "ИНТ",
+	"Маг": {"armor": [], "hd": 6, "saves": ["ИНТ", "МДР"], "main": "ИНТ", "caster": "ИНТ",
 		"scores": {"ИНТ": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ХАР": 10, "СИЛ": 8},
 		"skills": ["Магия", "История", "Анализ"],
 		"spells": ["fire_bolt", "ray_of_frost", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball"],
 		"start": [["quarterstaff", true], ["mage_robe", true], ["spellbook", false], ["potion_heal", false]],
 		"features": "Заклинания на Интеллекте: огонь, лёд, усыпление",
 		"desc": "Огонь, лёд и тайные знания"},
-	"Плут": {"hd": 8, "saves": ["ЛОВ", "ИНТ"], "main": "ЛОВ",
+	"Плут": {"armor": ["лёгкий"], "hd": 8, "saves": ["ЛОВ", "ИНТ"], "main": "ЛОВ",
 		"scores": {"ЛОВ": 15, "ТЕЛ": 14, "ИНТ": 13, "ХАР": 12, "МДР": 10, "СИЛ": 8},
 		"skills": ["Скрытность", "Ловкость рук", "Акробатика", "Обман"],
 		"start": [["rapier", true], ["leather", true], ["traveler_clothes", true], ["shortbow", false], ["thieves_tools", false]],
 		"features": "Скрытая атака (+1к6 за каждые 2 уровня, раз за ход), мастер навыков",
 		"desc": "Замки, ловушки и удар в спину"},
-	"Жрец": {"hd": 8, "saves": ["МДР", "ХАР"], "main": "МДР", "caster": "МДР",
+	"Жрец": {"armor": ["лёгкий", "средний", "тяжёлый", "shield"], "hd": 8, "saves": ["МДР", "ХАР"], "main": "МДР", "caster": "МДР",
 		"scores": {"МДР": 15, "ТЕЛ": 14, "СИЛ": 13, "ХАР": 12, "ИНТ": 10, "ЛОВ": 8},
 		"skills": ["Медицина", "Религия", "Проницательность"],
 		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "shield_of_faith", "spiritual_weapon", "mass_healing_word"],
 		"start": [["mace", true], ["scale_mail", true], ["shield", true], ["holy_symbol", true]],
 		"features": "Заклинания на Мудрости: лечение, свет, защита",
 		"desc": "Лечит друзей и жжёт нежить"},
-	"Следопыт": {"hd": 10, "saves": ["СИЛ", "ЛОВ"], "main": "ЛОВ",
+	"Следопыт": {"armor": ["лёгкий", "средний", "shield"], "hd": 10, "saves": ["СИЛ", "ЛОВ"], "main": "ЛОВ",
 		"scores": {"ЛОВ": 15, "МДР": 14, "ТЕЛ": 13, "СИЛ": 12, "ИНТ": 10, "ХАР": 8},
 		"skills": ["Выживание", "Природа", "Восприятие", "Скрытность"],
 		"start": [["longbow", true], ["leather", true], ["hunter_cloak", true], ["shortsword", false], ["potion_heal", false]],
 		"features": "Стрельба (+2 к атакам дальнобойным оружием), Дополнительная атака с 5 уровня",
 		"desc": "Лук, следы и дикие земли"},
-	"Бард": {"hd": 8, "saves": ["ЛОВ", "ХАР"], "main": "ХАР", "caster": "ХАР",
+	"Бард": {"armor": ["лёгкий"], "hd": 8, "saves": ["ЛОВ", "ХАР"], "main": "ХАР", "caster": "ХАР",
 		"scores": {"ХАР": 15, "ЛОВ": 14, "ТЕЛ": 13, "ИНТ": 12, "МДР": 10, "СИЛ": 8},
 		"skills": ["Выступление", "Убеждение", "Обман", "Проницательность"],
 		"spells": ["vicious_mockery", "healing_word", "thunderwave", "sleep", "shatter"],
@@ -168,24 +168,24 @@ const MONSTERS := {
 	"cultist": {"name": "Сектант", "ac": 12, "hp": 9, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
 	"goblin": {"name": "Гоблин", "ac": 15, "hp": 7, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50},
 	"wolf": {"name": "Волк", "ac": 13, "hp": 11, "atk": 4, "dmg": "2d4+2", "dex": 2, "xp": 50},
-	"skeleton": {"name": "Скелет", "ac": 13, "hp": 13, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50},
-	"zombie": {"name": "Зомби", "ac": 8, "hp": 22, "atk": 3, "dmg": "1d6+1", "dex": -2, "xp": 50},
+	"skeleton": {"name": "Скелет", "ac": 13, "hp": 13, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 2, "МДР": -1}},
+	"zombie": {"name": "Зомби", "ac": 8, "hp": 22, "atk": 3, "dmg": "1d6+1", "dex": -2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 3, "МДР": -2}},
 	"giant_spider_small": {"name": "Пещерный паук", "ac": 13, "hp": 12, "atk": 4, "dmg": "1d6+2", "dex": 3, "xp": 50},
 	"orc": {"name": "Орк", "ac": 13, "hp": 15, "atk": 5, "dmg": "1d12+3", "dex": 1, "xp": 100},
 	"hobgoblin": {"name": "Хобгоблин", "ac": 18, "hp": 11, "atk": 3, "dmg": "1d8+1", "dex": 1, "xp": 100},
-	"shadow": {"name": "Тень", "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100},
+	"shadow": {"name": "Тень", "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100, "undead": true},
 	"bandit_captain": {"name": "Главарь бандитов", "ac": 15, "hp": 65, "atk": 5, "dmg": "1d6+3", "multi": 2, "dex": 3, "xp": 450},
-	"ghoul": {"name": "Гуль", "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200},
+	"ghoul": {"name": "Гуль", "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200, "undead": true},
 	"dire_wolf": {"name": "Лютоволк", "ac": 14, "hp": 37, "atk": 5, "dmg": "2d6+3", "dex": 2, "xp": 200},
 	"giant_spider": {"name": "Гигантский паук", "ac": 14, "hp": 26, "atk": 5, "dmg": "1d8+3", "dex": 3, "xp": 200},
 	"bugbear": {"name": "Багбир", "ac": 16, "hp": 27, "atk": 4, "dmg": "2d8+2", "dex": 2, "xp": 200},
 	"harpy": {"name": "Гарпия", "ac": 11, "hp": 38, "atk": 3, "dmg": "2d4+1", "multi": 2, "dex": 1, "xp": 200},
-	"ogre": {"name": "Огр", "ac": 11, "hp": 59, "atk": 6, "dmg": "2d8+4", "dex": -1, "xp": 450},
-	"wight": {"name": "Умертвие", "ac": 14, "hp": 45, "atk": 4, "dmg": "1d8+2", "multi": 2, "dex": 2, "xp": 700},
-	"minotaur": {"name": "Минотавр", "ac": 14, "hp": 76, "atk": 6, "dmg": "2d12+4", "dex": 0, "xp": 700},
-	"troll": {"name": "Тролль", "ac": 15, "hp": 84, "atk": 7, "dmg": "2d6+4", "multi": 3, "dex": 1, "xp": 1800},
+	"ogre": {"name": "Огр", "ac": 11, "hp": 59, "atk": 6, "dmg": "2d8+4", "dex": -1, "xp": 450, "saves": {"ТЕЛ": 3, "МДР": -2}},
+	"wight": {"name": "Умертвие", "ac": 14, "hp": 45, "atk": 4, "dmg": "1d8+2", "multi": 2, "dex": 2, "xp": 700, "undead": true, "saves": {"ТЕЛ": 3}},
+	"minotaur": {"name": "Минотавр", "ac": 14, "hp": 76, "atk": 6, "dmg": "2d12+4", "dex": 0, "xp": 700, "saves": {"ТЕЛ": 3}},
+	"troll": {"name": "Тролль", "ac": 15, "hp": 84, "atk": 7, "dmg": "2d6+4", "multi": 3, "dex": 1, "xp": 1800, "saves": {"ТЕЛ": 5, "МДР": -1}},
 	"wyvern": {"name": "Виверна", "ac": 13, "hp": 110, "atk": 7, "dmg": "2d6+4", "multi": 2, "dex": 0, "xp": 1800},
-	"young_dragon": {"name": "Молодой дракон", "ac": 18, "hp": 136, "atk": 9, "dmg": "2d10+5", "multi": 3, "dex": 1, "xp": 3900},
+	"young_dragon": {"name": "Молодой дракон", "ac": 18, "hp": 136, "atk": 9, "dmg": "2d10+5", "multi": 3, "dex": 1, "xp": 3900, "saves": {"ТЕЛ": 5, "МДР": 4, "ЛОВ": 4}},
 }
 
 ## Типы мест для карты.
@@ -213,17 +213,22 @@ static func roll(expr: String) -> int:
 
 
 static func parse_dice(expr: String) -> Dictionary:
-	var e := expr.replace(" ", "").to_lower().replace("к", "d")
+	var e := expr.replace(" ", "").to_lower().replace("к", "d").replace("д", "d").replace("-", "+-")
+	var n := 0
+	var sides := 1
 	var bonus := 0
-	var sign_pos := maxi(e.rfind("+"), e.rfind("-"))
-	if sign_pos > 0:
-		bonus = int(e.substr(sign_pos))
-		e = e.substr(0, sign_pos)
-	var parts := e.split("d")
-	if parts.size() != 2:
-		return {"n": 0, "sides": 1, "bonus": int(expr)}
-	var n := clampi(int(parts[0]) if parts[0] != "" else 1, 1, 20)
-	var sides := clampi(int(parts[1]), 2, 100)
+	for term in e.split("+", false):
+		if term.contains("d"):
+			var p := term.split("d")
+			var k := clampi(p[0].to_int() if p[0] != "" else 1, 1, 20)
+			var sd := clampi(p[1].to_int(), 1, 100)
+			if n == 0:
+				n = k
+				sides = sd
+			else:
+				bonus += k * (sd + 1) / 2
+		elif term.is_valid_int():
+			bonus += int(term)
 	return {"n": n, "sides": sides, "bonus": bonus}
 
 
@@ -479,7 +484,7 @@ static func ac(h: Dictionary) -> int:
 	if armor is Dictionary and not armor.is_empty():
 		var d := item_def(armor)
 		var dm := int(d.get("dex_max", -1))
-		total = int(d.ac) + (dex if dm < 0 else mini(dex, dm))
+		total = int(d.ac) + (dex if dm < 0 else (0 if dm == 0 else mini(dex, dm)))
 	for s in h.equip:
 		if s == "armor" or not (h.equip[s] is Dictionary) or h.equip[s].is_empty():
 			continue

@@ -3,8 +3,8 @@ extends Node
 ## нейронка рассказывает и решает, что происходит в мире.
 ## Хост хранит кампанию, бросает кубики и вызывает нейронку; клиентам рассылается состояние целиком.
 ##
-## Фазы: lobby → create → world → play ⇄ thinking (→ rolling) → play …
-##       play → combat (пошагово по инициативе) → thinking (итоги боя) → play
+## Фазы: lobby ⚔ create ⚔ world ⚔ play ⇄ thinking (→ rolling) ⚔ play …
+##       play ⚔ combat (пошагово по инициативе) ⚔ thinking (итоги боя) ⚔ play
 
 signal state_changed
 signal rolls_shown(rolls: Array)   # для анимации кубиков на всех телефонах
@@ -26,6 +26,9 @@ var state := {}
 var _busy := false
 var _actions := {}   # имя игрока -> действие (только у хоста)
 var _roll_seq := 0
+var _seen_roll_seq := 0
+var _rolls_until := 0
+var _last_target := {}
 
 
 func _ready() -> void:
@@ -37,6 +40,7 @@ func reset_local() -> void:
 	state = _fresh_state()
 	_busy = false
 	_actions = {}
+	_seen_roll_seq = 0
 	state_changed.emit()
 
 
@@ -92,7 +96,9 @@ func send_state_to(id: int) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _sync(s: Dictionary) -> void:
-	var new_rolls := int(s.get("roll_seq", 0)) != int(state.get("roll_seq", 0))
+	var seq := int(s.get("roll_seq", 0))
+	var new_rolls := seq != _seen_roll_seq
+	_seen_roll_seq = seq
 	state = s
 	phase = str(s.phase)
 	state_changed.emit()
@@ -110,6 +116,15 @@ func _show_rolls(rolls: Array) -> void:
 	_roll_seq += 1
 	state.rolls = rolls
 	state.roll_seq = _roll_seq
+	var groups := 1 if rolls.size() == 2 else rolls.size()
+	_rolls_until = Time.get_ticks_msec() + 2300 * groups
+
+
+## Ждёт, пока на телефонах докатятся кубики.
+func _wait_rolls(extra := 0) -> void:
+	var w := _rolls_until - Time.get_ticks_msec() + extra
+	if w > 0:
+		await get_tree().create_timer(w / 1000.0).timeout
 
 
 # ---------- запросы игроков (все уходят хосту) ----------
@@ -318,11 +333,13 @@ func _make_world() -> void:
 		return
 	_busy = true
 	_set_phase("world")
+	var my_state := state
 	var res: Dictionary = await LLM.chat_json(_world_prompt(), 1.0, 1300)
 	_busy = false
+	if not is_same(state, my_state) or not Net.is_host():
+		return
 	if not res.ok or str(res.data.get("intro", "")) == "":
-		state.error = "Ведущий не ответил: %s. Нажмите «Готов» ещё раз." % res.error
-		state.heroes = {}
+		state.error = "Ведущий не ответил: %s. Хост может нажать «Повторить»." % res.error
 		_set_phase("create")
 		return
 	var d: Dictionary = res.data
@@ -338,6 +355,11 @@ func _make_world() -> void:
 	_actions = {}
 	_save()
 	_set_phase("play")
+
+
+func retry_world() -> void:
+	if Net.is_host() and phase == "create" and _all_have_heroes():
+		_make_world()
 
 
 func _apply_place(p) -> void:
@@ -403,13 +425,17 @@ func _resolve() -> void:
 ## Применяет ответ ведущего: рассказ, изменения, место, сундук, лавка, бой, отдых.
 func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 	_log("gm", "", str(d.story))
-	_apply_changes(d.get("changes", []))
+	if allow_combat:
+		_apply_changes(d.get("changes", []))
 	_apply_place(d.get("place"))
 	if str(d.get("quest", "")) != "":
 		state.campaign.quest = str(d.quest)
 	state.options = _map_options(d.get("options", {}))
 	var rest := str(d.get("rest", ""))
+	if rest == "long" and int(state.turn) - int(state.campaign.get("last_long", -99)) < 6:
+		rest = "short"
 	if rest == "long":
+		state.campaign.last_long = int(state.turn)
 		for n in state.heroes:
 			R.long_rest(state.heroes[n])
 		_log("sys", "", "Долгий отдых: здоровье и заклинания восстановлены.")
@@ -418,7 +444,8 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 			var h: Dictionary = state.heroes[n]
 			var v := R.short_rest(h)
 			_log("sys", h.name, "Короткий отдых: %s восстанавливает %d хитов (%d/%d)." % [h.name, v, h.hp, h.max_hp])
-	if str(d.get("chest", "")) != "":
+	if str(d.get("chest", "")) != "" and int(state.turn) - int(state.campaign.get("last_chest", -99)) >= 2:
+		state.campaign.last_chest = int(state.turn)
 		_open_chest(str(d.chest))
 	if str(d.get("shop", "")) != "":
 		state.shop = {"title": str(d.shop).left(40), "items": R.shop_stock(_tier())}
@@ -445,8 +472,8 @@ func _check(pname: String, kind: String, what: String, dc: int, adv: int, why: S
 			return {}
 		bonus = R.save_bonus(h, a)
 		label = "спасбросок " + a
-	elif R.SKILLS.has(what.capitalize()) or R.SKILLS.has(what):
-		var s := what if R.SKILLS.has(what) else what.capitalize()
+	elif _skill_from(what) != "":
+		var s := _skill_from(what)
 		bonus = R.skill_bonus(h, s)
 		label = s
 	else:
@@ -469,6 +496,14 @@ func _check(pname: String, kind: String, what: String, dc: int, adv: int, why: S
 		"adv": r.adv, "mod": bonus + r.insp, "total": total, "dc": dc, "outcome": outcome, "text": txt}
 
 
+func _skill_from(s: String) -> String:
+	var low := s.to_lower()
+	for k in R.SKILLS:
+		if low.contains(str(k).to_lower()):
+			return k
+	return ""
+
+
 func _ability_from(s: String) -> String:
 	var low := s.to_lower()
 	for a in R.AB:
@@ -482,7 +517,7 @@ func _sgn(v: int) -> String:
 
 
 ## Бросок к20 с преимуществом/помехой, везением полурослика и вдохновением барда.
-func _d20(h: Dictionary, adv: int) -> Dictionary:
+func _d20(h: Dictionary, adv: int, use_insp := true) -> Dictionary:
 	var a := randi_range(1, 20)
 	var lucky := bool(R.RACES.get(h.race, {}).get("lucky", false))
 	if lucky and a == 1:
@@ -495,7 +530,7 @@ func _d20(h: Dictionary, adv: int) -> Dictionary:
 			b = randi_range(1, 20)
 		v = maxi(a, b) if adv > 0 else mini(a, b)
 	var insp := 0
-	if h.get("inspired", false):
+	if use_insp and h.get("inspired", false):
 		insp = randi_range(1, 6)
 		h.inspired = false
 	return {"value": v, "other": b if b < 0 else (b if v == a else a), "adv": adv, "insp": insp}
@@ -514,7 +549,10 @@ func _apply_changes(changes) -> void:
 		var hn := str(h.name)
 		var dhp := clampi(int(c.get("hp", 0)), -20, 30)
 		if dhp < 0:
-			_damage_hero(pname, -dhp, false)
+			var d := mini(-dhp, int(h.hp) - 1)
+			if d > 0:
+				var msg := _damage_hero(pname, d, false)
+				_log("sys", hn, "%s: −%d хитов (%d/%d)%s" % [hn, d, h.hp, h.max_hp, (" " + msg) if msg != "" else ""])
 		elif dhp > 0:
 			_heal_hero(pname, dhp)
 		var dg := clampi(int(c.get("gold", 0)), -1000, 1000)
@@ -554,10 +592,14 @@ func _damage_hero(pname: String, dmg: int, crit: bool) -> String:
 	if h.get("dead", false):
 		return ""
 	if int(h.hp) <= 0:
+		h.stable = false
+		if dmg >= int(h.max_hp):
+			h.dead = true
+			return "%s погибает от страшного удара!" % h.name
 		h.death_f = int(h.death_f) + (2 if crit else 1)
 		if int(h.death_f) >= 3:
 			h.dead = true
-			return "%s получает удар без сознания и погибает!" % h.name
+			return "%s получает удар, лёжа без сознания, и погибает!" % h.name
 		return "%s без сознания: провал спасброска от смерти (%d/3)" % [h.name, h.death_f]
 	var left := int(h.hp) - dmg
 	if left <= 0 and h.get("relentless", false) and left > -int(h.max_hp):
@@ -601,7 +643,10 @@ func _find_item(items: Array, name: String) -> int:
 
 
 func _update_chronicle() -> void:
+	var my_state := state
 	var res: Dictionary = await LLM.chat_json(_chronicle_prompt(), 0.4, 600)
+	if not is_same(state, my_state) or not Net.is_host():
+		return
 	if res.ok and str(res.data.get("chronicle", "")) != "":
 		state.campaign.chronicle = str(res.data.chronicle)
 		_save()
@@ -679,6 +724,15 @@ func _inv(op: String, a: Dictionary) -> void:
 			var it: Dictionary = h.items[idx]
 			var slot := R.item_slot(it)
 			if slot == "":
+				return
+			if in_combat and slot in ["armor", "clothes"]:
+				_log("sys", h.name, "Переодеваться посреди боя некогда.")
+				_broadcast()
+				return
+			var cat := str(R.item_def(it).get("cat", "shield" if slot == "offhand" else ""))
+			if slot in ["armor", "offhand"] and not (cat in R.CLASSES[h.cls].get("armor", [])):
+				_log("sys", h.name, "%s не умеет носить: %s." % [h.name, R.item_name(it)])
+				_broadcast()
 				return
 			h.items.remove_at(idx)
 			if h.equip.get(slot) is Dictionary and not h.equip[slot].is_empty():
@@ -827,7 +881,7 @@ func _start_combat(spec: Array) -> bool:
 		else:
 			base = {"name": str(e.get("name", "Враг")), "ac": clampi(int(e.get("ac", 12)), 8, 20),
 				"hp": clampi(int(e.get("hp", 15)), 3, 150), "atk": clampi(int(e.get("atk", 4)), 1, 10),
-				"dmg": str(e.get("dmg", "1d6+2")), "dex": 1, "xp": clampi(int(e.get("xp", 50)), 10, 3900)}
+				"dmg": _safe_dice(str(e.get("dmg", "1d6+2"))), "dex": 1, "xp": clampi(int(e.get("xp", 50)), 10, 3900)}
 		if str(e.get("name", "")) != "":
 			base.name = str(e.name).left(30)
 		for i in n:
@@ -842,6 +896,7 @@ func _start_combat(spec: Array) -> bool:
 			enemies.append(en)
 	if enemies.is_empty():
 		return false
+	_fit_budget(enemies)
 	for en in enemies:
 		if int(counts[en.base_name]) > 1:
 			var k := 1
@@ -858,7 +913,7 @@ func _start_combat(spec: Array) -> bool:
 		if h.get("dead", false):
 			continue
 		h.temp_ac = 0
-		var r := _d20(h, 0)
+		var r := _d20(h, 0, false)
 		var init: int = r.value + R.amod(h, "ЛОВ")
 		order.append({"k": "h", "id": n, "init": init + 0.1})
 		lines.append("%s %d" % [h.name, init])
@@ -876,6 +931,31 @@ func _start_combat(spec: Array) -> bool:
 
 
 ## Ведёт бой, пока ход не дойдёт до живого игрока (ходы врагов и бессознательных героев — автоматически).
+func _safe_dice(expr: String) -> String:
+	var p := R.parse_dice(expr)
+	return "%dd%d+%d" % [clampi(int(p.n), 1, 4), clampi(int(p.sides), 2, 12), clampi(int(p.bonus), 0, 6)]
+
+
+## Не даём нейронке выставить непосильный бой: урезаем врагов до порога «смертельной» встречи 5e.
+const DEADLY := [100, 200, 400, 500, 1100, 1400, 1700, 2100, 2400, 2800]
+
+
+func _fit_budget(enemies: Array) -> void:
+	var lv := 0
+	for n in state.heroes:
+		lv += int(state.heroes[n].level)
+	lv = clampi(roundi(float(lv) / maxf(1.0, state.heroes.size())), 1, 10)
+	var budget := int(DEADLY[lv - 1] * maxi(1, state.heroes.size()))
+	while enemies.size() > 1:
+		var total := 0
+		for en in enemies:
+			total += int(en.xp)
+		var mult := 1.0 if enemies.size() == 1 else (1.5 if enemies.size() == 2 else 2.0)
+		if total * mult <= budget:
+			break
+		enemies.pop_back()
+
+
 func _combat_continue() -> void:
 	if _busy or phase != "combat":
 		return
@@ -888,7 +968,7 @@ func _combat_continue() -> void:
 		if o.k == "e":
 			var en: Dictionary = c.enemies[int(o.id)]
 			if not en.dead:
-				await get_tree().create_timer(0.9).timeout
+				await _wait_rolls(700)
 				if not Net.is_host() or phase != "combat":
 					break
 				_enemy_turn(int(o.id))
@@ -904,15 +984,18 @@ func _combat_continue() -> void:
 		c.sneak.erase(pname)
 		if int(h.hp) <= 0:
 			if not h.get("stable", false):
-				await get_tree().create_timer(0.6).timeout
+				await _wait_rolls(400)
 				_death_save(pname)
 				_broadcast()
-				await get_tree().create_timer(1.6).timeout
+				if int(h.hp) > 0 and pname in Net.players.values():
+					break   # 20 на спасброске: встаёт и сразу ходит
 			_next_turn()
 			continue
 		if not (pname in Net.players.values()):
-			c.dodge[pname] = true
-			_log("cbt", h.name, "%s держит оборону." % h.name)
+			await _wait_rolls(300)
+			_log("cbt", h.name, "%s сражается сам, пока напарник не вернётся." % h.name)
+			_hero_attack(pname, -1)
+			_broadcast()
 			_next_turn()
 			continue
 		_broadcast()   # ждём действие игрока
@@ -959,8 +1042,12 @@ func _enemy_turn(i: int) -> void:
 	var c: Dictionary = state.combat
 	var en: Dictionary = c.enemies[i]
 	if en.asleep:
-		_log("cbt", "", "%s спит." % en.name)
-		return
+		if int(c.round) >= int(en.get("wake_round", 0)):
+			en.asleep = false
+			_log("cbt", "", "%s просыпается!" % en.name)
+		else:
+			_log("cbt", "", "%s спит." % en.name)
+			return
 	var targets := _conscious_heroes()
 	if targets.is_empty():
 		for n in state.heroes:
@@ -976,6 +1063,12 @@ func _enemy_turn(i: int) -> void:
 	var h: Dictionary = state.heroes[target]
 	var rolls := []
 	for k in int(en.get("multi", 1)):
+		if k > 0 and (int(h.hp) <= 0 or h.get("dead", false)):
+			var alive := _conscious_heroes()
+			if alive.is_empty():
+				break
+			target = alive[randi() % alive.size()]
+			h = state.heroes[target]
 		if h.get("dead", false):
 			break
 		var adv := -1 if c.dodge.get(target, false) else 0
@@ -1002,7 +1095,7 @@ func _enemy_turn(i: int) -> void:
 		else:
 			line += "промах."
 		_log("cbt", en.name, line)
-		rolls.append({"label": "%s → %s" % [en.name, h.name], "d20": v, "d20b": -1 if adv == 0 else (b if v == a else a),
+		rolls.append({"label": "%s ⚔ %s" % [en.name, h.name], "d20": v, "d20b": -1 if adv == 0 else (b if v == a else a),
 			"adv": adv, "mod": int(en.atk), "total": total, "dc": hac, "outcome": outcome})
 	_show_rolls(rolls)
 
@@ -1051,10 +1144,13 @@ func _combat_check_end() -> bool:
 	var c: Dictionary = state.combat
 	if c.is_empty():
 		return true
+	if int(c.round) > 30:
+		c.fled = true   # затянувшийся бой: враги отступают
 	var won := _alive_enemies().is_empty()
 	var lost := _conscious_heroes().is_empty()
 	if not won and not lost and not c.get("fled", false):
 		return false
+	await _wait_rolls(300)
 	await _end_combat("won" if won else ("fled" if c.get("fled", false) else "lost"))
 	return true
 
@@ -1207,11 +1303,12 @@ func _hit_enemy(i: int, dmg: int, src: String) -> String:
 	if int(en.hp) <= 0:
 		en.hp = 0
 		en.dead = true
-		return "%s повержен%s!" % [en.name, "" if src == "" else " (" + src + ")"]
+		return "%s пал%s!" % [en.name, "" if src == "" else " (" + src + ")"]
 	return "(%s: %d/%d)" % [en.name, en.hp, en.max_hp]
 
 
 func _hero_attack(pname: String, target: int) -> bool:
+	_last_target[pname] = target
 	var h: Dictionary = state.heroes[pname]
 	var c: Dictionary = state.combat
 	var info := R.attack_info(h)
@@ -1225,7 +1322,7 @@ func _hero_attack(pname: String, target: int) -> bool:
 		var r := _d20(h, adv)
 		var total: int = r.value + int(info.atk) + r.insp
 		var hit: bool = (total >= int(en.ac) or r.value == 20) and r.value != 1
-		var crit: bool = r.value == 20 or (hit and en.asleep)
+		var crit: bool = r.value == 20 or (hit and en.asleep and not info.ranged)
 		var line := "%s бьёт %s (%s): %d против КД %d — " % [h.name, en.name, info.name, total, en.ac]
 		var outcome := "промах"
 		if hit:
@@ -1242,7 +1339,7 @@ func _hero_attack(pname: String, target: int) -> bool:
 		else:
 			line += "промах."
 		_log("cbt", h.name, line)
-		rolls.append({"label": "%s → %s" % [h.name, en.name], "d20": r.value, "d20b": r.other, "adv": r.adv,
+		rolls.append({"label": "%s ⚔ %s" % [h.name, en.name], "d20": r.value, "d20b": r.other, "adv": r.adv,
 			"mod": int(info.atk) + r.insp, "total": total, "dc": int(en.ac), "outcome": outcome})
 	_show_rolls(rolls)
 	return true
@@ -1307,7 +1404,9 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				if ti < 0:
 					continue
 				var en: Dictionary = c.enemies[ti]
-				var sv := randi_range(1, 20) + int(en.get("dex", 0))
+				var sv := randi_range(1, 20) + _msave(en, str(sp.save))
+				if en.asleep and str(sp.save) in ["ЛОВ", "СИЛ"]:
+					sv = 0
 				var dmg := _roll_damage(dice, false)
 				var saved := sv >= sdc
 				if saved:
@@ -1342,8 +1441,11 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				var en: Dictionary = c.enemies[ti]
 				if en.asleep or int(en.hp) > pool:
 					continue
+				if en.get("undead", false):
+					continue
 				pool -= int(en.hp)
 				en.asleep = true
+				en.wake_round = int(c.round) + 10
 				slept.append(en.name)
 			_log("cbt", h.name, "%s: %s" % [head, ("засыпают: " + ", ".join(slept)) if slept.size() > 0 else "никто не уснул."])
 	if rolls.size() > 0:
@@ -1352,54 +1454,74 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 
 
 ## Свободное действие в бою: нейронка решает, какую проверку бросить и что будет при успехе.
+func _b(v) -> bool:
+	return v == true or str(v).to_lower() in ["true", "1", "да"]
+
+
+func _msave(en: Dictionary, a: String) -> int:
+	var sv = en.get("saves", {})
+	if sv is Dictionary and sv.has(a):
+		return int(sv[a])
+	return int(en.get("dex", 0)) if a == "ЛОВ" else 0
+
+
 func _hero_free(pname: String, text: String) -> void:
 	var h: Dictionary = state.heroes[pname]
 	_log("act", h.name, text)
+	state.combat.wait = true
 	_broadcast()
 	var res: Dictionary = await LLM.chat_json(_free_combat_prompt(pname, text), 0.5, 400)
+	if state.combat.is_empty():
+		return
+	state.combat.erase("wait")
 	if not res.ok:
 		_log("cbt", h.name, "Ведущий не понял затею, %s теряет ход." % h.name)
 		return
 	var d: Dictionary = res.data
-	var success := true
 	var chk = d.get("check")
-	if chk is Dictionary and str(chk.get("name", "")) != "":
-		var r := _check(pname, str(chk.get("kind", "skill")), str(chk.name), int(chk.get("dc", 12)), int(chk.get("adv", 0)), "затея")
-		if not r.is_empty():
-			_show_rolls([r])
-			_log("roll", h.name, r.text)
-			success = r.outcome.contains("успех")
+	if not (chk is Dictionary) or str(chk.get("name", "")) == "":
+		chk = {"kind": "skill", "name": "Атлетика", "dc": 13}
+	var success := false
+	var r := _check(pname, str(chk.get("kind", "skill")), str(chk.name), clampi(int(chk.get("dc", 13)), 10, 20), int(chk.get("adv", 0)), "затея")
+	if r.is_empty():
+		r = _check(pname, "skill", "Атлетика", 13, 0, "затея")
+	_show_rolls([r])
+	_log("roll", h.name, r.text)
+	success = r.outcome.contains("успех")
 	var txt := str(d.get("success" if success else "fail", ""))
 	if txt != "":
 		_log("gm", "", txt)
-	if success:
-		var eff = d.get("effect", {})
-		if eff is Dictionary:
-			var dmg_expr := str(eff.get("damage", ""))
-			if dmg_expr != "":
-				var targets: Array = []
-				if eff.get("all", false):
-					targets = _alive_enemies()
-				else:
-					var name := str(eff.get("target", "")).to_lower()
-					for i in _alive_enemies():
-						if str(state.combat.enemies[i].name).to_lower().contains(name) and name != "":
-							targets = [i]
-							break
-					if targets.is_empty():
-						targets = [_target_enemy(-1)]
-				var p := R.parse_dice(dmg_expr)
-				var safe_expr := "%dd%d+%d" % [mini(p.n, 4), mini(p.sides, 10), clampi(p.bonus, 0, 5)]
-				for ti in targets:
-					if ti >= 0:
-						var dmg := R.roll(safe_expr)
-						_log("cbt", h.name, "%d урона по %s. %s" % [dmg, state.combat.enemies[ti].name, _hit_enemy(ti, dmg, "")])
-			if eff.get("sleep", false):
-				var ti := _target_enemy(-1)
-				if ti >= 0:
-					state.combat.enemies[ti].asleep = true
-			if eff.get("end_combat", false):
-				state.combat.fled = true
+	if not success:
+		return
+	var eff = d.get("effect", {})
+	if not (eff is Dictionary):
+		return
+	var t := _tier()
+	var named := -1
+	var tname := str(eff.get("target", "")).to_lower()
+	for i in _alive_enemies():
+		if tname != "" and str(state.combat.enemies[i].name).to_lower().contains(tname):
+			named = i
+			break
+	if named < 0:
+		named = _target_enemy(_last_target.get(pname, -1))
+	var dmg_expr := str(eff.get("damage", ""))
+	if dmg_expr != "" and named >= 0:
+		var p := R.parse_dice(dmg_expr)
+		var all := _b(eff.get("all"))
+		var n := clampi(int(p.n), 1, 1 + t)
+		var safe_expr := ("%dd6" % n) if all else ("%dd8+%d" % [n, clampi(int(p.bonus), 0, 3)])
+		for ti in (_alive_enemies() if all else [named]):
+			var dmg := R.roll(safe_expr)
+			_log("cbt", h.name, "%d урона по %s. %s" % [dmg, state.combat.enemies[ti].name, _hit_enemy(ti, dmg, "")])
+	if _b(eff.get("sleep")) and named >= 0:
+		var en: Dictionary = state.combat.enemies[named]
+		if not en.dead and int(en.max_hp) <= 10 + 10 * t and not en.get("undead", false):
+			en.asleep = true
+			en.wake_round = int(state.combat.round) + 1
+			_log("cbt", h.name, "%s обездвижен на раунд." % en.name)
+	if _b(eff.get("end_combat")):
+		state.combat.fled = true
 
 
 # ---------- промпты ----------
@@ -1412,7 +1534,8 @@ const GM_RULES := """Ты ведущий настольной ролевой и�
 - Чередуй: разговоры с персонажами, загадки, исследование, ловушки, сундуки и тайники, бои, торговля, смешные и трогательные моменты.
 - Механику (броски, урон в бою, лут сундуков, цены в лавке) считает игра. Ты только описываешь и сообщаешь игре события через поля JSON.
 - Двигай главный квест: каждые несколько ходов — новая зацепка, поворот, встреча. Кампания длинная, глав много.
-- Без жестокости ради жестокости и откровенных сцен."""
+- Без жестокости ради жестокости и откровенных сцен.
+- Прямую речь пиши через тире или в «ёлочках»; символ " внутри текстов не используй, иначе JSON сломается."""
 
 
 func _heroes_text() -> String:
@@ -1438,6 +1561,13 @@ func _heroes_text() -> String:
 			h.name, h.race, h.cls, h.level, h.about if str(h.about) != "" else "без описания", h.hp, h.max_hp, R.ac(h), h.gold,
 			", ".join(sc), ", ".join(h.skills), R.CLASSES[h.cls].features, ", ".join(eq), ", ".join(bag) if bag.size() > 0 else "пусто", status])
 	return "\n".join(lines)
+
+
+func _names_rule() -> String:
+	var names := []
+	for n in state.heroes:
+		names.append(str(state.heroes[n].name))
+	return "\nПоле who и ключи options — строго имена героев: " + ", ".join(names) + "."
 
 
 func _campaign_text() -> String:
@@ -1474,7 +1604,7 @@ const NARRATE_FORMAT := """Ответь строго JSON без markdown:
 - place: {"name": "название", "type": "тип"} только если герои пришли в новое место или вернулись в известное, иначе null. Типы: village, city, tavern, forest, road, cave, dungeon, castle, ruins, swamp, mountain, lake, camp, temple, tower, field, sea, port.
 - chest: короткое название, если герои открыли сундук, тайник или нашли клад (содержимое выдаст игра), иначе "".
 - shop: имя торговца, если герои пришли торговать к лавке/рынку/кузнецу, иначе "".
-- combat: если начинается бой, список врагов [{"id": "goblin", "count": 2, "name": "Гоблин-разбойник"}], id из списка монстров; можно своего: {"name": "...", "hp": 20, "ac": 13, "atk": 4, "dmg": "1d8+2", "xp": 100}. Бой — не каждый ход, примерно каждые 3-5 ходов, когда это оправдано сюжетом. Сила врагов по уровню героев: на 1-2 уровне 1-4 слабых врага (25-50 опыта каждый), дальше сильнее.
+- combat: если начинается бой, в story опиши только появление врагов, без ударов и исхода (бой отыграет игра). Если начинается бой, список врагов [{"id": "goblin", "count": 2, "name": "Гоблин-разбойник"}], id из списка монстров; можно своего: {"name": "...", "hp": 20, "ac": 13, "atk": 4, "dmg": "1d8+2", "xp": 100}. Бой — не каждый ход, примерно каждые 3-5 ходов, когда это оправдано сюжетом. Сила врагов по уровню героев: на 1-2 уровне 1-4 слабых врага (25-50 опыта каждый), дальше сильнее.
 - rest: "short" если герои отдыхают час, "long" если ночуют в безопасном месте, иначе ""."""
 
 
@@ -1485,7 +1615,7 @@ func _world_prompt() -> Array:
 Ответь строго JSON без markdown:
 {"title": "название кампании, 2-4 слова", "world": "мир в 3-4 предложениях: место, главная беда, важные силы", "quest": "главная цель героев, 1 предложение", "place": {"name": "название места первой сцены", "type": "тип"}, "intro": "вступление 5-8 предложений: как герои оказались вместе и что происходит прямо сейчас, закончи вопросом, что они делают", "options": {"Имя героя": ["вариант действия", "вариант", "вариант"]}}
 Типы мест: village, city, tavern, forest, road, cave, dungeon, castle, ruins, swamp, mountain, lake, camp, temple, tower, field, sea, port.
-В options ключи — имена героев, по три коротких варианта (до 8 слов) для каждого, разные и в духе его класса."""
+В options ключи — имена героев, по три коротких варианта (до 8 слов) для каждого, разные и в духе его класса.""" + _names_rule()
 	var user := "Сеттинг: %s\nПожелания игроков: %s\nГерои:\n%s" % [c.get("setting", SETTINGS[0]),
 		c.get("wishes", "") if str(c.get("wishes", "")) != "" else "нет", _heroes_text()]
 	return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
@@ -1499,7 +1629,7 @@ kind: "skill" (навык), "save" (спасбросок от ловушки, я
 Характеристики (для save и ability): СИЛ, ЛОВ, ТЕЛ, ИНТ, МДР, ХАР.
 Сложность dc: 5 очень легко, 10 легко, 15 средне, 20 трудно, 25 почти невозможно.
 adv: 1 преимущество (герою помогают, у него отличные условия), -1 помеха (темнота, ранен, спешка), иначе 0.
-Ответь строго JSON: {"checks": [{"who": "имя героя", "kind": "skill", "name": "Скрытность", "dc": 12, "adv": 0, "why": "2-4 слова"}]} или {"checks": []}."""
+Ответь строго JSON: {"checks": [{"who": "имя героя", "kind": "skill", "name": "Скрытность", "dc": 12, "adv": 0, "why": "2-4 слова"}]} или {"checks": []}.""" + _names_rule()
 	var user := "%s\nГерои:\n%s\n\nНедавние события:\n%s\n\nДействия сейчас:\n%s" % [
 		_campaign_text(), _heroes_text(), _recent_log(6), _acts_text(acts)]
 	return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
@@ -1508,10 +1638,10 @@ adv: 1 преимущество (герою помогают, у него отл
 func _narrate_prompt(acts_text: String, rolls: Array, combat_result: String) -> Array:
 	var sys := GM_RULES + "\n"
 	if combat_result != "":
-		sys += "Только что закончился бой. Опиши, чем он завершился и что герои видят после (добычу уже выдала игра, бой не начинай снова).\n"
+		sys += "Только что закончился бой. Опиши, чем он завершился и что герои видят после. Добычу и опыт уже выдала игра: changes оставь пустым, бой не начинай снова.\n"
 	else:
 		sys += "Расскажи, что произошло после действий героев. Результаты бросков уже посчитаны игрой, строго следуй им: успех — получилось, провал — не вышло или вышло с неприятностью, критический успех — блестяще с бонусом, критический провал — смешная или опасная неудача.\n"
-	sys += NARRATE_FORMAT + "\nКаталог предметов (id=название): " + R.catalog_text() + "\nМонстры (id=название): " + R.monsters_text()
+	sys += NARRATE_FORMAT + _names_rule() + "\nКаталог предметов (id=название): " + R.catalog_text() + "\nМонстры (id=название): " + R.monsters_text()
 	var rl := []
 	for r in rolls:
 		rl.append("%s: %s" % [r.hero, r.text])
@@ -1531,7 +1661,10 @@ func _free_combat_prompt(pname: String, text: String) -> Array:
 		foes.append("%s (%d/%d хитов)" % [en.name, en.hp, en.max_hp])
 	var sys := GM_RULES + """
 Идёт пошаговый бой. Герой делает необычное действие. Реши: нужна ли проверка (обычно да), что будет при успехе и при провале. Эффект при успехе умеренный: урон до 3d8 одному врагу, или до 2d6 всем, или усыпить/обездвижить одного врага (sleep), или позволить всем сбежать (end_combat). Провал — без эффекта или с мелкой неприятностью.
-Ответь строго JSON: {"check": {"kind": "skill", "name": "Атлетика", "dc": 13, "adv": 0} или null, "effect": {"damage": "2d6", "target": "имя врага", "all": false, "sleep": false, "end_combat": false}, "success": "1-2 предложения, если получилось", "fail": "1-2 предложения, если нет"}"""
+Проверка нужна всегда. Ответь строго JSON, например:
+{"check": {"kind": "skill", "name": "Атлетика", "dc": 13, "adv": 0}, "effect": {"damage": "2d6", "target": "имя врага", "all": false, "sleep": false, "end_combat": false}, "success": "1-2 предложения, если получилось", "fail": "1-2 предложения, если нет"}
+или без урона:
+{"check": {"kind": "save", "name": "ЛОВ", "dc": 12, "adv": 0}, "effect": {"damage": "", "target": "имя врага", "all": false, "sleep": true, "end_combat": false}, "success": "...", "fail": "..."}"""
 	var user := "%s\nГерой: %s\nВраги: %s\nНедавно: %s\nДействие героя %s: %s" % [_campaign_text(), _heroes_text(), ", ".join(foes), _combat_recap(), h.name, text]
 	return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 

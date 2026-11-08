@@ -59,7 +59,7 @@ func chat(messages: Array, temperature := 0.9, max_tokens := 600, retries := 3) 
 
 	for attempt in range(retries + 1):
 		var http := HTTPRequest.new()
-		http.timeout = 45.0
+		http.timeout = 40.0
 		add_child(http)
 		var err := http.request(API_URL, headers, HTTPClient.METHOD_POST, body)
 		if err != OK:
@@ -97,13 +97,21 @@ func chat(messages: Array, temperature := 0.9, max_tokens := 600, retries := 3) 
 ## Если ответ не разобрался, пробует ещё раз.
 func chat_json(messages: Array, temperature := 0.9, max_tokens := 600) -> Dictionary:
 	var last_err := ""
+	var t0 := Time.get_ticks_msec()
 	for attempt in 3:
-		var res: Dictionary = await chat(messages, temperature, max_tokens)
+		if attempt > 0 and Time.get_ticks_msec() - t0 > 60000:
+			break
+		var res: Dictionary = await chat(messages, temperature, max_tokens, 1 if attempt > 0 else 2)
 		if not res.ok:
 			return {"ok": false, "data": {}, "error": res.error}
 		var d = parse_json_object(res.text)
 		if d is Dictionary:
 			return {"ok": true, "data": d, "error": ""}
+		# частая поломка — кавычки внутри рассказа; спасаем хотя бы сам рассказ
+		var rx := RegEx.create_from_string("\"story\"\\s*:\\s*\"([\\s\\S]*?)\"\\s*,\\s*\"(changes|options|place)\"")
+		var m := rx.search(res.text)
+		if m and attempt == 2:
+			return {"ok": true, "data": {"story": m.get_string(1).replace("\\n", "\n")}, "error": ""}
 		last_err = "нейронка ответила не в том формате"
 	return {"ok": false, "data": {}, "error": last_err}
 
