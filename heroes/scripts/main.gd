@@ -129,7 +129,7 @@ func _screen_key() -> String:
 	if not Net.is_host() and not Net.players.has(Net.my_id()):
 		return "connecting"
 	var p := Game.phase
-	if p in ["play", "thinking", "combat"]:
+	if p in ["play", "thinking", "combat", "roll"]:
 		return "game"
 	if p == "create":
 		return "create_done" if not Game.my_hero().is_empty() else "create"
