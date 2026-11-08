@@ -158,9 +158,12 @@ func _mock_reply(messages: Array) -> String:
 		d.combat = [{"id": "goblin", "count": 2}]
 		d.story = "Из кустов выскакивают гоблины!"
 	elif turn == 1:
+		d.quests = [{"title": "Найти пропавшую козу", "note": "Бабка Агафья просила поискать у реки", "status": "new"}]
+		d.npcs = [{"name": "Бабка Агафья", "note": "Старушка с козой, знает все слухи"}]
 		d.chest = "Старый сундук"
 		d.place = {"name": "Тёмный лес", "type": "forest"}
 	elif turn == 2:
 		d.shop = "Кузнец Михей"
 		d.changes = [{"who": names[0] if names.size() > 0 else "", "xp": 120, "gold": 5, "add": ["potion_heal"]}]
+		d.quests = [{"title": "Найти пропавшую козу", "status": "done"}]
 	return JSON.stringify(d)

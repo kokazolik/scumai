@@ -433,6 +433,7 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 	_apply_place(d.get("place"))
 	if str(d.get("quest", "")) != "":
 		state.campaign.quest = str(d.quest)
+	_apply_journal(d)
 	state.options = _map_options(d.get("options", {}))
 	var rest := str(d.get("rest", ""))
 	if rest == "long" and int(state.turn) - int(state.campaign.get("last_long", -99)) < 6:
@@ -461,6 +462,71 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 	_set_phase("play")
 	if int(state.turn) % 8 == 0:
 		_update_chronicle()
+
+
+## Дневник: задания и знакомые персонажи из ответа ведущего.
+func _apply_journal(d: Dictionary) -> void:
+	var c: Dictionary = state.campaign
+	if not c.has("quests"):
+		c.quests = []
+	if not c.has("npcs"):
+		c.npcs = []
+	var qs = d.get("quests", [])
+	if qs is Array:
+		for q in qs:
+			if not (q is Dictionary):
+				continue
+			var title := str(q.get("title", "")).strip_edges().left(60)
+			if title == "":
+				continue
+			var st := str(q.get("status", "new"))
+			var found: Dictionary = {}
+			for e in c.quests:
+				if str(e.t).to_lower() == title.to_lower():
+					found = e
+			if found.is_empty():
+				if st in ["done", "failed"]:
+					continue
+				found = {"t": title, "d": str(q.get("note", "")).left(200), "s": "active", "turn": int(state.turn)}
+				c.quests.append(found)
+				_log("quest", "", "Новое задание: %s" % title)
+			else:
+				if str(q.get("note", "")) != "":
+					found.d = str(q.note).left(200)
+				if st == "done" and found.s == "active":
+					found.s = "done"
+					_log("quest", "", "Задание выполнено: %s" % title)
+				elif st == "failed" and found.s == "active":
+					found.s = "failed"
+					_log("quest", "", "Задание провалено: %s" % title)
+	var ns = d.get("npcs", [])
+	if ns is Array:
+		for n in ns:
+			if not (n is Dictionary):
+				continue
+			var nm := str(n.get("name", "")).strip_edges().left(40)
+			if nm == "":
+				continue
+			var known := false
+			for e in c.npcs:
+				if str(e.n).to_lower() == nm.to_lower():
+					known = true
+					if str(n.get("note", "")) != "":
+						e.d = str(n.note).left(160)
+			if not known and c.npcs.size() < 40:
+				c.npcs.append({"n": nm, "d": str(n.get("note", "")).left(160)})
+
+
+func _journal_text() -> String:
+	var c: Dictionary = state.campaign
+	var act := []
+	for q in c.get("quests", []):
+		if q.s == "active":
+			act.append("%s (%s)" % [q.t, q.d])
+	var who := []
+	for n in c.get("npcs", []).slice(-12):
+		who.append("%s — %s" % [n.n, n.d])
+	return "\nАктивные задания: %s\nЗнакомые персонажи: %s" % ["; ".join(act) if act.size() > 0 else "нет", "; ".join(who) if who.size() > 0 else "нет"]
 
 
 ## Готовит проверку, которую игрок бросит сам: показываем сложность, ждём нажатия «Бросить».
@@ -796,6 +862,11 @@ func _inv(op: String, a: Dictionary) -> void:
 	var idx := int(a.get("idx", -1))
 	var in_combat := phase == "combat"
 	match op:
+		"choose":
+			var txt := R.apply_choice(h, str(a.get("pick", "")))
+			if txt != "":
+				_log("lvl", h.name, txt)
+				_save()
 		"equip":
 			if idx < 0 or idx >= h.items.size():
 				return
@@ -914,7 +985,7 @@ func _use_consumable(pname: String, idx: int, target: String) -> String:
 		target = pname
 	if d.type == "potion":
 		h.items.remove_at(idx)
-		var v := R.roll(str(d.heal))
+		var v := R.roll(str(d.heal)) + R.talent_sum(h, "heal")
 		_log("sys", h.name, "%s выпивает %s%s." % [h.name, R.item_name(it), "" if target == pname else " и поит " + str(state.heroes[target].name)])
 		_heal_hero(target, v)
 		return "potion"
@@ -922,7 +993,7 @@ func _use_consumable(pname: String, idx: int, target: String) -> String:
 		var sp: Dictionary = R.SPELLS[str(d.spell)]
 		if sp.kind == "heal" and phase != "combat":
 			h.items.remove_at(idx)
-			_heal_hero(target, R.roll(str(sp.dmg)) + 3)
+			_heal_hero(target, R.roll(str(sp.dmg)) + 3 + R.talent_sum(h, "heal"))
 			return "scroll"
 	return ""
 
@@ -942,7 +1013,7 @@ func _cast_outside(pname: String, spell: String, target: String) -> void:
 	var targets: Array = state.heroes.keys() if sp.get("all", false) else [target if state.heroes.has(target) else pname]
 	_log("sys", h.name, "%s читает «%s»." % [h.name, sp.name])
 	for t in targets:
-		_heal_hero(t, R.roll(str(sp.dmg)) + R.caster_mod(h) + maxi(0, slot - int(sp.lvl)) * R.parse_dice(str(sp.dmg)).sides / 2)
+		_heal_hero(t, R.roll(str(sp.dmg)) + R.caster_mod(h) + R.talent_sum(h, "heal") + maxi(0, slot - int(sp.lvl)) * R.parse_dice(str(sp.dmg)).sides / 2)
 
 
 # ---------- бой ----------
@@ -973,6 +1044,9 @@ func _start_combat(spec: Array) -> bool:
 			en.dead = false
 			counts[en.name] = int(counts.get(en.name, 0)) + 1
 			en.base_name = en.name
+			# каждый второй гоблин/кобольд/бандит — стрелок в тылу
+			en.ranged = bool(base.get("bow", false)) and counts[en.name] % 2 == 0
+			en.pos = "back" if en.ranged else "front"
 			enemies.append(en)
 	if enemies.is_empty():
 		return false
@@ -994,7 +1068,7 @@ func _start_combat(spec: Array) -> bool:
 			continue
 		h.temp_ac = 0
 		var r := _d20(h, 0, false)
-		var init: int = r.value + R.amod(h, "ЛОВ")
+		var init: int = r.value + R.amod(h, "ЛОВ") + R.talent_sum(h, "init")
 		order.append({"k": "h", "id": n, "init": init + 0.1})
 		lines.append("%s %d" % [h.name, init])
 	for i in enemies.size():
@@ -1002,7 +1076,11 @@ func _start_combat(spec: Array) -> bool:
 		order.append({"k": "e", "id": i, "init": init})
 		lines.append("%s %d" % [enemies[i].name, init])
 	order.sort_custom(func(a, b): return float(a.init) > float(b.init))
-	state.combat = {"round": 1, "turn": 0, "order": order, "enemies": enemies, "dodge": {}, "sneak": {}}
+	var pos := {}
+	for n in state.heroes:
+		var hh: Dictionary = state.heroes[n]
+		pos[n] = "back" if (hh.cls in ["Маг", "Бард", "Следопыт"] or R.attack_info(hh).ranged) else "front"
+	state.combat = {"round": 1, "turn": 0, "order": order, "enemies": enemies, "dodge": {}, "sneak": {}, "pos": pos, "moved": {}}
 	state.pending = []
 	_log("cbt", "", "Бой! Инициатива: " + ", ".join(lines) + ".")
 	_set_phase("combat")
@@ -1088,9 +1166,46 @@ func _next_turn() -> void:
 	if c.is_empty():
 		return
 	c.turn = int(c.turn) + 1
+	c.moved = {}
 	if int(c.turn) >= c.order.size():
 		c.turn = 0
 		c.round = int(c.round) + 1
+
+
+func hero_pos(pname: String) -> String:
+	return str(state.combat.get("pos", {}).get(pname, "front"))
+
+
+func _front_enemies() -> Array:
+	var out := []
+	for i in _alive_enemies():
+		if str(state.combat.enemies[i].get("pos", "front")) == "front":
+			out.append(i)
+	return out
+
+
+## Один удар врага по конкретному герою (удар вдогонку при отходе).
+func _enemy_strike(i: int, target: String) -> void:
+	var en: Dictionary = state.combat.enemies[i]
+	var h: Dictionary = state.heroes[target]
+	var v := randi_range(1, 20)
+	var total := v + int(en.atk)
+	var hac := R.ac(h)
+	var hit := (total >= hac or v == 20) and v != 1
+	var line := "%s атакует %s вдогонку: %d против КД %d — " % [en.name, h.name, total, hac]
+	var dealt := -1
+	if hit:
+		var dmg := _roll_damage(str(en.dmg), v == 20)
+		dealt = dmg
+		line += "попадание, %d урона." % dmg
+		var extra := _damage_hero(target, dmg, v == 20)
+		if extra != "":
+			line += " " + extra
+	else:
+		line += "промах."
+	_log("cbt", en.name, line)
+	_show_rolls([{"label": "%s ⚔ %s" % [en.name, h.name], "d20": v, "d20b": -1, "adv": 0, "mod": int(en.atk),
+		"total": total, "dc": hac, "outcome": "попадание" if hit else "промах", "kind": "enemy", "dmg": dealt, "target": target}])
 
 
 func _alive_enemies() -> Array:
@@ -1135,6 +1250,14 @@ func _enemy_turn(i: int) -> void:
 				targets.append(n)
 	if targets.is_empty():
 		return
+	# ближний бой: сначала те, кто впереди; тыл достижим, только если передняя линия пала
+	if not en.get("ranged", false):
+		var front := []
+		for n in targets:
+			if hero_pos(n) == "front":
+				front.append(n)
+		if not front.is_empty():
+			targets = front
 	var target: String = targets[randi() % targets.size()]
 	if randf() < 0.35:
 		for n in targets:
@@ -1159,6 +1282,8 @@ func _enemy_turn(i: int) -> void:
 		var v := a if adv == 0 else (maxi(a, b) if adv > 0 else mini(a, b))
 		var total := v + int(en.atk)
 		var hac := R.ac(h)
+		if en.get("ranged", false) and hero_pos(target) == "back":
+			hac += 2  # укрытие в тылу против стрел
 		var hit := (total >= hac or v == 20) and v != 1
 		var crit := v == 20 or (hit and int(h.hp) <= 0)
 		var line := "%s атакует %s: %d против КД %d — " % [en.name, h.name, total, hac]
@@ -1336,6 +1461,32 @@ func _cact(a: Dictionary) -> void:
 					h.items.remove_at(idx)
 			else:
 				ok = _use_consumable(pname, idx, str(a.get("target", pname))) != ""
+		"move":
+			if c.moved.get(pname, false):
+				return
+			c.moved[pname] = true
+			var to := "back" if hero_pos(pname) == "front" else "front"
+			c.pos[pname] = to
+			if to == "back":
+				_log("cbt", h.name, "%s отходит в тыл." % h.name)
+				var fe: Array = _front_enemies()
+				var ready := []
+				for i in fe:
+					if not c.enemies[i].asleep and not c.enemies[i].get("ranged", false):
+						ready.append(i)
+				if ready.size() > 0:
+					var ei: int = ready[randi() % ready.size()]
+					_log("cbt", "", "%s бьёт вдогонку!" % c.enemies[ei].name)
+					_enemy_strike(ei, pname)
+					if int(h.hp) <= 0:
+						_next_turn()
+						_broadcast()
+						_combat_continue()
+						return
+			else:
+				_log("cbt", h.name, "%s выходит вперёд." % h.name)
+			_broadcast()
+			return
 		"dodge":
 			c.dodge[pname] = true
 			_log("cbt", h.name, "%s уходит в глухую оборону (враги атакуют с помехой)." % h.name)
@@ -1396,16 +1547,25 @@ func _hero_attack(pname: String, target: int) -> bool:
 	var c: Dictionary = state.combat
 	var info := R.attack_info(h)
 	var rolls := []
+	if not info.ranged and hero_pos(pname) != "front":
+		c.pos[pname] = "front"
+		_log("cbt", h.name, "%s выходит вперёд." % h.name)
 	for k in int(info.attacks):
 		var ti := _target_enemy(target)
 		if ti < 0:
 			break
+		if not info.ranged and c.enemies[ti].get("pos", "front") == "back" and _front_enemies().size() > 0:
+			var fe: Array = _front_enemies()
+			_log("cbt", h.name, "%s прикрыт: до него не добраться, пока впереди стоят враги." % c.enemies[ti].name)
+			ti = fe[0]
 		var en: Dictionary = c.enemies[ti]
 		var adv := 1 if en.asleep else 0
-		var r := _d20(h, adv)
+		if info.ranged and hero_pos(pname) == "front" and _front_enemies().size() > 0:
+			adv -= 1  # стрелять в упор неудобно
+		var r := _d20(h, clampi(adv, -1, 1))
 		var total: int = r.value + int(info.atk) + r.insp
 		var hit: bool = (total >= int(en.ac) or r.value == 20) and r.value != 1
-		var crit: bool = r.value == 20 or (hit and en.asleep and not info.ranged)
+		var crit: bool = (hit and r.value >= int(info.get("crit", 20))) or (hit and en.asleep and not info.ranged)
 		var line := "%s бьёт %s (%s): %d против КД %d — " % [h.name, en.name, info.name, total, en.ac]
 		var outcome := "промах"
 		var dealt := -1
@@ -1414,7 +1574,7 @@ func _hero_attack(pname: String, target: int) -> bool:
 			var sneak := ""
 			if h.cls == "Плут" and info.fin and not c.sneak.get(pname, false) and (_conscious_heroes().size() > 1 or adv > 0):
 				c.sneak[pname] = true
-				var sd := _roll_damage("%dd6" % ceili(int(h.level) / 2.0), crit)
+				var sd := _roll_damage("%dd6" % (ceili(int(h.level) / 2.0) + R.talent_sum(h, "sneak_dice")), crit)
 				dmg += sd
 				sneak = " + скрытая атака"
 			dmg = maxi(1, dmg)
@@ -1464,14 +1624,17 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				if ti < 0:
 					break
 				var en: Dictionary = c.enemies[ti]
-				var r := _d20(h, 1 if en.asleep else 0)
+				var sadv := 1 if en.asleep else 0
+				if hero_pos(pname) == "front" and _front_enemies().size() > 0:
+					sadv -= 1
+				var r := _d20(h, clampi(sadv, -1, 1))
 				var total: int = r.value + sa + r.insp
 				var hit: bool = (total >= int(en.ac) or r.value == 20) and r.value != 1
 				var crit: bool = r.value == 20
 				var line := "%s в %s: %d против КД %d — " % [head, en.name, total, en.ac]
 				var dealt := -1
 				if hit:
-					var dmg := _roll_damage(dice, crit)
+					var dmg := _roll_damage(dice, crit) + R.talent_sum(h, "spell_dmg")
 					dealt = dmg
 					line += "попадание, %d урона. %s" % [dmg, _hit_enemy(ti, dmg, "")]
 				else:
@@ -1484,7 +1647,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 			var ti := _target_enemy(int(target) if (target is int or target is float) else -1)
 			if ti < 0:
 				return false
-			var dmg := R.roll(dice) + upcast * (randi_range(1, 4) + 1)
+			var dmg := R.roll(dice) + upcast * (randi_range(1, 4) + 1) + R.talent_sum(h, "spell_dmg")
 			_log("cbt", h.name, "%s: %d урона по %s. %s" % [head, dmg, c.enemies[ti].name, _hit_enemy(ti, dmg, "")])
 		"save":
 			var targets := _alive_enemies() if sp.get("aoe", false) else [_target_enemy(int(target) if (target is int or target is float) else -1)]
@@ -1514,7 +1677,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				who = [tn if state.heroes.has(tn) else pname]
 			_log("cbt", h.name, head + ".")
 			for n in who:
-				_heal_hero(n, R.roll(dice) + R.caster_mod(h))
+				_heal_hero(n, R.roll(dice) + R.caster_mod(h) + R.talent_sum(h, "heal"))
 		"buff":
 			var tn := str(target)
 			if not state.heroes.has(tn):
@@ -1676,7 +1839,7 @@ func _campaign_text() -> String:
 	var c: Dictionary = state.campaign
 	return "Кампания «%s». Мир: %s\nГлавный квест: %s\nТекущее место: %s\nЛетопись прошлого: %s" % [
 		c.get("title", ""), c.get("world", ""), c.get("quest", ""), c.get("scene", ""),
-		c.get("chronicle", "") if str(c.get("chronicle", "")) != "" else "(пока пусто)"]
+		c.get("chronicle", "") if str(c.get("chronicle", "")) != "" else "(пока пусто)"] + _journal_text()
 
 
 func _recent_log(n := 16) -> String:
@@ -1698,12 +1861,14 @@ func _acts_text(acts: Dictionary) -> String:
 
 
 const NARRATE_FORMAT := """Ответь строго JSON без markdown:
-{"story": "4-8 предложений", "changes": [{"who": "имя героя", "hp": 0, "gold": 0, "add": [], "remove": [], "xp": 0}], "options": {"Имя героя": ["вариант", "вариант", "вариант"]}, "place": null, "quest": "", "chest": "", "shop": "", "combat": [], "rest": ""}
+{"story": "4-8 предложений", "changes": [{"who": "имя героя", "hp": 0, "gold": 0, "add": [], "remove": [], "xp": 0}], "options": {"Имя героя": ["вариант", "вариант", "вариант"]}, "place": null, "quest": "", "quests": [], "npcs": [], "chest": "", "shop": "", "combat": [], "rest": ""}
 Поля:
 - story: последствия действий каждого героя, реакция мира и персонажей (с прямой речью), новая ситуация; закончи тем, что ждёт ответа героев.
 - changes: только реальные изменения вне боя: урон от ловушек и падений (hp отрицательный, 1-10), лечение (hp положительный), награды золотом, найденные или отданные вещи, опыт xp (10-50 за умное действие или убеждение, 50-200 за решённую загадку или выполненное поручение). add — id из каталога, можно с улучшением {"id": "longsword", "plus": 1, "name": "Меч «Рассвет»"}, или сюжетная вещь строкой ПО-РУССКИ («Древний цилиндр», «Письмо мэра»), никогда не латинский id. Пустой список, если ничего.
 - options: по три коротких варианта (до 8 слов) для каждого героя: осторожный, смелый, неожиданный.
 - place: {"name": "название", "type": "тип"} только если герои пришли в новое место или вернулись в известное, иначе null. Типы: village, city, tavern, forest, road, cave, dungeon, castle, ruins, swamp, mountain, lake, camp, temple, tower, field, sea, port.
+- quests: дополнительные задания и поручения. Новое: {"title": "Найти пропавшую козу", "note": "кто дал и где искать", "status": "new"}; выполнено: {"title": то же название, "status": "done"}; провалено: "failed". Пусто, если ничего не изменилось. Названия активных заданий бери из списка выше точно.
+- npcs: важные персонажи, которых герои встретили впервые или узнали о них новое: [{"name": "Мельник Тарас", "note": "кто он, 1 фраза"}]. Пусто, если никого.
 - chest: короткое название, если герои открыли сундук, тайник или нашли клад (содержимое выдаст игра), иначе "".
 - shop: имя торговца, если герои пришли торговать к лавке/рынку/кузнецу, иначе "".
 - combat: если начинается бой, в story опиши только появление врагов, без ударов и исхода (бой отыграет игра). Если начинается бой, список врагов [{"id": "goblin", "count": 2, "name": "Гоблин-разбойник"}], id из списка монстров; можно своего: {"name": "...", "hp": 20, "ac": 13, "atk": 4, "dmg": "1d8+2", "xp": 100}. Бой — не каждый ход, примерно каждые 3-5 ходов, когда это оправдано сюжетом. Сила врагов по уровню героев: на 1-2 уровне 1-4 слабых врага (25-50 опыта каждый), дальше сильнее.

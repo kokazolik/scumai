@@ -28,6 +28,8 @@ var font_black: Font
 var font_title: Font
 var sheet_tab := "gear"
 var _panel_open := true
+var tts_on := true
+var _tts_voice := ""
 var item_pop: Control
 var root_margin: MarginContainer
 var content: VBoxContainer
@@ -102,7 +104,10 @@ func _ready() -> void:
 
 	Net.my_name = _load_name()
 	Game.state_changed.connect(_refresh)
-	Game.rolls_shown.connect(func(rolls): dice.play(rolls))
+	Game.rolls_shown.connect(func(rolls):
+		if OS.get_environment("ALIBI_NODICE") == "":
+			dice.play(rolls)
+		_roll_sfx(rolls))
 	Net.players_changed.connect(_refresh)
 	Net.rooms_changed.connect(_refresh)
 	Net.joined.connect(_refresh)
@@ -148,6 +153,62 @@ func _refresh() -> void:
 		_build()
 	_update()
 	_check_fx()
+	_update_music()
+
+
+var _was_combat := false
+
+
+func _update_music() -> void:
+	var au := _audio()
+	if au == null:
+		return
+	if screen != "game":
+		if screen in ["menu", "search", "connecting", "lobby", "create", "create_done", "world", "roll"]:
+			au.play_music("menu")
+		return
+	var in_combat: bool = Game.phase == "combat" or not Game.state.combat.is_empty()
+	if in_combat:
+		au.play_music("combat")
+		_was_combat = true
+		return
+	if _was_combat:
+		_was_combat = false
+		for e in Game.state.log.slice(-6):
+			if str(e.k) == "cbt" and str(e.t).begins_with("Победа"):
+				au.play_sting("victory")
+				break
+	var m: Dictionary = Game.state.get("map", {})
+	var nodes: Array = m.get("nodes", [])
+	var cur := int(m.get("cur", -1))
+	if cur >= 0 and cur < nodes.size():
+		au.play_music(au.mood_for_place(str(nodes[cur].get("type", "")), str(nodes[cur].get("name", ""))))
+	else:
+		au.play_music("wild")
+
+
+## Звук удара под штамп результата на кубике (~2 с после броска).
+func _roll_sfx(rolls: Array) -> void:
+	if rolls.is_empty() or not (rolls[0] is Dictionary):
+		return
+	var r: Dictionary = rolls[0]
+	var kind := str(r.get("kind", ""))
+	var out := str(r.get("outcome", ""))
+	var snd := ""
+	if kind == "attack":
+		snd = "crit" if out.begins_with("крит") else ("sword_hit" if out.begins_with("попад") else "miss_whoosh")
+	elif kind == "spell":
+		snd = "spell_cast"
+	elif kind == "enemy" and not out.begins_with("попад") and not out.begins_with("крит"):
+		snd = "miss_whoosh"
+	if snd != "":
+		get_tree().create_timer(1.9 if rolls.size() < 3 else 1.45).timeout.connect(func(): _sfx(snd))
+
+
+func _sfx(name: String, db := 0.0) -> void:
+	var au := _audio()
+	if au:
+		au.sfx(name, db)
 
 
 func _check_fx() -> void:
@@ -167,8 +228,12 @@ func _check_fx() -> void:
 	else:
 		if hp < _fx_hp:
 			fx.hit_flash(Color(0.9, 0.1, 0.1))
+			_sfx("death_knell" if hp <= 0 else "enemy_hit")
+		elif hp > _fx_hp and Game.phase != "combat":
+			_sfx("heal", -4.0)
 		if lv > _fx_level:
 			fx.level_up(str(h.name), lv)
+			_sfx("level_up")
 		if has_loot and not _fx_had_loot:
 			var icons: Array = []
 			for it in loot.get("items", []):
@@ -186,6 +251,9 @@ func _loot_fx(title: String, gold: int, icons: Array) -> void:
 	if dice.visible:
 		await dice.finished
 	fx.loot_burst(title, gold, icons)
+	_sfx("chest_open")
+	if gold > 0:
+		get_tree().create_timer(0.7).timeout.connect(func(): _sfx("coin"))
 
 
 func _clear() -> void:
@@ -505,12 +573,14 @@ func _build_game() -> void:
 	# вкладки
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 8)
-	for t in [["story", "История", "ui_story"], ["sheet", "Герой", "ui_hero"], ["map", "Карта", "ui_map"]]:
+	for t in [["story", "История", "ui_story"], ["sheet", "Герой", "ui_hero"], ["journal", "Дневник", "it_book"], ["map", "Карта", "ui_map"]]:
 		var b := _with_icon(_button(t[1], C_ACCENT if tab == t[0] else C_CARD2, func():
 			tab = t[0]
 			screen = ""
 			_refresh()), Icons.tex(t[2]), 30)
-		UISkin.style_tab(b, tab == t[0], 24)
+		UISkin.style_tab(b, tab == t[0], 20)
+		b.add_theme_constant_override("icon_max_width", 26)
+		b.add_theme_constant_override("h_separation", 4)
 		b.custom_minimum_size = Vector2(0, 66)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tabs.add_child(b)
@@ -531,6 +601,11 @@ func _build_game() -> void:
 			var q := _label("", 22, C_MUTED)
 			refs.quest = q
 			content.add_child(q)
+		"journal":
+			var scroll := _scroll()
+			refs.journal = scroll.get_child(0)
+			refs.journal_key = ""
+			content.add_child(scroll)
 
 
 func _build_story_tab() -> void:
@@ -561,10 +636,32 @@ func _build_story_tab() -> void:
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.add_child(sp)
+	var vb := _tiny_button("🔊" if tts_on else "🔇", C_CARD, Callable())
+	vb.pressed.connect(func():
+		tts_on = not tts_on
+		if not tts_on and DisplayServer.has_method("tts_stop"):
+			DisplayServer.tts_stop()
+		vb.text = "🔊" if tts_on else "🔇"
+		_save_name()
+		_toast("Голос ведущего " + ("включён" if tts_on else "выключен")))
+	vb.custom_minimum_size = Vector2(64, 48)
+	bar.add_child(vb)
+	var au := _audio()
+	var mb := _tiny_button("♪", C_CARD, Callable())
+	mb.modulate.a = 1.0 if (au == null or au.music_enabled) else 0.45
+	mb.pressed.connect(func():
+		var a2 := _audio()
+		if a2 == null:
+			return
+		a2.set_music_enabled(not a2.music_enabled)
+		mb.modulate.a = 1.0 if a2.music_enabled else 0.45
+		_toast("Музыка " + ("включена" if a2.music_enabled else "выключена")))
+	mb.custom_minimum_size = Vector2(64, 48)
+	bar.add_child(mb)
 	var tg := _tiny_button("", C_CARD, func():
 		_panel_open = not _panel_open
 		_apply_panel())
-	tg.custom_minimum_size = Vector2(230, 48)
+	tg.custom_minimum_size = Vector2(200, 48)
 	refs.panel_btn = tg
 	bar.add_child(tg)
 	content.add_child(bar)
@@ -626,6 +723,12 @@ func _update_game() -> void:
 		_update_log()
 		_update_combat_box()
 		_update_bottom()
+	if refs.has("journal"):
+		var jk := JSON.stringify([Game.state.campaign.get("quests", []), Game.state.campaign.get("npcs", []), Game.state.campaign.get("chronicle", ""), Game.state.campaign.get("quest", "")])
+		if jk != refs.journal_key:
+			refs.journal_key = jk
+			_build_journal(refs.journal)
+	_check_choice()
 	if refs.has("sheet"):
 		var key := JSON.stringify(h) + Game.phase + str(Game.state.shop.is_empty()) + JSON.stringify(Game.state.combat.get("turn", -1))
 		if key != refs.sheet_key:
@@ -645,7 +748,9 @@ func _update_log() -> void:
 	if lg.size() == _log_n:
 		return
 	var logv: VBoxContainer = refs.log
+	var rebuilt := false
 	if _log_n < 0 or lg.size() < _log_n:
+		rebuilt = true
 		for c in logv.get_children():
 			c.queue_free()
 		_log_n = maxi(0, lg.size() - 60)
@@ -654,12 +759,17 @@ func _update_log() -> void:
 			logv.add_child(UISkin.make_ribbon_title(str(c0.title), 30, 80))
 	var sc: ScrollContainer = refs.log_scroll
 	var vb := sc.get_v_scroll_bar()
-	var at_bottom := _log_n <= 0 or sc.scroll_vertical >= vb.max_value - vb.page - 160
+	var at_bottom := rebuilt or _scroll_pending or sc.scroll_vertical >= vb.max_value - vb.page - 420
 	var mine := false
+	var fresh := not rebuilt
 	for i in range(_log_n, lg.size()):
 		var en: Control = _log_entry(lg[i])
 		_pass_mouse(en)
 		logv.add_child(en)
+		if fresh and str(lg[i].k) == "gm" and en.get_child_count() > 0 and en.get_child(0) is RichTextLabel:
+			_typewrite.call_deferred(en.get_child(0))
+			_speak(str(lg[i].t))
+			_sfx("page", -6.0)
 		if str(lg[i].k) == "act" and str(lg[i].get("w", "")) == str(Game.my_hero().get("name", "?")):
 			mine = true
 	_log_n = lg.size()
@@ -667,6 +777,41 @@ func _update_log() -> void:
 		_scroll_down(sc)
 	elif refs.has("new_btn"):
 		refs.new_btn.visible = true
+
+
+func _tts_init() -> void:
+	if _tts_voice != "" or OS.get_environment("ALIBI_AUTOTEST") != "":
+		return
+	if not ProjectSettings.get_setting("audio/general/text_to_speech", false):
+		return
+	var voices := DisplayServer.tts_get_voices_for_language("ru")
+	if voices.size() > 0:
+		_tts_voice = voices[0]
+
+
+func _speak(text: String) -> void:
+	_tts_init()
+	if not tts_on or _tts_voice == "":
+		return
+	DisplayServer.tts_speak(text.replace("«", "").replace("»", ""), _tts_voice, 85, 1.0, 1.05, 0, false)
+
+
+func _audio() -> Node:
+	return get_node_or_null("/root/Audio")
+
+
+## Текст ведущего появляется постепенно; касание показывает сразу весь.
+func _typewrite(r: RichTextLabel) -> void:
+	var n := r.get_total_character_count()
+	if n <= 0:
+		return
+	r.visible_ratio = 0.0
+	var tw := r.create_tween()
+	tw.tween_property(r, "visible_ratio", 1.0, clampf(n / 55.0, 0.6, 9.0))
+	r.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed and r.visible_ratio < 1.0:
+			tw.kill()
+			r.visible_ratio = 1.0)
 
 
 ## Чтобы текст листался пальцем: карточки и RichTextLabel не должны «съедать» касание.
@@ -678,9 +823,14 @@ func _pass_mouse(c: Control) -> void:
 			_pass_mouse(ch)
 
 
+var _scroll_pending := false
+
+
 func _scroll_down(sc: ScrollContainer) -> void:
+	_scroll_pending = true
 	await get_tree().process_frame
 	await get_tree().process_frame
+	_scroll_pending = false
 	if is_instance_valid(sc):
 		sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)
 		if refs.has("new_btn") and is_instance_valid(refs.new_btn) and sc == refs.get("log_scroll"):
@@ -711,6 +861,17 @@ func _log_entry(e: Dictionary) -> Control:
 			return _label("💰 " + str(e.t), 21, C_ACCENT)
 		"lvl":
 			return _label("⭐ " + str(e.t), 24, C_ACCENT)
+		"quest":
+			var p := PanelContainer.new()
+			p.add_theme_stylebox_override("panel", UISkin.panel("inset", 10))
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 10)
+			row.add_child(_icon_rect(Icons.tex("it_scroll"), 36, C_ACCENT))
+			var ql := _label(str(e.t), 22, C_ACCENT)
+			ql.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(ql)
+			p.add_child(row)
+			return p
 	return _label(str(e.t), 21, C_MUTED)
 
 
@@ -733,7 +894,7 @@ func _update_combat_box() -> void:
 		var dead := false
 		if o.k == "h":
 			var hh: Dictionary = Game.state.heroes.get(str(o.id), {})
-			nm = str(hh.get("name", "?"))
+			nm = str(hh.get("name", "?")) + (" (тыл)" if Game.hero_pos(str(o.id)) == "back" else " (впереди)")
 			dead = int(hh.get("hp", 0)) <= 0
 		else:
 			var en: Dictionary = c.enemies[int(o.id)]
@@ -788,7 +949,7 @@ func _update_combat_box() -> void:
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		top.add_child(nm)
 		v.add_child(top)
-		var ac := _label(("🎯 цель · " if sel else "") + "КД %d · %d/%d" % [int(en.ac), int(en.hp), int(en.max_hp)], 16, C_ACCENT if sel else C_MUTED)
+		var ac := _label(("🎯 · " if sel else "") + ("🏹 тыл · " if str(en.get("pos", "front")) == "back" else "") + "КД %d · %d/%d" % [int(en.ac), int(en.hp), int(en.max_hp)], 16, C_ACCENT if sel else C_MUTED)
 		ac.autowrap_mode = TextServer.AUTOWRAP_OFF
 		v.add_child(ac)
 		var pb := ProgressBar.new()
@@ -824,7 +985,7 @@ func _bottom_mode() -> String:
 			if Game.state.combat.get("wait", false):
 				return "thinking"
 			if Game.combat_actor() == me and not h.is_empty() and int(h.hp) > 0:
-				return "myturn%d_%d_%s_%d_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size()]
+				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)]
 			return "cwait" + Game.combat_actor()
 		"play":
 			if h.is_empty():
@@ -984,8 +1145,18 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 			_update_bottom()))
 		return
 	var ai := R.attack_info(h)
-	var l := _label("Твой ход! Цель: нажми на врага сверху.", 21, C_ACCENT)
-	b.add_child(l)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	var l := _label("Твой ход! Цель: нажми на врага сверху.", 19, C_ACCENT)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(l)
+	var front := Game.hero_pos(me) == "front"
+	var mv := _tiny_button("⇄ В тыл" if front else "⇄ Вперёд", C_BLUE, func(): Game.combat_action({"t": "move"}))
+	mv.custom_minimum_size = Vector2(170, 50)
+	mv.disabled = Game.state.combat.get("moved", {}).get(me, false)
+	top.add_child(mv)
+	b.add_child(top)
+	b.add_child(_label(("Ты впереди: прикрываешь тех, кто в тылу. Отход — враг ударит вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит. Стрелы бьют хуже."), 16, C_MUTED))
 	var g := GridContainer.new()
 	g.columns = 2
 	g.add_theme_constant_override("h_separation", 8)
@@ -1054,6 +1225,163 @@ func _slots_text(h: Dictionary) -> String:
 
 
 # ---------- лист героя ----------
+
+func _build_journal(v: VBoxContainer) -> void:
+	for ch in v.get_children():
+		ch.queue_free()
+	var c: Dictionary = Game.state.campaign
+	if str(c.get("title", "")) != "":
+		v.add_child(UISkin.make_ribbon_title(str(c.title), 30, 80))
+	var main := _card()
+	main.add_child(_section_title("Главная цель"))
+	main.add_child(_label(str(c.get("quest", "пока неизвестна")), 23, C_INK))
+	v.add_child(main.get_parent())
+	var qs: Array = c.get("quests", [])
+	var act := _card()
+	act.add_child(_section_title("Задания"))
+	var any := false
+	for q in qs:
+		if str(q.s) != "active":
+			continue
+		any = true
+		act.add_child(_quest_row(q, "it_scroll", C_ACCENT))
+	if not any:
+		act.add_child(_label("Пока нет поручений. Поговорите с местными: ведущий запишет сюда всё, что вам поручат.", 19, C_MUTED))
+	v.add_child(act.get_parent())
+	var fin := []
+	for q in qs:
+		if str(q.s) != "active":
+			fin.append(q)
+	if fin.size() > 0:
+		var dc := _card(C_CARD2)
+		dc.add_child(_section_title("Завершённые"))
+		for q in fin:
+			dc.add_child(_quest_row(q, "ui_xp_star" if q.s == "done" else "ui_skull", C_GREEN if q.s == "done" else C_RED))
+		v.add_child(dc.get_parent())
+	var npcs: Array = c.get("npcs", [])
+	if npcs.size() > 0:
+		var nc := _card()
+		nc.add_child(_section_title("Знакомые"))
+		for n in npcs:
+			var r := VBoxContainer.new()
+			r.add_theme_constant_override("separation", 0)
+			r.add_child(_label(str(n.n), 22, C_ACCENT))
+			if str(n.d) != "":
+				r.add_child(_label(str(n.d), 18, C_MUTED))
+			nc.add_child(r)
+		v.add_child(nc.get_parent())
+	if str(c.get("chronicle", "")) != "":
+		var p := PanelContainer.new()
+		p.add_theme_stylebox_override("panel", UISkin.panel("parchment", 8))
+		var pv := VBoxContainer.new()
+		var t := _label("Что было раньше", 26, UISkin.INK_PARCHMENT_RED)
+		t.add_theme_font_override("font", UISkin.title_font())
+		pv.add_child(t)
+		var r := _rich(_esc(c.chronicle), 22)
+		UISkin.style_parchment_text(r, 22)
+		pv.add_child(r)
+		p.add_child(pv)
+		v.add_child(p)
+	_pass_mouse(v)
+
+
+func _quest_row(q: Dictionary, icon: String, col: Color) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	row.add_child(_icon_rect(Icons.tex(icon), 40, col))
+	var qv := VBoxContainer.new()
+	qv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	qv.add_theme_constant_override("separation", 0)
+	qv.add_child(_label(str(q.t), 22, C_INK if q.s == "active" else C_MUTED))
+	if str(q.get("d", "")) != "" and q.s == "active":
+		qv.add_child(_label(str(q.d), 18, C_MUTED))
+	row.add_child(qv)
+	return row
+
+
+var choice_pop: Control
+var _choice_key := ""
+
+
+## Новый уровень: окно выбора таланта или +2 к характеристике.
+func _check_choice() -> void:
+	var h := Game.my_hero()
+	var chs: Array = h.get("choices", []) if not h.is_empty() else []
+	var busy: bool = Game.phase == "combat" or not Game.state.get("ask", []).is_empty()
+	var key := "" if (chs.is_empty() or busy) else JSON.stringify(chs[0])
+	if key == _choice_key:
+		return
+	_choice_key = key
+	if choice_pop and is_instance_valid(choice_pop):
+		choice_pop.queue_free()
+	choice_pop = null
+	if key == "":
+		return
+	var ch: Dictionary = chs[0]
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	var dim := ColorRect.new()
+	dim.color = Color(0.05, 0.03, 0.02, 0.8)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(dim)
+	var m := MarginContainer.new()
+	m.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right"]:
+		m.add_theme_constant_override("margin_" + side, 24)
+	m.add_theme_constant_override("margin_top", 120)
+	m.add_theme_constant_override("margin_bottom", 120)
+	layer.add_child(m)
+	var cc := CenterContainer.new()
+	m.add_child(cc)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UISkin.panel("dark", 18))
+	panel.custom_minimum_size = Vector2(640, 0)
+	cc.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	panel.add_child(v)
+	var pc := CenterContainer.new()
+	pc.add_child(UISkin.make_portrait(Icons.tex("ui_level_up"), 110))
+	v.add_child(pc)
+	var t := _ftitle("%d уровень!" % int(ch.level), 40)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(t)
+	var sub := _label("Выбери +2 к одной характеристике" if ch.kind == "asi" else "Выбери новый талант", 22, C_MUTED)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	for opt in ch.options:
+		var o: String = opt
+		var title := ""
+		var desc := ""
+		if ch.kind == "asi":
+			title = "%s +2" % R.AB_NAME.get(o, o)
+			desc = "сейчас %d (мод %+d), станет %d (мод %+d)" % [int(h.scores[o]), R.mod(int(h.scores[o])), mini(20, int(h.scores[o]) + 2), R.mod(mini(20, int(h.scores[o]) + 2))]
+		else:
+			title = str(R.TALENTS[o].name)
+			desc = str(R.TALENTS[o].desc)
+		var b := _wrap_button("", C_CARD, func():
+			Game.inv("choose", {"pick": o})
+			_choice_key = "picked" + o, 21, 110)
+		var lbl: Label = b.get_child(b.get_child_count() - 1)
+		lbl.text = ""
+		var bv := VBoxContainer.new()
+		bv.set_anchors_preset(Control.PRESET_FULL_RECT)
+		bv.offset_left = 22
+		bv.offset_right = -18
+		bv.offset_top = 10
+		bv.offset_bottom = -12
+		bv.alignment = BoxContainer.ALIGNMENT_CENTER
+		bv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var tl := _label(title, 25, C_ACCENT)
+		tl.add_theme_font_override("font", UISkin.title_font())
+		bv.add_child(tl)
+		bv.add_child(_label(desc, 18, C_INK))
+		b.add_child(bv)
+		v.add_child(b)
+	add_child(layer)
+	choice_pop = layer
+
 
 func _build_sheet(v: VBoxContainer) -> void:
 	for c in v.get_children():
@@ -1273,6 +1601,12 @@ func _sheet_magic(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
 		feats = str(feats).split(";" if ";" in str(feats) else ". ", false)
 	for f in feats:
 		fc.add_child(_label("✦ " + str(f).strip_edges().trim_suffix("."), 20, C_INK))
+	for td in R.talent_names(h):
+		var tr := VBoxContainer.new()
+		tr.add_theme_constant_override("separation", 0)
+		tr.add_child(_label("★ " + str(td.name), 21, C_ACCENT))
+		tr.add_child(_label(str(td.desc), 17, C_MUTED))
+		fc.add_child(tr)
 	if h.get("second_wind", false) and not in_combat:
 		fc.add_child(_small_wide_button("Второе дыхание (1к10+%d)" % int(h.level), C_GREEN.darkened(0.3), func(): Game.inv("second_wind", {})))
 	v.add_child(fc.get_parent())
@@ -1662,6 +1996,7 @@ func _toast(text: String) -> void:
 func _load_name() -> String:
 	var cfg := ConfigFile.new()
 	if cfg.load("user://settings.cfg") == OK:
+		tts_on = bool(cfg.get_value("player", "tts", true))
 		var n := str(cfg.get_value("player", "name", ""))
 		if n != "":
 			return n
@@ -1672,6 +2007,7 @@ func _save_name() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")
 	cfg.set_value("player", "name", Net.my_name)
+	cfg.set_value("player", "tts", tts_on)
 	cfg.save("user://settings.cfg")
 
 
@@ -1806,7 +2142,8 @@ func _button(text: String, color: Color, cb: Callable) -> Button:
 	UISkin.style_button(b, _kind(color), 28)
 	b.add_theme_constant_override("icon_max_width", 40)
 	b.add_theme_constant_override("h_separation", 10)
-	b.pressed.connect(cb)
+	if cb.is_valid():
+		b.pressed.connect(cb)
 	return b
 
 
@@ -1987,6 +2324,8 @@ func _drag_test() -> void:
 
 
 func _autotest_tick() -> void:
+	if _auto == "":
+		return
 	if OS.get_environment("ALIBI_DRAGTEST") != "" and not _drag_done and screen == "game" and tab == "story" and int(Game.state.turn) >= 9 and refs.has("log_scroll"):
 		_drag_done = true
 		_drag_test()
@@ -2014,6 +2353,8 @@ func _autotest_tick() -> void:
 				elif st != "gear":
 					_close_item()
 			elif int(Game.state.turn) in [6, 7]:
+				want = "journal"
+			elif int(Game.state.turn) == 8:
 				want = "map"
 			if want != tab:
 				tab = want
@@ -2023,6 +2364,13 @@ func _autotest_tick() -> void:
 		if str(a.who) == me and not a.done:
 			Game.roll_now()
 			return
+	var mh := Game.my_hero()
+	if shot != "" and _auto == "host" and not mh.is_empty() and int(Game.state.turn) == 2 and not mh.has("talents") and not mh.has("choices"):
+		mh.choices = [R.make_choice(mh)]
+		Game._broadcast()
+	if not mh.is_empty() and not (mh.get("choices", []) as Array).is_empty() and _auto_n % 7 == 0:
+		print("[%s] CHOOSE %s" % [_auto, mh.choices[0].options[0]])
+		Game.inv("choose", {"pick": str(mh.choices[0].options[0])})
 	match Game.phase:
 		"lobby":
 			if _auto == "host" and Net.players.size() >= 2:
@@ -2047,10 +2395,16 @@ func _autotest_tick() -> void:
 				print("[%s] MAP %s" % [_auto, JSON.stringify(Game.state.map)])
 				for e in Game.state.log.slice(-40):
 					print("[%s] LOG %s: %s" % [_auto, e.k, e.t])
+				_auto = ""
+				if Net.is_host():
+					await get_tree().create_timer(4.0).timeout
 				get_tree().quit()
 		"combat":
 			if Game.combat_actor() == me:
 				var h := Game.my_hero()
+				if int(Game.state.combat.round) == 2 and not Game.state.combat.get("moved", {}).get(me, false) and _auto_n % 2 == 0:
+					Game.combat_action({"t": "move"})
+					return
 				if h.cls == "Маг" and R.slot_for(h, "magic_missile") > 0:
 					Game.combat_action({"t": "spell", "spell": "magic_missile", "target": -1})
 				elif _auto_n % 7 == 0:

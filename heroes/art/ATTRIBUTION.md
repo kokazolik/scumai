@@ -53,7 +53,7 @@ Modified: rasterized to 128x128 PNG, recolored to white on transparent backgroun
 | it_rope.png | [rope-coil](https://game-icons.net/1x1/delapouite/rope-coil.html) | Delapouite |
 | it_torch.png | [torch](https://game-icons.net/1x1/delapouite/torch.html) | Delapouite |
 | it_food.png | [meat](https://game-icons.net/1x1/lorc/meat.html) | Lorc |
-| it_gold.png | [two-coins](https://game-icons.net/1x1/delapouite/two-coins.html) | Delapouite |
+| it_gold.png | [crown-coin](https://game-icons.net/1x1/lorc/crown-coin.html) | Lorc |
 | it_key.png | [key](https://game-icons.net/1x1/lorc/key.html) | Lorc |
 | it_misc.png | [knapsack](https://game-icons.net/1x1/lorc/knapsack.html) | Lorc |
 | it_chest.png | [locked-chest](https://game-icons.net/1x1/lorc/locked-chest.html) | Lorc |
@@ -84,7 +84,7 @@ Modified: rasterized to 128x128 PNG, recolored to white on transparent backgroun
 | monster_generic.png | [evil-minion](https://game-icons.net/1x1/lorc/evil-minion.html) | Lorc |
 | ui_heart.png | [hearts](https://game-icons.net/1x1/skoll/hearts.html) | Skoll |
 | ui_shield_ac.png | [checked-shield](https://game-icons.net/1x1/lorc/checked-shield.html) | Lorc |
-| ui_coin.png | [two-coins](https://game-icons.net/1x1/delapouite/two-coins.html) | Delapouite |
+| ui_coin.png | [crown-coin](https://game-icons.net/1x1/lorc/crown-coin.html) | Lorc |
 | ui_xp_star.png | [round-star](https://game-icons.net/1x1/delapouite/round-star.html) | Delapouite |
 | ui_map.png | [treasure-map](https://game-icons.net/1x1/lorc/treasure-map.html) | Lorc |
 | ui_hero.png | [swordman](https://game-icons.net/1x1/cathelineau/swordman.html) | Cathelineau |

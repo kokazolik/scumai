@@ -13,6 +13,7 @@ config/icon="res://icon.png"
 LLM="*res://scripts/llm.gd"
 Net="*res://scripts/net.gd"
 Game="*res://scripts/game.gd"
+Audio="*res://scripts/audio.gd"
 
 [display]
 
@@ -31,3 +32,7 @@ textures/vram_compression/import_etc2_astc=true
 [input_devices]
 
 pointing/emulate_mouse_from_touch=true
+
+[audio]
+
+general/text_to_speech=true

@@ -72,6 +72,115 @@ const CLASSES := {
 		"desc": "Песни, обаяние и вдохновение"},
 }
 
+## Таланты: выбор при новом уровне (по мотивам SRD 5.1, своими словами).
+## cls: для каких классов (пусто — для всех). Эффекты складываются в talent_sum().
+const TALENTS := {
+	"tough": {"name": "Крепкий", "desc": "+2 хита за каждый уровень, в том числе прошлые", "hp_lvl": 2},
+	"alert": {"name": "Бдительный", "desc": "+5 к инициативе: в бою ходишь раньше", "init": 5},
+	"resilient": {"name": "Стойкий", "desc": "+1 ко всем спасброскам", "save_all": 1},
+	"keen": {"name": "Зоркий", "desc": "+3 к Восприятию и Проницательности", "skills": {"Восприятие": 3, "Проницательность": 3}},
+	"defense": {"name": "Стиль «Оборона»", "desc": "+1 КД, пока на тебе доспех", "ac_armor": 1, "cls": ["Воин", "Следопыт", "Жрец"]},
+	"dueling": {"name": "Стиль «Дуэль»", "desc": "+2 урона одноручным оружием ближнего боя", "dmg_onehand": 2, "cls": ["Воин", "Следопыт", "Плут"]},
+	"great_weapon": {"name": "Мощный замах", "desc": "+3 урона двуручным оружием", "dmg_two": 3, "cls": ["Воин"]},
+	"champion": {"name": "Чемпион", "desc": "Критическое попадание оружием на 19-20", "crit": 1, "cls": ["Воин", "Следопыт"]},
+	"marksman": {"name": "Меткий стрелок", "desc": "+1 к попаданию и +2 урона дальнобойным оружием", "atk_ranged": 1, "dmg_ranged": 2, "cls": ["Следопыт", "Плут", "Воин"]},
+	"hunter": {"name": "Метка охотника", "desc": "+2 урона любым оружием", "dmg_weapon": 2, "cls": ["Следопыт"]},
+	"assassin": {"name": "Убийца", "desc": "Скрытая атака сильнее на 1к6", "sneak_dice": 1, "cls": ["Плут"]},
+	"expertise": {"name": "Экспертиза", "desc": "+3 к Скрытности, Ловкости рук и Обману", "skills": {"Скрытность": 3, "Ловкость рук": 3, "Обман": 3}, "cls": ["Плут", "Бард"]},
+	"evasion": {"name": "Увёртливость", "desc": "+1 КД и +1 ко всем спасброскам", "ac": 1, "save_all": 1, "cls": ["Плут"]},
+	"life": {"name": "Домен жизни", "desc": "Лечение заклинаниями и зельями сильнее на 3", "heal": 3, "cls": ["Жрец", "Бард"]},
+	"divine_strike": {"name": "Божественный удар", "desc": "+3 урона оружием (священная сила)", "dmg_weapon": 3, "cls": ["Жрец"]},
+	"war_caster": {"name": "Боевой маг", "desc": "+1 к атаке заклинаниями и к их Сложности", "spell_atk": 1, "cls": ["Маг", "Жрец", "Бард"]},
+	"evoker": {"name": "Школа воплощения", "desc": "+2 урона атакующими заклинаниями", "spell_dmg": 2, "cls": ["Маг"]},
+	"arcane_ward": {"name": "Магическая защита", "desc": "+2 КД (невидимый щит)", "ac": 2, "cls": ["Маг"]},
+	"more_inspire": {"name": "Песнь отваги", "desc": "+1 вдохновение барда на каждый отдых", "inspire": 1, "cls": ["Бард"]},
+	"lore": {"name": "Знаток", "desc": "+1 ко всем навыкам", "skill_all": 1, "cls": ["Бард"]},
+}
+
+
+static func talent_sum(h: Dictionary, key: String) -> int:
+	var t := 0
+	for id in h.get("talents", []):
+		var d: Dictionary = TALENTS.get(str(id), {})
+		if d.has(key) and not (d[key] is Dictionary):
+			t += int(d[key])
+	return t
+
+
+static func talent_skill(h: Dictionary, skill: String) -> int:
+	var t := talent_sum(h, "skill_all")
+	for id in h.get("talents", []):
+		t += int(TALENTS.get(str(id), {}).get("skills", {}).get(skill, 0))
+	return t
+
+
+static func talent_names(h: Dictionary) -> Array:
+	var out := []
+	for id in h.get("talents", []):
+		if TALENTS.has(str(id)):
+			out.append(TALENTS[str(id)])
+	return out
+
+
+## Новый выбор при повышении уровня: на 4 и 8 — +2 к характеристике, иначе один из трёх талантов.
+static func make_choice(h: Dictionary) -> Dictionary:
+	var lv := int(h.level)
+	if lv in [4, 8]:
+		var opts := []
+		for a in AB:
+			if int(h.scores[a]) < 20:
+				opts.append(a)
+		return {"level": lv, "kind": "asi", "options": opts}
+	var pool := []
+	for id in TALENTS:
+		var d: Dictionary = TALENTS[id]
+		if id in h.get("talents", []):
+			continue
+		if d.has("cls") and not (h.cls in d.cls):
+			continue
+		pool.append(id)
+	pool.shuffle()
+	# свои классовые таланты вперёд, общие — для разнообразия
+	pool.sort_custom(func(a, b): return int(TALENTS[a].has("cls")) > int(TALENTS[b].has("cls")))
+	var opts2 := pool.slice(0, 2)
+	for id in pool.slice(2):
+		if not TALENTS[id].has("cls"):
+			opts2.append(id)
+			break
+	if opts2.size() < 3:
+		for id in pool:
+			if not (id in opts2) and opts2.size() < 3:
+				opts2.append(id)
+	if opts2.is_empty():
+		return {}
+	return {"level": lv, "kind": "talent", "options": opts2}
+
+
+## Применяет выбор игрока. Возвращает строку для летописи или "" если выбор неверный.
+static func apply_choice(h: Dictionary, pick: String) -> String:
+	var ch: Array = h.get("choices", [])
+	if ch.is_empty():
+		return ""
+	var c: Dictionary = ch[0]
+	if not (pick in c.options):
+		return ""
+	ch.pop_front()
+	if c.kind == "asi":
+		h.scores[pick] = mini(20, int(h.scores[pick]) + 2)
+		return "%s: %s +2 (теперь %d)." % [h.name, AB_NAME.get(pick, pick), int(h.scores[pick])]
+	if not h.has("talents"):
+		h.talents = []
+	h.talents.append(pick)
+	var d: Dictionary = TALENTS[pick]
+	if int(d.get("hp_lvl", 0)) > 0:
+		var add := int(d.hp_lvl) * int(h.level)
+		h.max_hp = int(h.max_hp) + add
+		h.hp = int(h.hp) + add
+	if int(d.get("inspire", 0)) > 0:
+		h.inspire = int(h.get("inspire", 0)) + int(d.inspire)
+	return "%s осваивает талант «%s»: %s." % [h.name, d.name, d.desc]
+
+
 ## Слоты снаряжения.
 const SLOT_NAMES := {"weapon": "Оружие", "offhand": "Щит", "armor": "Доспех", "clothes": "Одежда",
 	"head": "Голова", "ring": "Кольцо", "amulet": "Амулет"}
@@ -162,17 +271,17 @@ const SPELLS := {
 
 ## Монстры (упрощённые статблоки SRD). atk — бонус атаки, multi — атак за ход.
 const MONSTERS := {
-	"kobold": {"name": "Кобольд", "ac": 12, "hp": 5, "atk": 4, "dmg": "1d4+2", "dex": 2, "xp": 25},
+	"kobold": {"name": "Кобольд", "bow": true, "ac": 12, "hp": 5, "atk": 4, "dmg": "1d4+2", "dex": 2, "xp": 25},
 	"giant_rat": {"name": "Гигантская крыса", "ac": 12, "hp": 7, "atk": 4, "dmg": "1d4+2", "dex": 2, "xp": 25},
-	"bandit": {"name": "Бандит", "ac": 12, "hp": 11, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
-	"cultist": {"name": "Сектант", "ac": 12, "hp": 9, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
-	"goblin": {"name": "Гоблин", "ac": 15, "hp": 7, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50},
+	"bandit": {"name": "Бандит", "bow": true, "ac": 12, "hp": 11, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
+	"cultist": {"name": "Сектант", "bow": true, "ac": 12, "hp": 9, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
+	"goblin": {"name": "Гоблин", "bow": true, "ac": 15, "hp": 7, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50},
 	"wolf": {"name": "Волк", "ac": 13, "hp": 11, "atk": 4, "dmg": "2d4+2", "dex": 2, "xp": 50},
 	"skeleton": {"name": "Скелет", "ac": 13, "hp": 13, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 2, "МДР": -1}},
 	"zombie": {"name": "Зомби", "ac": 8, "hp": 22, "atk": 3, "dmg": "1d6+1", "dex": -2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 3, "МДР": -2}},
 	"giant_spider_small": {"name": "Пещерный паук", "ac": 13, "hp": 12, "atk": 4, "dmg": "1d6+2", "dex": 3, "xp": 50},
 	"orc": {"name": "Орк", "ac": 13, "hp": 15, "atk": 5, "dmg": "1d12+3", "dex": 1, "xp": 100},
-	"hobgoblin": {"name": "Хобгоблин", "ac": 18, "hp": 11, "atk": 3, "dmg": "1d8+1", "dex": 1, "xp": 100},
+	"hobgoblin": {"name": "Хобгоблин", "bow": true, "ac": 18, "hp": 11, "atk": 3, "dmg": "1d8+1", "dex": 1, "xp": 100},
 	"shadow": {"name": "Тень", "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100, "undead": true},
 	"bandit_captain": {"name": "Главарь бандитов", "ac": 15, "hp": 65, "atk": 5, "dmg": "1d6+3", "multi": 2, "dex": 3, "xp": 450},
 	"ghoul": {"name": "Гуль", "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200, "undead": true},
@@ -444,15 +553,17 @@ static func _update_slots(h: Dictionary) -> void:
 static func level_up(h: Dictionary) -> String:
 	h.level = int(h.level) + 1
 	var c: Dictionary = CLASSES[h.cls]
-	var gain := maxi(1, int(c.hd) / 2 + 1 + mod(score(h, "ТЕЛ")) + int(RACES.get(h.race, {}).get("hp_per_level", 0)))
+	var gain := maxi(1, int(c.hd) / 2 + 1 + mod(score(h, "ТЕЛ")) + int(RACES.get(h.race, {}).get("hp_per_level", 0)) + talent_sum(h, "hp_lvl"))
 	h.max_hp = int(h.max_hp) + gain
 	h.hp = h.max_hp
 	h.hd_left = mini(int(h.level), int(h.hd_left) + 1)
 	var extra := ""
-	if int(h.level) in [4, 8]:
-		var m: String = c.main
-		h.scores[m] = mini(20, int(h.scores[m]) + 2)
-		extra = ", %s +2" % m
+	var ch := make_choice(h)
+	if not ch.is_empty():
+		if not h.has("choices"):
+			h.choices = []
+		h.choices.append(ch)
+		extra = ", выбери %s" % ("+2 к характеристике" if ch.kind == "asi" else "новый талант")
 	var old_max := (h.slots_max as Array).duplicate()
 	_update_slots(h)
 	for i in h.slots_max.size():
@@ -499,6 +610,9 @@ static func ac(h: Dictionary) -> int:
 		if s == "armor" or not (h.equip[s] is Dictionary) or h.equip[s].is_empty():
 			continue
 		total += int(item_def(h.equip[s]).get("ac", 0))
+	total += talent_sum(h, "ac")
+	if armor is Dictionary and not armor.is_empty():
+		total += talent_sum(h, "ac_armor")
 	return total + int(h.get("temp_ac", 0))
 
 
@@ -508,7 +622,7 @@ static func save_bonus(h: Dictionary, a: String) -> int:
 		b += prof(int(h.level))
 	for d in equipped_defs(h):
 		b += int(d.get("save", 0))
-	return b
+	return b + talent_sum(h, "save_all")
 
 
 static func skill_bonus(h: Dictionary, skill: String) -> int:
@@ -522,7 +636,7 @@ static func skill_bonus(h: Dictionary, skill: String) -> int:
 		var d := item_def(it)
 		if d.type == "misc":
 			b += int(d.get("skill", {}).get(skill, 0))
-	return b
+	return b + talent_skill(h, skill)
 
 
 static func weapon(h: Dictionary) -> Dictionary:
@@ -543,8 +657,15 @@ static func attack_info(h: Dictionary) -> Dictionary:
 	var atk := m + prof(int(h.level)) + int(w.get("attack", 0))
 	if h.cls == "Следопыт" and w.get("ranged", false):
 		atk += 2
-	var dmg_bonus := m + int(w.get("damage", 0))
-	return {"name": str(w.name), "atk": atk, "dice": str(w.dmg), "bonus": dmg_bonus,
+	var dmg_bonus := m + int(w.get("damage", 0)) + talent_sum(h, "dmg_weapon")
+	if w.get("ranged", false):
+		atk += talent_sum(h, "atk_ranged")
+		dmg_bonus += talent_sum(h, "dmg_ranged")
+	elif w.get("two", false):
+		dmg_bonus += talent_sum(h, "dmg_two")
+	else:
+		dmg_bonus += talent_sum(h, "dmg_onehand")
+	return {"name": str(w.name), "atk": atk, "dice": str(w.dmg), "bonus": dmg_bonus, "crit": 20 - talent_sum(h, "crit"),
 		"ranged": bool(w.get("ranged", false)), "fin": a == "fin" or bool(w.get("ranged", false)),
 		"attacks": 2 if (int(h.level) >= 5 and h.cls in ["Воин", "Следопыт"]) else 1}
 
@@ -555,11 +676,11 @@ static func caster_mod(h: Dictionary) -> int:
 
 
 static func spell_attack(h: Dictionary) -> int:
-	return prof(int(h.level)) + caster_mod(h)
+	return prof(int(h.level)) + caster_mod(h) + talent_sum(h, "spell_atk")
 
 
 static func spell_dc(h: Dictionary) -> int:
-	return 8 + prof(int(h.level)) + caster_mod(h)
+	return 8 + prof(int(h.level)) + caster_mod(h) + talent_sum(h, "spell_atk")
 
 
 ## Заклинания, доступные герою сейчас (по уровню ячеек).
@@ -594,7 +715,7 @@ static func long_rest(h: Dictionary) -> void:
 	h.hd_left = mini(int(h.level), int(h.hd_left) + maxi(1, int(h.level) / 2))
 	h.second_wind = h.cls == "Воин"
 	if h.cls == "Бард":
-		h.inspire = maxi(1, amod(h, "ХАР"))
+		h.inspire = maxi(1, amod(h, "ХАР")) + talent_sum(h, "inspire")
 	h.relentless = bool(RACES.get(h.race, {}).get("relentless", false))
 	h.death_s = 0
 	h.death_f = 0
