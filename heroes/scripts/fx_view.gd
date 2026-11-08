@@ -71,6 +71,14 @@ func level_up(name: String, level: int) -> void:
 	_wake()
 
 
+## Вспышка заклинания или наложенного состояния: большая иконка, кольцо, искры и подпись.
+func spell_burst(icon: Texture2D, color: Color, title: String, sub: String, status := false) -> void:
+	if _queue.size() > 4:
+		return
+	_queue.append({"type": "spell", "icon": icon, "col": color, "title": title, "sub": sub, "status": status})
+	_wake()
+
+
 func hit_flash(color: Color) -> void:
 	_flashes.append({"col": color, "t": 0.0})
 	_wake()
@@ -120,6 +128,8 @@ func _end_cur() -> void:
 func _cur_len() -> float:
 	if _cur.is_empty():
 		return 0.0
+	if _cur.type == "spell":
+		return 1.25 if _cur.status else 1.6
 	return LOOT_LEN if _cur.type == "loot" else LEVEL_LEN
 
 
@@ -159,6 +169,8 @@ func _process(delta: float) -> void:
 		_t += delta
 		if _cur.type == "loot":
 			_update_loot(delta)
+		elif _cur.type == "spell":
+			_update_spell(delta)
 		else:
 			_update_level(delta)
 		if not _cur.is_empty() and _t >= _cur_len():
@@ -535,12 +547,53 @@ func _draw_level() -> void:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
+# ---------------------------------------------------------------- spell
+
+func _update_spell(_delta: float) -> void:
+	var fired: Dictionary = _cur.fired
+	var c := Vector2(size.x * 0.5, size.y * 0.42)
+	var col: Color = _cur.col
+	if not fired.has("go"):
+		fired["go"] = true
+		_play_snd("thud", 0.5)
+	if not fired.has("boom") and _t >= 0.22:
+		fired["boom"] = true
+		_sparks(c, 18 if _cur.status else 36, col)
+		_ring(c, 50.0, 300.0 if _cur.status else 420.0, col, 0.5, 8.0)
+
+
+func _draw_spell() -> void:
+	var t := _t
+	var L := _cur_len()
+	var fade := clampf(t / 0.15, 0.0, 1.0) * clampf((L - t) / 0.3, 0.0, 1.0)
+	var col: Color = _cur.col
+	var c := Vector2(size.x * 0.5, size.y * 0.42)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.03, 0.02, 0.05, (0.35 if _cur.status else 0.55) * fade))
+	_rays(c, 300.0 * _ease_out(clampf(t / 0.4, 0.0, 1.0)), t * 0.8, Color(col, 0.28 * fade), false)
+	_glow(c, 230.0, Color(col, 0.6 * fade))
+	var k := _ease_out_back(clampf(t / 0.32, 0.0, 1.0))
+	var r := (110.0 if _cur.status else 150.0) * k
+	var icon: Texture2D = _cur.icon
+	if icon:
+		draw_texture_rect(icon, Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0), false, Color(col.lerp(Color.WHITE, 0.35), fade))
+	_draw_parts()
+	var title: String = _cur.title
+	var hk := clampf((t - 0.15) / 0.25, 0.0, 1.0)
+	if hk > 0.0:
+		_text(Vector2(size.x * 0.5, c.y + 220.0), title, _fit(title, 46, size.x - 60.0), Color(C_INK, hk * fade), 10, Color(C_OUTLINE, hk * fade))
+		var sub: String = _cur.sub
+		if sub != "":
+			_text(Vector2(size.x * 0.5, c.y + 280.0), sub, _fit(sub, 28, size.x - 50.0), Color(col.lerp(Color.WHITE, 0.5), hk * fade), 8, Color(C_OUTLINE, hk * fade))
+
+
 # ---------------------------------------------------------------- drawing
 
 func _draw() -> void:
 	if not _cur.is_empty():
 		if _cur.type == "loot":
 			_draw_loot()
+		elif _cur.type == "spell":
+			_draw_spell()
 		else:
 			_draw_level()
 	for f in _flashes:

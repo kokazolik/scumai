@@ -254,10 +254,29 @@ func _check_fx() -> void:
 				if it is Dictionary and icons.size() < 10:
 					icons.append(Icons.for_item(it))
 			_loot_fx(str(loot.get("title", "Добыча")), maxi(0, gold - _fx_gold), icons)
+	var evs: Array = Game.state.get("fx", [])
+	var top_n := int(evs[-1].n) if evs.size() > 0 else 0
+	if _fx_seen < 0 or top_n < _fx_seen:
+		_fx_seen = top_n
+	for e in evs:
+		if int(e.n) > _fx_seen:
+			_play_fx_event(e)
+	_fx_seen = maxi(_fx_seen, top_n)
 	_fx_hp = hp
 	_fx_level = lv
 	_fx_gold = gold
 	_fx_had_loot = has_loot
+
+
+var _fx_seen := -1
+
+
+func _play_fx_event(e: Dictionary) -> void:
+	# анимация после кубика, чтобы не прятаться под ним
+	if dice.visible:
+		await dice.finished
+	fx.spell_burst(Icons.tex(str(e.icon)), Color(str(e.col)), str(e.title), str(e.sub), bool(e.get("status", false)))
+	_sfx("heal" if str(e.icon) in ["sp_cure_wounds", "sp_healing_word", "sp_mass_healing_word"] else "enemy_hit", -6.0)
 
 
 func _loot_fx(title: String, gold: int, icons: Array) -> void:
@@ -582,6 +601,11 @@ func _build_game() -> void:
 	bar.custom_minimum_size = Vector2(0, 30)
 	refs.hp_bar = bar
 	info.add_child(bar)
+	var party := HBoxContainer.new()
+	party.add_theme_constant_override("separation", 14)
+	refs.party = party
+	refs.party_key = ""
+	info.add_child(party)
 	top.add_child(info)
 	content.add_child(top)
 	# вкладки
@@ -753,6 +777,8 @@ func _update_game() -> void:
 			refs.hero_line.text = "%s · %s %d · КД %d · %d зол. · Хиты %d/%d%s" % [h.name, h.cls, int(h.level), R.ac(h), int(h.gold), int(h.hp), int(h.max_hp), _cond_tags(h)]
 			refs.hp_bar.max_value = int(h.max_hp)
 			refs.hp_bar.value = int(h.hp)
+	if refs.has("party"):
+		_update_party()
 
 	if refs.has("log"):
 		_update_log()
@@ -783,22 +809,28 @@ func _update_game() -> void:
 
 func _update_log() -> void:
 	var lg: Array = Game.state.log
-	if lg.size() == _log_n:
+	# _log_n — сквозной номер последней показанной записи (журнал на хосте обрезается, поэтому считаем не по длине)
+	var last_i := _entry_i(lg, lg.size() - 1) if lg.size() > 0 else 0
+	if last_i == _log_n:
 		return
 	var logv: VBoxContainer = refs.log
 	var rebuilt := false
-	if _log_n < 0 or lg.size() < _log_n:
+	var start := lg.size()
+	if _log_n < 0 or last_i < _log_n:
 		rebuilt = true
 		for c in logv.get_children():
 			c.queue_free()
-		_log_n = maxi(0, lg.size() - 60)
+		start = maxi(0, lg.size() - 60)
 		var c0: Dictionary = Game.state.campaign
 		if str(c0.get("title", "")) != "":
 			logv.add_child(UISkin.make_ribbon_title(str(c0.title), 30, 80))
+	else:
+		while start > 0 and _entry_i(lg, start - 1) > _log_n:
+			start -= 1
 	var mine := false
 	var fresh := not rebuilt
 	var first_gm: Control = null
-	for i in range(_log_n, lg.size()):
+	for i in range(start, lg.size()):
 		var en: Control = _log_entry(lg[i])
 		_pass_mouse(en)
 		logv.add_child(en)
@@ -810,7 +842,13 @@ func _update_log() -> void:
 			first_gm = en
 		if str(lg[i].k) == "act" and str(lg[i].get("w", "")) == str(Game.my_hero().get("name", "?")):
 			mine = true
-	_log_n = lg.size()
+	_log_n = last_i
+	# на экране держим не больше ~120 записей, иначе лента тяжелеет
+	var extra := logv.get_child_count() - 120
+	for k in maxi(0, extra):
+		var ch := logv.get_child(k)
+		if ch != first_gm:
+			ch.queue_free()
 	if rebuilt or mine:
 		_follow = true
 		_follow_node = null
@@ -847,6 +885,10 @@ func _apply_follow() -> void:
 	target = maxi(0, target)
 	if sc.scroll_vertical != target:
 		sc.scroll_vertical = target
+
+
+func _entry_i(lg: Array, idx: int) -> int:
+	return int(lg[idx].get("i", idx + 1))
 
 
 func _tts_init() -> void:
@@ -1058,7 +1100,53 @@ func _update_combat_box() -> void:
 			_update_combat_box())
 		row.add_child(b)
 	card.add_child(strip)
+	var cdesc := []
+	for i in alive:
+		var en: Dictionary = c.enemies[i]
+		for k in en.get("conds", {}):
+			cdesc.append("%s — %s: %s" % [en.name, str(R.CONDS[k].name).to_lower(), R.CONDS[k].desc])
+	for n in Game.state.heroes:
+		var hh: Dictionary = Game.state.heroes[n]
+		for k in hh.get("conds", {}):
+			cdesc.append("%s — %s: %s" % [hh.name, str(R.CONDS[k].name).to_lower(), R.CONDS[k].desc])
+	if cdesc.size() > 0:
+		card.add_child(_label("\n".join(cdesc), 16, Color("ffcf9a")))
 	box.add_child(card.get_parent())
+
+
+## Хиты и состояния напарников под своей полоской здоровья.
+func _update_party() -> void:
+	var rows := []
+	for n in Game.state.heroes:
+		if n != Game.my_pname():
+			var hh: Dictionary = Game.state.heroes[n]
+			rows.append([str(hh.name), int(hh.hp), int(hh.max_hp), hh.get("conds", {}).keys(), n in Net.players.values()])
+	for cp in Game.state.get("companions", []):
+		rows.append([str(cp.name), int(cp.hp), int(cp.max_hp), [], true])
+	var key := JSON.stringify(rows)
+	if key == refs.party_key:
+		return
+	refs.party_key = key
+	var box: HBoxContainer = refs.party
+	for ch in box.get_children():
+		ch.queue_free()
+	for r in rows:
+		var cell := HBoxContainer.new()
+		cell.add_theme_constant_override("separation", 6)
+		var nl := _label("%s %d/%d%s" % [r[0], r[1], r[2], "" if r[4] else " (нет в сети)"], 17, C_INK if int(r[1]) > 0 else C_RED)
+		nl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		cell.add_child(nl)
+		var pb := ProgressBar.new()
+		pb.max_value = maxi(1, int(r[2]))
+		pb.value = int(r[1])
+		pb.show_percentage = false
+		UISkin.style_bar(pb, "hp")
+		pb.custom_minimum_size = Vector2(90, 14)
+		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.add_child(pb)
+		for k in r[3]:
+			cell.add_child(_icon_rect(Icons.tex(str(R.CONDS[k].icon)), 22, Color("c8ff8a") if k == "poisoned" else Color("ffb0a0")))
+		box.add_child(cell)
 
 
 func _cond_tags(h: Dictionary) -> String:
@@ -2288,7 +2376,7 @@ func _show_item(it: Dictionary, idx: int, slot: String) -> void:
 		v.add_child(_label(R.item_desc(it), 22, C_INK))
 	if str(it.get("note", "")) != "":
 		v.add_child(_label(str(it.note), 20, C_INK))
-	elif d.type == "misc" and R.item_desc(it) == "":
+	elif str(it.get("id", "")) == "misc":
 		v.add_child(_label("Сюжетная вещь. Покажи её кому-то, используй, отдай или спрячь — ведущий это учтёт.", 19, C_MUTED))
 	v.add_child(_label("Цена: %d зол." % R.item_price(it), 19, C_MUTED))
 	var acts := VBoxContainer.new()
@@ -2580,7 +2668,7 @@ func _show_notice(icon: String, title: String, text: String, cb: Callable) -> vo
 	p.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	p.offset_left = 22
 	p.offset_right = -22
-	p.offset_top = 236
+	p.offset_top = 266
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)

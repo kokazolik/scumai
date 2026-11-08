@@ -535,7 +535,14 @@ func _save_info() -> String:
 
 
 func _log(kind: String, who: String, text: String) -> void:
-	state.log.append({"k": kind, "w": who, "t": text})
+	# сквозной номер записи: журнал обрезается до 200 строк, а телефоны по номеру понимают, что появилось новое
+	if not state.has("log_n"):
+		var mx: int = state.log.size()
+		for e in state.log:
+			mx = maxi(mx, int(e.get("i", 0)))
+		state.log_n = mx
+	state.log_n = int(state.log_n) + 1
+	state.log.append({"k": kind, "w": who, "t": text, "i": int(state.log_n)})
 	if state.log.size() > 200:
 		state.log = state.log.slice(-200)
 
@@ -964,9 +971,7 @@ func _ask_effects(a: Dictionary) -> void:
 		var extra := ""
 		var cn := str(a.get("trap_cond", ""))
 		if cn != "":
-			if not h.has("conds"):
-				h.conds = {}
-			h.conds[cn] = 3
+			_add_cond(h, cn, 3)
 			extra = ", " + str(R.CONDS[cn].name).to_lower()
 		_log("sys", h.name, "Ловушка: %s получает %d урона%s (%d/%d)." % [h.name, maxi(0, dmg), extra, h.hp, h.max_hp])
 		r.text = str(r.text) + " (ловушка сработала: %d урона%s)" % [maxi(0, dmg), extra]
@@ -1175,9 +1180,7 @@ func _apply_changes_each(changes: Array) -> int:
 					h.items.remove_at(idx)
 		var cn := R.cond_from(str(c.get("cond", "")))
 		if cn != "":
-			if not h.has("conds"):
-				h.conds = {}
-			h.conds[cn] = 3
+			_add_cond(h, cn, 3)
 			_log("sys", hn, "%s: %s (%s)." % [hn, R.CONDS[cn].name, R.CONDS[cn].desc])
 		var cu := R.cond_from(str(c.get("cure", "")))
 		if cu != "" and h.get("conds", {}).has(cu):
@@ -1823,7 +1826,22 @@ func _tick_conds(who: Dictionary, nm: String) -> bool:
 func _add_cond(who: Dictionary, cond: String, rounds: int) -> void:
 	if not who.has("conds"):
 		who.conds = {}
+	if not R.CONDS.has(cond):
+		return
+	var was: bool = who.conds.has(cond)
 	who.conds[cond] = maxi(int(who.conds.get(cond, 0)), rounds)
+	if not was:
+		_fx_event(str(R.CONDS[cond].icon), "ff9a7a" if cond != "poisoned" else "b8ff7a", "%s: %s" % [who.get("name", "?"), R.CONDS[cond].name], str(R.CONDS[cond].desc), true)
+
+
+## Событие для анимации на всех телефонах (заклинание, наложенное состояние).
+func _fx_event(icon: String, col: String, title: String, sub: String, status := false) -> void:
+	state.fx_seq = int(state.get("fx_seq", 0)) + 1
+	if not state.has("fx"):
+		state.fx = []
+	state.fx.append({"n": int(state.fx_seq), "icon": icon, "col": col, "title": title.left(60), "sub": sub.left(90), "status": status})
+	if (state.fx as Array).size() > 6:
+		state.fx = (state.fx as Array).slice(-6)
 
 
 ## Ход спутника: бьёт ближайшего врага.
@@ -2435,6 +2453,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 			if ti < 0:
 				return false
 			var dmg := R.roll(dice) + upcast * (randi_range(1, 4) + 1) + R.talent_sum(h, "spell_dmg")
+			_fx_event("sp_" + spell, str(R.SPELLS[spell].get("col", "b98cff")), sp.name, "%d урона · %s" % [dmg, c.enemies[ti].name])
 			_log("cbt", h.name, "%s: %d урона по %s. %s" % [head, dmg, c.enemies[ti].name, _hit_enemy(ti, dmg, "")])
 		"save":
 			var targets := _alive_enemies() if sp.get("aoe", false) else [_target_enemy(int(target) if (target is int or target is float) else -1)]
@@ -2455,6 +2474,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 					_add_cond(en, str(sp.cond), 1)
 					cnote = ", " + str(R.CONDS[str(sp.cond)].name).to_lower()
 				parts.append("%s %s (%d), %d урона%s %s" % [en.name, "увернулся" if saved else "не увернулся", sv, dmg, cnote, _hit_enemy(ti, dmg, "") if dmg > 0 else ""])
+			_fx_event("sp_" + spell, str(sp.get("col", "ff7a3d")), sp.name, "спасбросок %s против СЛ %d · целей: %d" % [sp.save, sdc, parts.size()])
 			_log("cbt", h.name, "%s (СЛ %d): %s" % [head, sdc, "; ".join(parts)])
 		"heal":
 			var who: Array = []
@@ -2467,6 +2487,10 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				var tn := str(target)
 				who = [tn if state.heroes.has(tn) else pname]
 			_log("cbt", h.name, head + ".")
+			var wn := []
+			for n in who:
+				wn.append(str(state.heroes[n].name))
+			_fx_event("sp_" + spell, str(sp.get("col", "6fe3a0")), sp.name, "лечение: " + ", ".join(wn))
 			for n in who:
 				_heal_hero(n, R.roll(dice) + R.caster_mod(h) + R.talent_sum(h, "heal"))
 		"buff":
@@ -2474,6 +2498,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 			if not state.heroes.has(tn):
 				tn = pname
 			state.heroes[tn].temp_ac = int(sp.get("ac", 2))
+			_fx_event("sp_" + spell, str(sp.get("col", "ffe08a")), sp.name, "%s: +%d к КД" % [state.heroes[tn].name, int(sp.get("ac", 2))])
 			_log("cbt", h.name, "%s: %s получает +%d к КД до конца боя." % [head, state.heroes[tn].name, int(sp.get("ac", 2))])
 		"sleep":
 			var pool := R.roll(dice) + upcast * R.roll("2d8")
@@ -2490,6 +2515,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				en.asleep = true
 				en.wake_round = int(c.round) + 10
 				slept.append(en.name)
+			_fx_event("sp_" + spell, str(sp.get("col", "a9a0ff")), sp.name, ("засыпают: " + ", ".join(slept)) if slept.size() > 0 else "никто не уснул")
 			_log("cbt", h.name, "%s: %s" % [head, ("засыпают: " + ", ".join(slept)) if slept.size() > 0 else "никто не уснул."])
 	if rolls.size() > 0:
 		_show_rolls(rolls)
