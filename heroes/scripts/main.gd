@@ -5,6 +5,7 @@ extends Control
 const R = preload("res://scripts/rules.gd")
 const MapView = preload("res://scripts/map_view.gd")
 const DiceView = preload("res://scripts/dice_view.gd")
+const FxView = preload("res://scripts/fx_view.gd")
 const Icons = preload("res://scripts/icons.gd")
 
 const C_BG1 := Color("161827")
@@ -27,6 +28,12 @@ var root_margin: MarginContainer
 var content: VBoxContainer
 var overlay: Control
 var dice: Control
+var fx: Control
+var _fx_hero := ""
+var _fx_hp := -1
+var _fx_level := -1
+var _fx_gold := -1
+var _fx_had_loot := false
 var toast: Label
 var screen := ""
 var refs := {}
@@ -75,6 +82,10 @@ func _ready() -> void:
 	dice.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dice.visible = false
 	add_child(dice)
+
+	fx = FxView.new()
+	fx.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(fx)
 
 	toast = _label("", 24, C_INK)
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -131,6 +142,45 @@ func _refresh() -> void:
 		screen = k
 		_build()
 	_update()
+	_check_fx()
+
+
+func _check_fx() -> void:
+	if screen != "game" or not Net.is_online():
+		_fx_hero = ""
+		return
+	var h := Game.my_hero()
+	if h.is_empty():
+		return
+	var hp := int(h.get("hp", 0))
+	var lv := int(h.get("level", 1))
+	var gold := int(h.get("gold", 0))
+	var loot: Dictionary = Game.state.get("loot", {})
+	var has_loot := not loot.is_empty()
+	if _fx_hero != str(h.name):
+		_fx_hero = str(h.name)
+	else:
+		if hp < _fx_hp:
+			fx.hit_flash(Color(0.9, 0.1, 0.1))
+		if lv > _fx_level:
+			fx.level_up(str(h.name), lv)
+		if has_loot and not _fx_had_loot:
+			var icons: Array = []
+			for it in loot.get("items", []):
+				if it is Dictionary and icons.size() < 10:
+					icons.append(Icons.for_item(it))
+			_loot_fx(str(loot.get("title", "Добыча")), maxi(0, gold - _fx_gold), icons)
+	_fx_hp = hp
+	_fx_level = lv
+	_fx_gold = gold
+	_fx_had_loot = has_loot
+
+
+func _loot_fx(title: String, gold: int, icons: Array) -> void:
+	# сундук показываем после кубика, чтобы не прятался под ним
+	if dice.visible:
+		await dice.finished
+	fx.loot_burst(title, gold, icons)
 
 
 func _clear() -> void:
@@ -1490,7 +1540,7 @@ func _autotest_setup() -> void:
 
 func _autotest_tick() -> void:
 	_auto_n += 1
-	if _auto_n > 400:
+	if _auto_n > 1000:
 		print("[%s] AUTOTEST TIMEOUT" % _auto)
 		get_tree().quit(1)
 		return
