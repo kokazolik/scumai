@@ -448,10 +448,10 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 			var h: Dictionary = state.heroes[n]
 			var v := R.short_rest(h)
 			_log("sys", h.name, "Короткий отдых: %s восстанавливает %d хитов (%d/%d)." % [h.name, v, h.hp, h.max_hp])
-	if str(d.get("chest", "")) != "" and int(state.turn) - int(state.campaign.get("last_chest", -99)) >= 2:
+	if allow_combat and str(d.get("chest", "")) != "" and int(state.turn) - int(state.campaign.get("last_chest", -99)) >= 2:
 		state.campaign.last_chest = int(state.turn)
 		_open_chest(str(d.chest))
-	if str(d.get("shop", "")) != "":
+	if allow_combat and str(d.get("shop", "")) != "":
 		state.shop = {"title": str(d.shop).left(40), "items": R.shop_stock(_tier())}
 	state.turn = int(state.turn) + 1
 	state.pending = []
@@ -685,6 +685,23 @@ func _d20(h: Dictionary, adv: int, use_insp := true) -> Dictionary:
 func _apply_changes(changes) -> void:
 	if not (changes is Array):
 		return
+	var reward_gold := _apply_changes_each(changes)
+	if reward_gold > 0:
+		_split_gold("Награда", mini(reward_gold, 1000))
+
+
+## Предмет уже выдан игрой недавно (добыча, сундук) — ведущий не должен выдать его второй раз.
+func _recently_got(item_name: String, upto: int) -> bool:
+	var low := item_name.to_lower()
+	for e in state.log.slice(maxi(0, upto - 25), upto):
+		if str(e.k) in ["loot", "sys"] and (str(e.t).contains("забирает") or str(e.t).contains("получает")) and str(e.t).to_lower().contains(low):
+			return true
+	return false
+
+
+func _apply_changes_each(changes: Array) -> int:
+	var reward_gold := 0
+	var log_start: int = state.log.size()
 	for c in changes:
 		if not (c is Dictionary):
 			continue
@@ -702,6 +719,10 @@ func _apply_changes(changes) -> void:
 		elif dhp > 0:
 			_heal_hero(pname, dhp)
 		var dg := clampi(int(c.get("gold", 0)), -1000, 1000)
+		if dg > 0:
+			if int(state.turn) - int(state.campaign.get("last_loot_turn", -99)) > 1:
+				reward_gold += dg
+			dg = 0
 		if dg != 0:
 			var before := int(h.gold)
 			h.gold = maxi(0, int(h.gold) + dg)
@@ -710,6 +731,8 @@ func _apply_changes(changes) -> void:
 		if add is Array:
 			for v in add:
 				var it := R.item_from_ai(v)
+				if not it.is_empty() and _recently_got(R.item_name(it), log_start):
+					continue
 				if not it.is_empty() and h.items.size() < 30:
 					h.items.append(it)
 					_log("sys", hn, "%s получает: %s" % [hn, R.item_name(it)])
@@ -721,6 +744,7 @@ func _apply_changes(changes) -> void:
 					_log("sys", hn, "%s теряет: %s" % [hn, R.item_name(h.items[idx])])
 					h.items.remove_at(idx)
 		_give_xp(pname, clampi(int(c.get("xp", 0)), 0, 400))
+	return reward_gold
 
 
 func _give_xp(pname: String, xp: int) -> void:
@@ -833,15 +857,23 @@ func _open_chest(title: String) -> void:
 	_add_loot(title, int(loot.gold), loot.items)
 
 
+## Золото делится поровну между всеми героями отряда; остаток округляем вверх, чтобы суммы сходились.
+func _split_gold(title: String, gold: int) -> void:
+	var names: Array = []
+	for n in state.heroes:
+		if not state.heroes[n].get("dead", false):
+			names.append(n)
+	if gold <= 0 or names.is_empty():
+		return
+	gold = int(ceil(float(gold) / names.size())) * names.size()
+	var share := gold / names.size()
+	for n in names:
+		state.heroes[n].gold = int(state.heroes[n].gold) + share
+	_log("loot", "", "%s: %d золота, каждому по %d." % [title, gold, share])
+
+
 func _add_loot(title: String, gold: int, items: Array) -> void:
-	var names := _active_names()
-	if names.is_empty():
-		names = state.heroes.keys()
-	if gold > 0 and names.size() > 0:
-		var share := gold / names.size()
-		for n in names:
-			state.heroes[n].gold = int(state.heroes[n].gold) + share
-		_log("loot", "", "%s: %d золота, каждому по %d." % [title, gold, share])
+	_split_gold(title, gold)
 	var cur: Dictionary = state.loot
 	if not cur.is_empty() and (cur.items as Array).size() > 0:
 		cur.items.append_array(items)
@@ -1363,6 +1395,9 @@ func _combat_check_end() -> bool:
 	return true
 
 
+var _loot_note := ""
+
+
 func _end_combat(result: String) -> void:
 	var c: Dictionary = state.combat
 	var total_xp := 0
@@ -1408,13 +1443,19 @@ func _end_combat(result: String) -> void:
 			h.death_f = 0
 			_log("sys", h.name, "%s приходит в себя с 1 хитом." % h.name)
 	state.combat = {}
+	_loot_note = ""
 	if result == "won" and gold > 0:
 		var items := []
 		if randf() < 0.45:
 			items = R.roll_loot(_tier()).items.slice(0, randi_range(1, 2))
 		_add_loot("Добыча с врагов", gold, items)
+		var nm := []
+		for it in items:
+			nm.append(R.item_name(it))
+		_loot_note = "Игра уже выдала добычу: %d золота%s. Не придумывай другой добычи и не повторяй эту." % [gold, (", " + ", ".join(nm)) if nm.size() > 0 else ""]
+		state.campaign.last_loot_turn = int(state.turn)
 	_set_phase("thinking")
-	var res: Dictionary = await LLM.chat_json(_narrate_prompt("", [], summary + " " + _combat_recap()), 0.9, 1200)
+	var res: Dictionary = await LLM.chat_json(_narrate_prompt("", [], summary + " " + _combat_recap() + " " + _loot_note), 0.9, 1200)
 	if not Net.is_host():
 		return
 	if res.ok and str(res.data.get("story", "")) != "":
@@ -1864,7 +1905,7 @@ const NARRATE_FORMAT := """Ответь строго JSON без markdown:
 {"story": "4-8 предложений", "changes": [{"who": "имя героя", "hp": 0, "gold": 0, "add": [], "remove": [], "xp": 0}], "options": {"Имя героя": ["вариант", "вариант", "вариант"]}, "place": null, "quest": "", "quests": [], "npcs": [], "chest": "", "shop": "", "combat": [], "rest": ""}
 Поля:
 - story: последствия действий каждого героя, реакция мира и персонажей (с прямой речью), новая ситуация; закончи тем, что ждёт ответа героев.
-- changes: только реальные изменения вне боя: урон от ловушек и падений (hp отрицательный, 1-10), лечение (hp положительный), награды золотом, найденные или отданные вещи, опыт xp (10-50 за умное действие или убеждение, 50-200 за решённую загадку или выполненное поручение). add — id из каталога, можно с улучшением {"id": "longsword", "plus": 1, "name": "Меч «Рассвет»"}, или сюжетная вещь строкой ПО-РУССКИ («Древний цилиндр», «Письмо мэра»), никогда не латинский id. Пустой список, если ничего.
+- changes: золото-награда делится игрой поровну на всех, укажи общую сумму у любого героя. Не выдавай повторно то, что игра уже выдала (строки «Добыча», «забирает», «получает» в недавних событиях). Только реальные изменения вне боя: урон от ловушек и падений (hp отрицательный, 1-10), лечение (hp положительный), награды золотом, найденные или отданные вещи, опыт xp (10-50 за умное действие или убеждение, 50-200 за решённую загадку или выполненное поручение). add — id из каталога, можно с улучшением {"id": "longsword", "plus": 1, "name": "Меч «Рассвет»"}, или сюжетная вещь строкой ПО-РУССКИ («Древний цилиндр», «Письмо мэра»), никогда не латинский id. Пустой список, если ничего.
 - options: по три коротких варианта (до 8 слов) для каждого героя: осторожный, смелый, неожиданный.
 - place: {"name": "название", "type": "тип"} только если герои пришли в новое место или вернулись в известное, иначе null. Типы: village, city, tavern, forest, road, cave, dungeon, castle, ruins, swamp, mountain, lake, camp, temple, tower, field, sea, port.
 - quests: дополнительные задания и поручения. Новое: {"title": "Найти пропавшую козу", "note": "кто дал и где искать", "status": "new"}; выполнено: {"title": то же название, "status": "done"}; провалено: "failed". Пусто, если ничего не изменилось. Названия активных заданий бери из списка выше точно.
