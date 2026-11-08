@@ -10,8 +10,8 @@ signal left(reason: String)  # нас отключили / не смогли п�
 
 const PORT := 7777
 const DISCOVERY_PORT := 7778
-const MAX_PLAYERS := 6
-const MAGIC := "alibi-room-1"
+const MAX_PLAYERS := 4
+const MAGIC := "chronicles-room-1"
 
 var players := {}  # peer_id -> имя
 var my_name := "Игрок"
@@ -137,7 +137,7 @@ func _process(delta: float) -> void:
 
 func _send_beacon() -> void:
 	var msg := JSON.stringify({"magic": MAGIC, "name": my_name, "count": players.size(),
-		"open": Game.phase == "lobby"}).to_utf8_buffer()
+		"open": Game.phase == "lobby" or Game.has_free_hero()}).to_utf8_buffer()
 	var targets := ["255.255.255.255"]
 	for a in local_ips():
 		var p: PackedStringArray = a.split(".")
@@ -167,19 +167,20 @@ func _register(pname: String) -> void:
 	if not is_host():
 		return
 	var id := multiplayer.get_remote_sender_id()
-	if Game.phase != "lobby" or players.size() >= MAX_PLAYERS:
-		_rejected.rpc_id(id, "Игра уже идёт" if Game.phase != "lobby" else "Комната заполнена")
+	pname = pname.strip_edges().left(16)
+	var rejoin := Game.phase != "lobby" and Game.can_rejoin(pname)
+	if (Game.phase != "lobby" and not rejoin) or players.size() >= MAX_PLAYERS:
+		_rejected.rpc_id(id, "Игра уже идёт: войти можно только под кличкой своего героя" if Game.phase != "lobby" else "Комната заполнена")
 		get_tree().create_timer(0.5).timeout.connect(func():
 			if is_host():
 				multiplayer.multiplayer_peer.disconnect_peer(id))
 		return
-	pname = pname.strip_edges().left(16)
 	if pname == "":
 		pname = "Игрок"
 	var taken := players.values()
 	var base := pname
 	var n := 2
-	while pname in taken:
+	while pname in taken and not rejoin:
 		pname = "%s %d" % [base, n]
 		n += 1
 	players[id] = pname

@@ -119,19 +119,40 @@ static func parse_json_object(text: String):
 
 func _mock_reply(messages: Array) -> String:
 	var sys := str(messages[0].get("content", ""))
-	if sys.contains("[CASE]"):
-		return JSON.stringify({
-			"title": "Дело о пропавшем торте",
-			"crime": "Вчера с 19:00 до 21:00 из учительской школы №5 исчез юбилейный торт директора. На подоконнике нашли крошки и чек из ларька.",
-			"detective": "майор Пётр Колобков",
-			"style": "ворчливо, с поговорками",
-			"hint": "Договоритесь, где вы были, что ели и кто за что платил.",
-			"question": "Где вы были вчера в восемь вечера и с кем?",
-		})
-	if sys.contains("[FINAL]"):
-		return JSON.stringify({"speech": "Ладно, свободны. Но я за вами слежу, голубчики."})
-	return JSON.stringify({
-		"delta": randi_range(-8, 30),
-		"comment": "Один говорит одно, другой другое. Рыба гниёт с головы!",
-		"question": "Какого цвета была куртка у того, кто платил?",
-	})
+	var user := str(messages[-1].get("content", ""))
+	var names := []
+	for line in user.split("\n"):
+		if line.begins_with("- ") and line.contains(":"):
+			names.append(line.substr(2, line.find(":") - 2))
+	var opts := {}
+	for n in names:
+		opts[n] = ["Осмотреться", "Пойти вперёд", "Заговорить с незнакомцем"]
+	if sys.contains("Сейчас начало новой кампании"):
+		return JSON.stringify({"title": "Тень над Вербой", "world": "Тихая долина, где пропадают дети.",
+			"quest": "Найти, кто крадёт детей.", "place": {"name": "Деревня Верба", "type": "village"},
+			"intro": "Вы стоите у колодца в деревне Верба. Что делаете?", "options": opts})
+	if sys.contains("только решаешь, нужны ли броски"):
+		var checks := []
+		for n in names:
+			checks.append({"who": n, "kind": "skill", "name": "Восприятие", "dc": 12, "adv": 0, "why": "осмотр"})
+		return JSON.stringify({"checks": checks})
+	if sys.contains("необычное действие"):
+		return JSON.stringify({"check": {"kind": "skill", "name": "Атлетика", "dc": 10}, "effect": {"damage": "2d6"},
+			"success": "Получилось!", "fail": "Не вышло."})
+	if sys.contains("[CHRONICLE]"):
+		return JSON.stringify({"chronicle": "Герои пришли в Вербу и подрались с гоблинами."})
+	var turn := randi() % 4
+	var d := {"story": "Мир живёт своей жизнью. Что дальше?", "changes": [], "options": opts,
+		"place": null, "quest": "", "chest": "", "shop": "", "combat": [], "rest": ""}
+	if sys.contains("закончился бой"):
+		d.story = "Враги повержены."
+	elif turn == 0:
+		d.combat = [{"id": "goblin", "count": 2}]
+		d.story = "Из кустов выскакивают гоблины!"
+	elif turn == 1:
+		d.chest = "Старый сундук"
+		d.place = {"name": "Тёмный лес", "type": "forest"}
+	elif turn == 2:
+		d.shop = "Кузнец Михей"
+		d.changes = [{"who": names[0] if names.size() > 0 else "", "xp": 120, "gold": 5, "add": ["potion_heal"]}]
+	return JSON.stringify(d)
