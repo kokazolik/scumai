@@ -601,13 +601,19 @@ func _build_game() -> void:
 	bar.custom_minimum_size = Vector2(0, 30)
 	refs.hp_bar = bar
 	info.add_child(bar)
-	var party := HBoxContainer.new()
-	party.add_theme_constant_override("separation", 14)
-	refs.party = party
-	refs.party_key = ""
-	info.add_child(party)
+	var mys := HFlowContainer.new()
+	mys.add_theme_constant_override("h_separation", 8)
+	mys.add_theme_constant_override("v_separation", 6)
+	refs.my_conds = mys
+	info.add_child(mys)
 	top.add_child(info)
 	content.add_child(top)
+	# напарники и спутники — отдельной строкой во всю ширину, чтобы всё влезало
+	var party := HBoxContainer.new()
+	party.add_theme_constant_override("separation", 10)
+	refs.party = party
+	refs.party_key = ""
+	content.add_child(party)
 	# вкладки
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 8)
@@ -774,7 +780,7 @@ func _update_game() -> void:
 		if h.is_empty():
 			refs.hero_line.text = "Ты зритель"
 		else:
-			refs.hero_line.text = "%s · %s %d · КД %d · %d зол. · Хиты %d/%d%s" % [h.name, h.cls, int(h.level), R.ac(h), int(h.gold), int(h.hp), int(h.max_hp), _cond_tags(h)]
+			refs.hero_line.text = "%s · %s %d · КД %d · %d зол. · Хиты %d/%d%s" % [h.name, h.cls, int(h.level), R.ac(h), int(h.gold), int(h.hp), int(h.max_hp), ""]
 			refs.hp_bar.max_value = int(h.max_hp)
 			refs.hp_bar.value = int(h.hp)
 	if refs.has("party"):
@@ -1123,30 +1129,86 @@ func _update_party() -> void:
 			rows.append([str(hh.name), int(hh.hp), int(hh.max_hp), hh.get("conds", {}).keys(), n in Net.players.values()])
 	for cp in Game.state.get("companions", []):
 		rows.append([str(cp.name), int(cp.hp), int(cp.max_hp), [], true])
-	var key := JSON.stringify(rows)
+	var mine: Array = Game.my_hero().get("conds", {}).keys()
+	var key := JSON.stringify([rows, mine])
 	if key == refs.party_key:
 		return
 	refs.party_key = key
+	# свои состояния — яркими плашками под полоской здоровья
+	var mb: HFlowContainer = refs.my_conds
+	for ch in mb.get_children():
+		ch.queue_free()
+	for k in mine:
+		mb.add_child(_cond_chip(str(k), 20))
 	var box: HBoxContainer = refs.party
 	for ch in box.get_children():
 		ch.queue_free()
+	box.visible = rows.size() > 0
 	for r in rows:
-		var cell := HBoxContainer.new()
-		cell.add_theme_constant_override("separation", 6)
-		var nl := _label("%s %d/%d%s" % [r[0], r[1], r[2], "" if r[4] else " (нет в сети)"], 17, C_INK if int(r[1]) > 0 else C_RED)
+		var pc := PanelContainer.new()
+		pc.add_theme_stylebox_override("panel", UISkin.panel("inset", 6))
+		pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 2)
+		var tr := HBoxContainer.new()
+		var nl := _label(str(r[0]), 17, C_INK if int(r[1]) > 0 else C_RED)
 		nl.autowrap_mode = TextServer.AUTOWRAP_OFF
-		cell.add_child(nl)
+		nl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		nl.clip_text = true
+		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tr.add_child(nl)
+		var hl := _label("%d/%d%s" % [r[1], r[2], "" if r[4] else " ⚠"], 17, C_ACCENT)
+		hl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		tr.add_child(hl)
+		cv.add_child(tr)
+		var br := HBoxContainer.new()
+		br.add_theme_constant_override("separation", 4)
 		var pb := ProgressBar.new()
 		pb.max_value = maxi(1, int(r[2]))
 		pb.value = int(r[1])
 		pb.show_percentage = false
 		UISkin.style_bar(pb, "hp")
-		pb.custom_minimum_size = Vector2(90, 14)
+		pb.custom_minimum_size = Vector2(40, 14)
+		pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		cell.add_child(pb)
+		br.add_child(pb)
 		for k in r[3]:
-			cell.add_child(_icon_rect(Icons.tex(str(R.CONDS[k].icon)), 22, Color("c8ff8a") if k == "poisoned" else Color("ffb0a0")))
-		box.add_child(cell)
+			br.add_child(_icon_rect(Icons.tex(str(R.CONDS[k].icon)), 26, _cond_color(str(k))))
+		cv.add_child(br)
+		pc.add_child(cv)
+		box.add_child(pc)
+
+
+func _cond_color(k: String) -> Color:
+	return Color("b8ff6a") if k == "poisoned" else (Color("ffd36a") if k == "stunned" else Color("ff9a86"))
+
+
+## Плашка состояния: значок + название, хорошо видна.
+func _cond_chip(k: String, fs := 18) -> Control:
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.35, 0.05, 0.05, 0.9) if k != "poisoned" else Color(0.15, 0.3, 0.05, 0.9)
+	sb.border_color = _cond_color(k)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(14)
+	sb.content_margin_left = 8
+	sb.content_margin_right = 10
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 2
+	pc.add_theme_stylebox_override("panel", sb)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	row.add_child(_icon_rect(Icons.tex(str(R.CONDS[k].icon)), fs + 8, _cond_color(k)))
+	var l := _label(str(R.CONDS[k].name), fs, Color.WHITE)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	row.add_child(l)
+	pc.add_child(row)
+	pc.tooltip_text = str(R.CONDS[k].desc)
+	pc.mouse_filter = Control.MOUSE_FILTER_PASS
+	pc.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			_toast("%s: %s" % [R.CONDS[k].name, R.CONDS[k].desc]))
+	return pc
 
 
 func _cond_tags(h: Dictionary) -> String:
@@ -1448,6 +1510,14 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	mv.disabled = Game.state.combat.get("moved", {}).get(me, false)
 	top.add_child(mv)
 	b.add_child(top)
+	if not h.get("conds", {}).is_empty():
+		var cf := HFlowContainer.new()
+		cf.add_theme_constant_override("h_separation", 8)
+		for k in h.conds:
+			cf.add_child(_cond_chip(str(k), 18))
+		b.add_child(cf)
+		for k in h.conds:
+			b.add_child(_label("%s: %s" % [R.CONDS[k].name, R.CONDS[k].desc], 16, _cond_color(str(k))))
 	b.add_child(_label(("Ты впереди: прикрываешь тех, кто в тылу. Отход — враг ударит вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит. Стрелы бьют хуже."), 16, C_MUTED))
 	var g := GridContainer.new()
 	g.columns = 2
@@ -2668,7 +2738,7 @@ func _show_notice(icon: String, title: String, text: String, cb: Callable) -> vo
 	p.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	p.offset_left = 22
 	p.offset_right = -22
-	p.offset_top = 266
+	p.offset_top = 330
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
