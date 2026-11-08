@@ -29,8 +29,8 @@
 на телефоне хоста. Репозиторий публичный, ключ из APK или git сразу утащат.
 
 ## Сборка
-`tools/build_apk.sh 0.2` — экспорт без Android SDK (подставной SDK + uber-apk-signer), подпись релизным
-ключом из папки проекта `keys/` (не из git). Результат: `build/chronicles-0.2.apk`.
+`tools/build_apk.sh 0.3` — экспорт без Android SDK (подставной SDK + uber-apk-signer), подпись релизным
+ключом из папки проекта `keys/` (не из git). Результат: `build/chronicles-0.3.apk`.
 
 ## Автотест
 ```

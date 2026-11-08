@@ -82,6 +82,9 @@ if [ ! -d "$PROJ/.godot/imported" ]; then
   log "first run: importing assets"
   timeout 300 "$GODOT" --headless --path "$PROJ" --import >"$PROJ/build/import.log" 2>&1 || true
 fi
+# Godot кэширует сконвертированные сцены в .godot/exported и не всегда замечает,
+# что изменился подключённый скрипт: из-за этого в 0.1 главная сцена ушла без скрипта (серый экран).
+rm -rf "$PROJ/.godot/exported"
 MODE="--export-release"; [ "${DEBUG_EXPORT:-0}" = 1 ] && MODE="--export-debug"
 log "exporting ($MODE) -> $UNSIGNED"
 set +e
