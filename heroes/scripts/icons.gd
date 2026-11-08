@@ -53,15 +53,17 @@ const ITEM_ICONS := {
 	"holy_symbol": "it_amulet",
 	"potion_heal": "it_potion", "potion_greater": "it_potion", "potion_superior": "it_potion",
 	"scroll_fire": "it_scroll", "scroll_missile": "it_scroll", "scroll_cure": "it_scroll",
-	"thieves_tools": "it_tools", "spellbook": "it_book", "lute": "it_lute", "rope": "it_rope",
+	"thieves_tools": "it_lockpicks", "spellbook": "it_book", "lute": "it_lute", "rope": "it_rope",
 	"torch": "it_torch", "rations": "it_food", "misc": "it_misc",
+	"herb": "it_herb", "venom_sac": "it_venom", "ember_dust": "it_ember", "antidote": "it_antidote",
+	"poison_vial": "it_poison", "fire_flask": "it_bomb",
 }
 
 ## Иконка по полю type (для неизвестных id).
 const TYPE_ICONS := {
 	"weapon": "it_weapon", "armor": "it_armor_light", "shield": "it_shield", "clothes": "it_clothes",
 	"head": "it_head", "ring": "it_ring", "amulet": "it_amulet", "potion": "it_potion",
-	"scroll": "it_scroll", "misc": "it_misc",
+	"scroll": "it_scroll", "misc": "it_misc", "reagent": "it_herb", "coat": "it_poison", "bomb": "it_bomb",
 }
 
 ## Подстроки названия (для «misc»-вещей с произвольным именем).
@@ -72,7 +74,7 @@ const NAME_ICONS := [
 	["медальон", "it_amulet"], ["кулон", "it_amulet"], ["плащ", "it_cloak"], ["шлем", "it_head"],
 	["факел", "it_torch"], ["верёвк", "it_rope"], ["веревк", "it_rope"], ["еда", "it_food"],
 	["паёк", "it_food"], ["хлеб", "it_food"], ["мясо", "it_food"], ["лютн", "it_lute"],
-	["инструмент", "it_tools"], ["отмычк", "it_tools"], ["кинжал", "it_dagger"], ["нож", "it_dagger"],
+	["инструмент", "it_tools"], ["отмычк", "it_lockpicks"], ["трав", "it_herb"], ["противояд", "it_antidote"], ["яд", "it_poison"], ["кинжал", "it_dagger"], ["нож", "it_dagger"],
 	["меч", "it_sword"], ["сабл", "it_sword"], ["топор", "it_axe"], ["секир", "it_axe"],
 	["булав", "it_mace"], ["молот", "it_mace"], ["посох", "it_staff"], ["копь", "it_spear"],
 	["лук", "it_bow"], ["арбалет", "it_bow"], ["щит", "it_shield"], ["доспех", "it_armor_heavy"],

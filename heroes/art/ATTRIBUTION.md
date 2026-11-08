@@ -110,3 +110,43 @@ Modified: rasterized to 128x128 PNG, recolored to white on transparent backgroun
 | `fonts/RuslanDisplay-Regular.ttf` | Ruslan Display (Reserved Font Name "Ruslan", "Ruslan Display") | Oleg Snarsky, Denis Masharov, Vladimir Rabdu | OFL 1.1 — `fonts/OFL-RuslanDisplay.txt` |
 
 Source: [github.com/google/fonts](https://github.com/google/fonts) (`ofl/alegreyasc`, `ofl/alegreya`, `ofl/alegreyasans`, `ofl/ruslandisplay`).
+| sp_fire_bolt.png | [fire-ray](https://game-icons.net/1x1/lorc/fire-ray.html) | Lorc |
+| sp_ray_of_frost.png | [ice-bolt](https://game-icons.net/1x1/lorc/ice-bolt.html) | Lorc |
+| sp_sacred_flame.png | [sunbeams](https://game-icons.net/1x1/lorc/sunbeams.html) | Lorc |
+| sp_vicious_mockery.png | [jester-hat](https://game-icons.net/1x1/delapouite/jester-hat.html) | Delapouite |
+| sp_magic_missile.png | [missile-swarm](https://game-icons.net/1x1/lorc/missile-swarm.html) | Lorc |
+| sp_burning_hands.png | [fire-breath](https://game-icons.net/1x1/lorc/fire-breath.html) | Lorc |
+| sp_thunderwave.png | [sonic-boom](https://game-icons.net/1x1/lorc/sonic-boom.html) | Lorc |
+| sp_guiding_bolt.png | [beam-wake](https://game-icons.net/1x1/lorc/beam-wake.html) | Lorc |
+| sp_sleep.png | [sleepy](https://game-icons.net/1x1/lorc/sleepy.html) | Lorc |
+| sp_cure_wounds.png | [glowing-hands](https://game-icons.net/1x1/lorc/glowing-hands.html) | Lorc |
+| sp_healing_word.png | [heart-drop](https://game-icons.net/1x1/lorc/heart-drop.html) | Lorc |
+| sp_shield_of_faith.png | [bolt-shield](https://game-icons.net/1x1/lorc/bolt-shield.html) | Lorc |
+| sp_scorching_ray.png | [laser-blast](https://game-icons.net/1x1/lorc/laser-blast.html) | Lorc |
+| sp_shatter.png | [shatter](https://game-icons.net/1x1/lorc/shatter.html) | Lorc |
+| sp_spiritual_weapon.png | [winged-sword](https://game-icons.net/1x1/lorc/winged-sword.html) | Lorc |
+| sp_mass_healing_word.png | [aura](https://game-icons.net/1x1/lorc/aura.html) | Lorc |
+| sp_fireball.png | [fireball](https://game-icons.net/1x1/lorc/fireball.html) | Lorc |
+| it_herb.png | [herbs-bundle](https://game-icons.net/1x1/delapouite/herbs-bundle.html) | Delapouite |
+| it_venom.png | [drop](https://game-icons.net/1x1/lorc/drop.html) | Lorc |
+| it_ember.png | [powder](https://game-icons.net/1x1/lorc/powder.html) | Lorc |
+| it_antidote.png | [bubbling-flask](https://game-icons.net/1x1/lorc/bubbling-flask.html) | Lorc |
+| it_poison.png | [poison-bottle](https://game-icons.net/1x1/lorc/poison-bottle.html) | Lorc |
+| it_bomb.png | [molotov](https://game-icons.net/1x1/lorc/molotov.html) | Lorc |
+| it_lockpicks.png | [lockpicks](https://game-icons.net/1x1/delapouite/lockpicks.html) | Delapouite |
+| cond_poisoned.png | [poison-gas](https://game-icons.net/1x1/lorc/poison-gas.html) | Lorc |
+| cond_blinded.png | [blindfold](https://game-icons.net/1x1/delapouite/blindfold.html) | Delapouite |
+| cond_frightened.png | [terror](https://game-icons.net/1x1/lorc/terror.html) | Lorc |
+| cond_prone.png | [foot-trip](https://game-icons.net/1x1/lorc/foot-trip.html) | Lorc |
+| cond_stunned.png | [knocked-out-stars](https://game-icons.net/1x1/delapouite/knocked-out-stars.html) | Delapouite |
+| ui_chat.png | [chat-bubble](https://game-icons.net/1x1/delapouite/chat-bubble.html) | Delapouite |
+| ui_vote.png | [vote](https://game-icons.net/1x1/delapouite/vote.html) | Delapouite |
+| ui_campfire.png | [campfire](https://game-icons.net/1x1/lorc/campfire.html) | Lorc |
+| ui_sleep_rest.png | [night-sleep](https://game-icons.net/1x1/delapouite/night-sleep.html) | Delapouite |
+| ui_help.png | [shaking-hands](https://game-icons.net/1x1/delapouite/shaking-hands.html) | Delapouite |
+| ui_craft.png | [cauldron](https://game-icons.net/1x1/lorc/cauldron.html) | Lorc |
+| ui_rep.png | [castle](https://game-icons.net/1x1/lorc/castle.html) | Lorc |
+| ui_heart_broken.png | [broken-heart](https://game-icons.net/1x1/lorc/broken-heart.html) | Lorc |
+| ui_consequence.png | [hourglass](https://game-icons.net/1x1/lorc/hourglass.html) | Lorc |
+| ui_companion.png | [wolf-howl](https://game-icons.net/1x1/lorc/wolf-howl.html) | Lorc |
+| act_help.png | [shaking-hands](https://game-icons.net/1x1/delapouite/shaking-hands.html) | Delapouite |

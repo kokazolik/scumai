@@ -246,18 +246,77 @@ const ITEMS := {
 	"torch": {"name": "Факел", "type": "misc", "price": 1},
 	"rations": {"name": "Паёк", "type": "misc", "price": 1},
 	"misc": {"name": "Вещь", "type": "misc", "price": 1},
+
+	"herb": {"name": "Лечебные травы", "type": "reagent", "price": 5},
+	"venom_sac": {"name": "Ядовитая железа", "type": "reagent", "price": 15},
+	"ember_dust": {"name": "Огненная пыль", "type": "reagent", "price": 15},
+	"antidote": {"name": "Противоядие", "type": "potion", "heal": "1d4", "cure": ["poisoned"], "price": 50},
+	"poison_vial": {"name": "Флакон яда", "type": "coat", "dice": "1d6", "hits": 3, "price": 100},
+	"fire_flask": {"name": "Алхимический огонь", "type": "bomb", "dmg": "2d6", "save": "ЛОВ", "dc": 12, "price": 50},
 }
+
+## Рецепты алхимии: что получится и что уходит. Варить можно вне боя.
+const RECIPES := {
+	"potion_heal": {"need": {"herb": 2}, "skill": "Медицина"},
+	"antidote": {"need": {"herb": 1, "venom_sac": 1}, "skill": "Медицина"},
+	"poison_vial": {"need": {"venom_sac": 2}, "skill": "Природа"},
+	"fire_flask": {"need": {"ember_dust": 1, "herb": 1}, "skill": "Магия"},
+	"potion_greater": {"need": {"potion_heal": 2, "ember_dust": 1}, "skill": "Магия"},
+}
+
+## Состояния. Пока висят — дают помеху или преимущество, rounds — сколько раундов боя.
+const CONDS := {
+	"poisoned": {"name": "Отравлен", "icon": "cond_poisoned", "desc": "помеха на атаки и проверки"},
+	"blinded": {"name": "Ослеплён", "icon": "cond_blinded", "desc": "помеха на атаки, по нему бьют с преимуществом"},
+	"frightened": {"name": "Испуган", "icon": "cond_frightened", "desc": "помеха на атаки и проверки"},
+	"prone": {"name": "Сбит с ног", "icon": "cond_prone", "desc": "помеха на атаки, вблизи по нему бьют с преимуществом; встать — потратить перемещение"},
+	"stunned": {"name": "Оглушён", "icon": "cond_stunned", "desc": "пропускает ход, по нему бьют с преимуществом"},
+}
+
+
+static func cond_from(s: String) -> String:
+	var low := s.strip_edges().to_lower()
+	if CONDS.has(low):
+		return low
+	for k in CONDS:
+		if str(CONDS[k].name).to_lower().left(5) == low.left(5):
+			return k
+	var syn := {"отрав": "poisoned", "яд": "poisoned", "ослеп": "blinded", "испуг": "frightened", "страх": "frightened",
+		"сбит": "prone", "лежит": "prone", "упал": "prone", "оглуш": "stunned", "парал": "stunned"}
+	for k in syn:
+		if low.begins_with(k):
+			return syn[k]
+	return ""
+
+
+## Помеха/преимущество от состояний: атакующий и цель.
+static func cond_adv(att: Dictionary, def: Dictionary, melee: bool) -> int:
+	var a := 0
+	var ac: Dictionary = att.get("conds", {})
+	var dc: Dictionary = def.get("conds", {})
+	if ac.has("poisoned") or ac.has("blinded") or ac.has("frightened") or ac.has("prone"):
+		a -= 1
+	if dc.has("blinded") or dc.has("stunned") or (dc.has("prone") and melee):
+		a += 1
+	if dc.has("prone") and not melee:
+		a -= 1
+	return clampi(a, -1, 1)
+
+
+static func check_adv(h: Dictionary) -> int:
+	var c: Dictionary = h.get("conds", {})
+	return -1 if (c.has("poisoned") or c.has("frightened")) else 0
 
 ## Заклинания. kind: attack (бросок атаки), save (спасбросок цели), auto (без промаха), heal, buff, sleep.
 const SPELLS := {
 	"fire_bolt": {"name": "Огненный снаряд", "lvl": 0, "kind": "attack", "dmg": "1d10", "desc": "сгусток огня, 1к10"},
 	"ray_of_frost": {"name": "Луч холода", "lvl": 0, "kind": "attack", "dmg": "1d8", "desc": "ледяной луч, 1к8"},
 	"sacred_flame": {"name": "Священное пламя", "lvl": 0, "kind": "save", "save": "ЛОВ", "dmg": "1d8", "desc": "свет с небес, 1к8"},
-	"vicious_mockery": {"name": "Злая насмешка", "lvl": 0, "kind": "save", "save": "МДР", "dmg": "1d4", "desc": "обидная шутка, 1к4"},
+	"vicious_mockery": {"name": "Злая насмешка", "lvl": 0, "kind": "save", "save": "МДР", "dmg": "1d4", "cond": "frightened", "desc": "обидная шутка, 1к4, пугает"},
 	"magic_missile": {"name": "Волшебная стрела", "lvl": 1, "kind": "auto", "dmg": "3d4+3", "desc": "три стрелы без промаха"},
 	"burning_hands": {"name": "Огненные ладони", "lvl": 1, "kind": "save", "save": "ЛОВ", "dmg": "3d6", "aoe": true, "desc": "веер огня по всем врагам, 3к6"},
-	"thunderwave": {"name": "Громовая волна", "lvl": 1, "kind": "save", "save": "ТЕЛ", "dmg": "2d8", "aoe": true, "desc": "удар грома по всем, 2к8"},
-	"guiding_bolt": {"name": "Направленный снаряд", "lvl": 1, "kind": "attack", "dmg": "4d6", "desc": "луч света, 4к6"},
+	"thunderwave": {"name": "Громовая волна", "lvl": 1, "kind": "save", "save": "ТЕЛ", "dmg": "2d8", "aoe": true, "cond": "prone", "desc": "удар грома по всем, 2к8, сбивает с ног"},
+	"guiding_bolt": {"name": "Направленный снаряд", "lvl": 1, "kind": "attack", "dmg": "4d6", "cond": "blinded", "desc": "луч света, 4к6, слепит"},
 	"sleep": {"name": "Усыпление", "lvl": 1, "kind": "sleep", "dmg": "5d8", "desc": "усыпляет слабых врагов"},
 	"cure_wounds": {"name": "Лечение ран", "lvl": 1, "kind": "heal", "dmg": "1d8", "desc": "лечит 1к8 + мод."},
 	"healing_word": {"name": "Лечащее слово", "lvl": 1, "kind": "heal", "dmg": "1d4", "desc": "лечит 1к4 + мод. издалека"},
@@ -276,25 +335,25 @@ const MONSTERS := {
 	"bandit": {"name": "Бандит", "bow": true, "ac": 12, "hp": 11, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
 	"cultist": {"name": "Сектант", "bow": true, "ac": 12, "hp": 9, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
 	"goblin": {"name": "Гоблин", "bow": true, "ac": 15, "hp": 7, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50},
-	"wolf": {"name": "Волк", "ac": 13, "hp": 11, "atk": 4, "dmg": "2d4+2", "dex": 2, "xp": 50},
+	"wolf": {"name": "Волк", "on_hit": {"cond": "prone", "save": "СИЛ", "dc": 11, "rounds": 1}, "ac": 13, "hp": 11, "atk": 4, "dmg": "2d4+2", "dex": 2, "xp": 50},
 	"skeleton": {"name": "Скелет", "ac": 13, "hp": 13, "atk": 4, "dmg": "1d6+2", "dex": 2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 2, "МДР": -1}},
 	"zombie": {"name": "Зомби", "ac": 8, "hp": 22, "atk": 3, "dmg": "1d6+1", "dex": -2, "xp": 50, "undead": true, "saves": {"ТЕЛ": 3, "МДР": -2}},
-	"giant_spider_small": {"name": "Пещерный паук", "ac": 13, "hp": 12, "atk": 4, "dmg": "1d6+2", "dex": 3, "xp": 50},
+	"giant_spider_small": {"name": "Пещерный паук", "on_hit": {"cond": "poisoned", "save": "ТЕЛ", "dc": 11, "rounds": 3}, "drop": "venom_sac", "ac": 13, "hp": 12, "atk": 4, "dmg": "1d6+2", "dex": 3, "xp": 50},
 	"orc": {"name": "Орк", "ac": 13, "hp": 15, "atk": 5, "dmg": "1d12+3", "dex": 1, "xp": 100},
 	"hobgoblin": {"name": "Хобгоблин", "bow": true, "ac": 18, "hp": 11, "atk": 3, "dmg": "1d8+1", "dex": 1, "xp": 100},
-	"shadow": {"name": "Тень", "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100, "undead": true},
+	"shadow": {"name": "Тень", "on_hit": {"cond": "frightened", "save": "МДР", "dc": 10, "rounds": 2}, "ac": 12, "hp": 16, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 100, "undead": true},
 	"bandit_captain": {"name": "Главарь бандитов", "ac": 15, "hp": 65, "atk": 5, "dmg": "1d6+3", "multi": 2, "dex": 3, "xp": 450},
-	"ghoul": {"name": "Гуль", "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200, "undead": true},
-	"dire_wolf": {"name": "Лютоволк", "ac": 14, "hp": 37, "atk": 5, "dmg": "2d6+3", "dex": 2, "xp": 200},
-	"giant_spider": {"name": "Гигантский паук", "ac": 14, "hp": 26, "atk": 5, "dmg": "1d8+3", "dex": 3, "xp": 200},
+	"ghoul": {"name": "Гуль", "on_hit": {"cond": "stunned", "save": "ТЕЛ", "dc": 10, "rounds": 1}, "ac": 12, "hp": 22, "atk": 4, "dmg": "2d6+2", "dex": 2, "xp": 200, "undead": true},
+	"dire_wolf": {"name": "Лютоволк", "on_hit": {"cond": "prone", "save": "СИЛ", "dc": 13, "rounds": 1}, "ac": 14, "hp": 37, "atk": 5, "dmg": "2d6+3", "dex": 2, "xp": 200},
+	"giant_spider": {"name": "Гигантский паук", "on_hit": {"cond": "poisoned", "save": "ТЕЛ", "dc": 12, "rounds": 3}, "drop": "venom_sac", "ac": 14, "hp": 26, "atk": 5, "dmg": "1d8+3", "dex": 3, "xp": 200},
 	"bugbear": {"name": "Багбир", "ac": 16, "hp": 27, "atk": 4, "dmg": "2d8+2", "dex": 2, "xp": 200},
-	"harpy": {"name": "Гарпия", "ac": 11, "hp": 38, "atk": 3, "dmg": "2d4+1", "multi": 2, "dex": 1, "xp": 200},
+	"harpy": {"name": "Гарпия", "on_hit": {"cond": "frightened", "save": "МДР", "dc": 11, "rounds": 2}, "ac": 11, "hp": 38, "atk": 3, "dmg": "2d4+1", "multi": 2, "dex": 1, "xp": 200},
 	"ogre": {"name": "Огр", "ac": 11, "hp": 59, "atk": 6, "dmg": "2d8+4", "dex": -1, "xp": 450, "saves": {"ТЕЛ": 3, "МДР": -2}},
 	"wight": {"name": "Умертвие", "ac": 14, "hp": 45, "atk": 4, "dmg": "1d8+2", "multi": 2, "dex": 2, "xp": 700, "undead": true, "saves": {"ТЕЛ": 3}},
 	"minotaur": {"name": "Минотавр", "ac": 14, "hp": 76, "atk": 6, "dmg": "2d12+4", "dex": 0, "xp": 700, "saves": {"ТЕЛ": 3}},
 	"troll": {"name": "Тролль", "ac": 15, "hp": 84, "atk": 7, "dmg": "2d6+4", "multi": 3, "dex": 1, "xp": 1800, "saves": {"ТЕЛ": 5, "МДР": -1}},
 	"wyvern": {"name": "Виверна", "ac": 13, "hp": 110, "atk": 7, "dmg": "2d6+4", "multi": 2, "dex": 0, "xp": 1800},
-	"young_dragon": {"name": "Молодой дракон", "ac": 18, "hp": 136, "atk": 9, "dmg": "2d10+5", "multi": 3, "dex": 1, "xp": 3900, "saves": {"ТЕЛ": 5, "МДР": 4, "ЛОВ": 4}},
+	"young_dragon": {"name": "Молодой дракон", "on_hit": {"cond": "frightened", "save": "МДР", "dc": 13, "rounds": 2}, "ac": 18, "hp": 136, "atk": 9, "dmg": "2d10+5", "multi": 3, "dex": 1, "xp": 3900, "saves": {"ТЕЛ": 5, "МДР": 4, "ЛОВ": 4}},
 }
 
 ## Типы мест для карты.
@@ -392,6 +451,14 @@ static func item_desc(it: Dictionary) -> String:
 			parts.append("+%d КД" % int(d.ac))
 		"potion":
 			parts.append("лечит %s" % dice_ru(str(d.heal)))
+			if d.has("cure"):
+				parts.append("снимает отравление")
+		"reagent":
+			parts.append("ингредиент для алхимии")
+		"coat":
+			parts.append("яд на оружие: %d попадания +%s и отравление" % [int(d.hits), dice_ru(str(d.dice))])
+		"bomb":
+			parts.append("бросить во врага: %s, спасбросок %s СЛ %d — половина" % [dice_ru(str(d.dmg)), d.save, int(d.dc)])
 		"scroll":
 			parts.append("одно заклинание: " + str(SPELLS.get(str(d.spell), {}).get("name", "?")))
 	if d.type not in ["armor", "shield"] and int(d.get("ac", 0)) > 0:
@@ -467,7 +534,7 @@ static func roll_loot(tier: int) -> Dictionary:
 	var n := randi_range(1, 2 + (1 if tier >= 2 else 0))
 	var commons := ["potion_heal", "potion_heal", "dagger", "shortsword", "leather", "studded", "chain_shirt", "shield",
 		"leather_cap", "helmet", "rope", "torch", "rations", "scroll_missile", "scroll_cure", "fine_clothes", "hunter_cloak",
-		"crossbow", "spear", "battleaxe", "warhammer", "shortbow"]
+		"crossbow", "spear", "battleaxe", "warhammer", "shortbow", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask"]
 	var uncommons := ["potion_greater", "scale_mail", "breastplate", "longsword", "rapier", "longbow", "greatsword",
 		"greataxe", "chain_mail", "scroll_fire", "ring_luck"]
 	var magic := ["elven_cloak", "cloak_protection", "ring_protection", "amulet_health", "gauntlets_power",
@@ -493,7 +560,7 @@ static func shop_stock(tier: int) -> Array:
 	var ids := ["potion_heal", "potion_heal", "rope", "torch", "rations", "dagger", "shortsword", "longsword", "rapier",
 		"mace", "battleaxe", "quarterstaff", "shortbow", "longbow", "crossbow", "leather", "studded", "chain_shirt",
 		"scale_mail", "chain_mail", "shield", "helmet", "leather_cap", "fine_clothes", "hunter_cloak", "traveler_clothes",
-		"scroll_missile", "scroll_cure"]
+		"scroll_missile", "scroll_cure", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask"]
 	if tier >= 2:
 		ids += ["potion_greater", "breastplate", "greatsword", "greataxe", "splint", "half_plate", "scroll_fire", "ring_luck"]
 	if tier >= 3:
@@ -722,6 +789,7 @@ static func long_rest(h: Dictionary) -> void:
 	h.stable = false
 	h.dead = false
 	h.temp_ac = 0
+	h.conds = {}
 
 
 ## Короткий отдых: тратит кости хитов, пока не вылечится. Возвращает вылеченное.

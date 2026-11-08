@@ -134,7 +134,7 @@ func _mock_reply(messages: Array) -> String:
 			names.append(line.substr(2, line.find(":") - 2))
 	var opts := {}
 	for n in names:
-		opts[n] = ["Осмотреться", "Пойти вперёд", "Заговорить с незнакомцем"]
+		opts[n] = ["Осмотреться", {"t": "Припугнуть стражника", "check": {"name": "Запугивание", "ability": "СИЛ", "dc": 12}}, "Заговорить с незнакомцем"]
 	if sys.contains("Сейчас начало новой кампании"):
 		return JSON.stringify({"title": "Тень над Вербой", "world": "Тихая долина, где пропадают дети.",
 			"quest": "Найти, кто крадёт детей.", "place": {"name": "Деревня Верба", "type": "village"},
@@ -142,7 +142,12 @@ func _mock_reply(messages: Array) -> String:
 	if sys.contains("только решаешь, нужны ли броски"):
 		var checks := []
 		for n in names:
-			checks.append({"who": n, "kind": "skill", "name": "Восприятие", "dc": 12, "adv": 0, "why": "осмотр"})
+			if randi() % 3 == 0:
+				checks.append({"who": n, "kind": "save", "name": "ЛОВ", "dc": 12, "adv": 0, "why": "ловушка", "trap_dmg": "1d4", "cond": "poisoned"})
+			elif randi() % 2 == 0:
+				checks.append({"who": n, "kind": "skill", "name": "Ловкость рук", "dc": 12, "adv": 0, "why": "замок", "tools": true})
+			else:
+				checks.append({"who": n, "kind": "skill", "name": "Восприятие", "dc": 12, "adv": 0, "why": "осмотр"})
 		return JSON.stringify({"checks": checks})
 	if sys.contains("необычное действие"):
 		return JSON.stringify({"check": {"kind": "skill", "name": "Атлетика", "dc": 10}, "effect": {"damage": "2d6"},
@@ -159,11 +164,17 @@ func _mock_reply(messages: Array) -> String:
 		d.story = "Из кустов выскакивают гоблины!"
 	elif turn == 1:
 		d.quests = [{"title": "Найти пропавшую козу", "note": "Бабка Агафья просила поискать у реки", "status": "new"}]
-		d.npcs = [{"name": "Бабка Агафья", "note": "Старушка с козой, знает все слухи"}]
+		d.npcs = [{"name": "Бабка Агафья", "note": "Старушка с козой, знает все слухи", "attitude": 1}, {"name": "Кузнец Михей", "note": "ворчливый кузнец", "attitude": 2}]
+		d.rep = [{"name": "Деревня Верба", "change": 1, "why": "помогли старушке"}]
+		d.consequences = ["Пощадили гоблина Шныря — может вернуться"]
+		d.companions = [{"name": "Серый", "kind": "волк", "monster": "wolf", "owner": names[0] if names.size() > 0 else ""}]
 		d.chest = "Старый сундук"
 		d.place = {"name": "Тёмный лес", "type": "forest"}
 	elif turn == 2:
 		d.shop = "Кузнец Михей"
 		d.changes = [{"who": names[0] if names.size() > 0 else "", "xp": 120, "gold": 5, "add": ["potion_heal"]}]
 		d.quests = [{"title": "Найти пропавшую козу", "status": "done"}]
+		d.changes[0]["add"] = ["potion_heal", "herb", "herb", "venom_sac"]
+	elif turn == 3 and randi() % 2 == 0:
+		d.vote = {"q": "Кого спасать первым?", "opts": ["Мельника", "Старосту"]}
 	return JSON.stringify(d)
