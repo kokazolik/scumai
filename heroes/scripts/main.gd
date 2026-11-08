@@ -5,6 +5,7 @@ extends Control
 const R = preload("res://scripts/rules.gd")
 const MapView = preload("res://scripts/map_view.gd")
 const DiceView = preload("res://scripts/dice_view.gd")
+const Icons = preload("res://scripts/icons.gd")
 
 const C_BG1 := Color("161827")
 const C_BG2 := Color("2a1f3d")
@@ -51,6 +52,7 @@ var _confirm_new := false
 
 func _ready() -> void:
 	get_tree().set_quit_on_go_back(false)
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_load_fonts()
 	theme = _make_theme()
 	add_child(_make_bg())
@@ -325,9 +327,9 @@ func _build_create() -> void:
 	var g := GridContainer.new()
 	g.columns = 2
 	for r in R.RACES:
-		var b := _button(r, C_PURPLE if r == _race else C_CARD2, func():
+		var b := _with_icon(_button(r, C_PURPLE if r == _race else C_CARD2, func():
 			_race = r
-			_rebuild_keep({"hn": hn.text, "about": refs.about.text}))
+			_rebuild_keep({"hn": hn.text, "about": refs.about.text})), Icons.for_race(r))
 		b.custom_minimum_size = Vector2(0, 70)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		g.add_child(b)
@@ -340,9 +342,9 @@ func _build_create() -> void:
 	var g2 := GridContainer.new()
 	g2.columns = 2
 	for c in R.CLASSES:
-		var b := _button(c, C_ACCENT if c == _cls else C_CARD2, func():
+		var b := _with_icon(_button(c, C_ACCENT if c == _cls else C_CARD2, func():
 			_cls = c
-			_rebuild_keep({"hn": hn.text, "about": refs.about.text}))
+			_rebuild_keep({"hn": hn.text, "about": refs.about.text})), Icons.for_class(c))
 		b.custom_minimum_size = Vector2(0, 70)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		g2.add_child(b)
@@ -424,6 +426,9 @@ func _hero_card(h: Dictionary) -> Control:
 func _build_game() -> void:
 	# верхняя полоса героя
 	var top := HBoxContainer.new()
+	var mh := Game.my_hero()
+	if not mh.is_empty():
+		top.add_child(_icon_rect(Icons.for_class(str(mh.cls)), 52))
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var hl := _label("", 26, C_INK)
@@ -441,11 +446,11 @@ func _build_game() -> void:
 	# вкладки
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 8)
-	for t in [["story", "История"], ["sheet", "Герой"], ["map", "Карта"]]:
-		var b := _button(t[1], C_ACCENT if tab == t[0] else C_CARD2, func():
+	for t in [["story", "История", "ui_story"], ["sheet", "Герой", "ui_hero"], ["map", "Карта", "ui_map"]]:
+		var b := _with_icon(_button(t[1], C_ACCENT if tab == t[0] else C_CARD2, func():
 			tab = t[0]
 			screen = ""
-			_refresh())
+			_refresh()), Icons.tex(t[2]), 30)
 		b.custom_minimum_size = Vector2(0, 64)
 		b.add_theme_font_size_override("font_size", 24)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -638,6 +643,9 @@ func _update_combat_box() -> void:
 		var row := HBoxContainer.new()
 		var b := Button.new()
 		b.text = ("🎯 " if i == _target and my_turn else "") + "%s%s  КД %d" % [en.name, " 💤" if en.asleep else "", int(en.ac)]
+		b.icon = Icons.for_monster(str(en.get("base_name", en.name)))
+		b.add_theme_constant_override("icon_max_width", 36)
+		b.add_theme_color_override("icon_normal_color", Color("ffb3a8"))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.add_theme_font_size_override("font_size", 22)
@@ -840,26 +848,26 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	g.columns = 2
 	g.add_theme_constant_override("h_separation", 8)
 	g.add_theme_constant_override("v_separation", 8)
-	var acts := [["⚔ %s (%+d, %s%+d)" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus], C_RED, func(): Game.combat_action({"t": "attack", "target": _target})]]
+	var acts := [["%s (%+d, %s%+d)" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus], C_RED, func(): Game.combat_action({"t": "attack", "target": _target}), "act_ranged" if ai.ranged else "act_attack"]]
 	if R.known_spells(h).size() > 0:
-		acts.append(["✨ Заклинание", C_PURPLE, func():
+		acts.append(["Заклинание", C_PURPLE, func():
 			_combat_menu = "spell"
 			_bottom_key = ""
-			_update_bottom()])
-	acts.append(["🧪 Предмет", C_GREEN.darkened(0.3), func():
+			_update_bottom(), "act_spell"])
+	acts.append(["Предмет", C_GREEN.darkened(0.3), func():
 		_combat_menu = "item"
 		_bottom_key = ""
-		_update_bottom()])
-	acts.append(["🛡 Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"})])
+		_update_bottom(), "act_item"])
+	acts.append(["Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"}), "act_dodge"])
 	if h.get("second_wind", false):
-		acts.append(["❤ Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"})])
+		acts.append(["Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"}), "act_second_wind"])
 	if int(h.get("inspire", 0)) > 0:
 		var partner := _partner()
 		if partner != "":
-			acts.append(["🎵 Вдохновить (%d)" % int(h.inspire), C_ACCENT.darkened(0.3), func(): Game.combat_action({"t": "inspire", "target": partner})])
-	acts.append(["🏃 Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"})])
+			acts.append(["Вдохновить (%d)" % int(h.inspire), C_ACCENT.darkened(0.3), func(): Game.combat_action({"t": "inspire", "target": partner}), "act_inspire"])
+	acts.append(["Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"}), "act_flee"])
 	for a in acts:
-		var bt := _button(a[0], a[1], a[2])
+		var bt := _with_icon(_button(a[0], a[1], a[2]), Icons.tex(a[3]), 34)
 		bt.custom_minimum_size = Vector2(0, 72)
 		bt.add_theme_font_size_override("font_size", 22)
 		bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -982,6 +990,8 @@ func _build_sheet(v: VBoxContainer) -> void:
 		var it = h.equip.get(slot)
 		var has: bool = it is Dictionary and not it.is_empty()
 		var row := HBoxContainer.new()
+		if has and Icons.for_item(it) != null:
+			row.add_child(_icon_rect(Icons.for_item(it), 36, C_ACCENT))
 		var txt := _label("%s: %s" % [R.SLOT_NAMES[slot], (R.item_name(it) + " — " + R.item_desc(it)) if has else "—"], 21, C_INK if has else C_MUTED)
 		txt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(txt)
@@ -1001,7 +1011,14 @@ func _build_sheet(v: VBoxContainer) -> void:
 		var it: Dictionary = h.items[i]
 		var idx: int = i
 		var d := R.item_def(it)
-		bag.add_child(_label("%s%s" % [R.item_name(it), (" — " + R.item_desc(it)) if R.item_desc(it) != "" else ""], 22, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_INK))
+		var brow := HBoxContainer.new()
+		brow.add_theme_constant_override("separation", 8)
+		if Icons.for_item(it) != null:
+			brow.add_child(_icon_rect(Icons.for_item(it), 36, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_ACCENT))
+		var bl := _label("%s%s" % [R.item_name(it), (" — " + R.item_desc(it)) if R.item_desc(it) != "" else ""], 22, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_INK)
+		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		brow.add_child(bl)
+		bag.add_child(brow)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		if R.item_slot(it) != "" and can_manage:
@@ -1068,7 +1085,14 @@ func _update_overlay() -> void:
 			var idx: int = i
 			var d := R.item_def(it)
 			var c := _card(C_CARD)
-			c.add_child(_label(R.item_name(it), 26, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_INK))
+			var lrow := HBoxContainer.new()
+			lrow.add_theme_constant_override("separation", 10)
+			if Icons.for_item(it) != null:
+				lrow.add_child(_icon_rect(Icons.for_item(it), 48, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_ACCENT))
+			var ll := _label(R.item_name(it), 26, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_INK)
+			ll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lrow.add_child(ll)
+			c.add_child(lrow)
 			if R.item_desc(it) != "":
 				c.add_child(_label(R.item_desc(it), 20, C_MUTED))
 			c.add_child(_small_wide_button("Взять себе", C_GREEN.darkened(0.2), func(): Game.inv("loot_take", {"idx": idx})))
@@ -1083,7 +1107,14 @@ func _update_overlay() -> void:
 		var idx: int = i
 		var price := R.item_price(it)
 		var c := _card(C_CARD)
-		c.add_child(_label("%s — %d зол." % [R.item_name(it), price], 24, C_INK))
+		var srow := HBoxContainer.new()
+		srow.add_theme_constant_override("separation", 10)
+		if Icons.for_item(it) != null:
+			srow.add_child(_icon_rect(Icons.for_item(it), 44, C_ACCENT))
+		var sl := _label("%s — %d зол." % [R.item_name(it), price], 24, C_INK)
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		srow.add_child(sl)
+		c.add_child(srow)
 		if R.item_desc(it) != "":
 			c.add_child(_label(R.item_desc(it), 20, C_MUTED))
 		var bt := _small_wide_button("Купить", C_ACCENT.darkened(0.2), func(): Game.inv("buy", {"idx": idx}))
@@ -1319,9 +1350,12 @@ func _button(text: String, color: Color, cb: Callable) -> Button:
 	b.add_theme_stylebox_override("pressed", _box(color.darkened(0.2), 22))
 	b.add_theme_stylebox_override("disabled", _box(color.darkened(0.45), 22))
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	for s in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+	for s in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color",
+			"icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color"]:
 		b.add_theme_color_override(s, Color("1b1b24") if dark else Color.WHITE)
 	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.45))
+	b.add_theme_constant_override("icon_max_width", 40)
+	b.add_theme_constant_override("h_separation", 10)
 	b.pressed.connect(cb)
 	return b
 
@@ -1352,6 +1386,24 @@ func _tiny_button(text: String, color: Color, cb: Callable) -> Button:
 		sb.content_margin_bottom = 4
 		b.add_theme_stylebox_override(s, sb)
 	return b
+
+
+func _with_icon(b: Button, tex: Texture2D, w := 40) -> Button:
+	b.icon = tex
+	b.add_theme_constant_override("icon_max_width", w)
+	return b
+
+
+func _icon_rect(tex: Texture2D, size := 44, color := C_ACCENT) -> TextureRect:
+	var t := TextureRect.new()
+	t.texture = tex
+	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	t.custom_minimum_size = Vector2(size, size)
+	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	t.modulate = color
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return t
 
 
 func _menu_button(text: String, color: Color, cb: Callable) -> Button:
