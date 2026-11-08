@@ -992,7 +992,7 @@ func _bottom_mode() -> String:
 				return "spectator"
 			if me in Game.state.pending:
 				return "waiting"
-			return "input" + JSON.stringify(Game.state.options.get(me, []))
+			return "input" + JSON.stringify(Game.state.options.get(me, [])) + str(Game.merchants_here())
 	return "other"
 
 
@@ -1057,6 +1057,16 @@ func _update_bottom() -> void:
 	for o in opts:
 		var ob := _wrap_button("› " + str(o), C_CARD, func(): input.text = str(o), 21, 60, C_ACCENT)
 		b.add_child(ob)
+	var mers: Array = Game.merchants_here()
+	if mers.size() > 0:
+		var mrow := HFlowContainer.new()
+		mrow.add_theme_constant_override("h_separation", 8)
+		mrow.add_theme_constant_override("v_separation", 8)
+		for mn in mers:
+			var mb := _button("⚖ Торговать: " + str(mn), C_ACCENT, func(): Game.inv("shop_open", {"merchant": str(mn)}))
+			mb.custom_minimum_size.y = 58
+			mrow.add_child(mb)
+		b.add_child(mrow)
 	b.add_child(input)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -1332,12 +1342,13 @@ func _check_choice() -> void:
 	m.add_theme_constant_override("margin_top", 120)
 	m.add_theme_constant_override("margin_bottom", 120)
 	layer.add_child(m)
-	var cc := CenterContainer.new()
-	m.add_child(cc)
+	var col := VBoxContainer.new()
+	m.add_child(col)
+	col.add_child(_expander())
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UISkin.panel("dark", 18))
-	panel.custom_minimum_size = Vector2(640, 0)
-	cc.add_child(panel)
+	col.add_child(panel)
+	col.add_child(_expander())
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 12)
 	panel.add_child(v)
@@ -1750,8 +1761,21 @@ func _show_item(it: Dictionary, idx: int, slot: String) -> void:
 	layer.add_child(dim)
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", _style("popup"))
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(600, 0)
+	# ширина задаётся полями экрана: у PanelContainer по центру с переносом строк
+	# высота пересчитывалась по кругу и карточка росла при каждом нажатии
+	var pm := MarginContainer.new()
+	pm.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right"]:
+		pm.add_theme_constant_override("margin_" + side, 34)
+	pm.add_theme_constant_override("margin_top", 80)
+	pm.add_theme_constant_override("margin_bottom", 80)
+	pm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pcol := VBoxContainer.new()
+	pcol.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pcol.add_child(_expander())
+	pcol.add_child(panel)
+	pcol.add_child(_expander())
+	pm.add_child(pcol)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 12)
 	var top := HBoxContainer.new()
@@ -1801,13 +1825,9 @@ func _show_item(it: Dictionary, idx: int, slot: String) -> void:
 	acts.add_child(_small_wide_button("Закрыть", C_CARD, func(): _close_item()))
 	v.add_child(acts)
 	panel.add_child(v)
-	layer.add_child(panel)
+	layer.add_child(pm)
 	add_child(layer)
 	item_pop = layer
-	# по центру экрана
-	await get_tree().process_frame
-	if is_instance_valid(panel):
-		panel.position = (get_viewport_rect().size - panel.size) / 2.0
 
 
 func _close_item() -> void:
@@ -2261,6 +2281,7 @@ func _spacer(h: int) -> Control:
 func _expander() -> Control:
 	var c := Control.new()
 	c.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return c
 
 

@@ -400,7 +400,10 @@ func _resolve() -> void:
 			var pname := _player_by_hero(str(c.get("who", "")))
 			if pname == "" or seen.has(pname) or not acts.has(pname):
 				continue
-			var a := _make_ask(pname, str(c.get("kind", "skill")), str(c.get("name", "")), int(c.get("dc", 12)),
+			var cname := str(c.get("name", ""))
+			if str(c.get("ability", "")).strip_edges() != "":
+				cname += "|" + str(c.get("ability", ""))
+			var a := _make_ask(pname, str(c.get("kind", "skill")), cname, int(c.get("dc", 12)),
 				int(c.get("adv", 0)), str(c.get("why", "")))
 			if a.is_empty():
 				continue
@@ -452,7 +455,7 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 		state.campaign.last_chest = int(state.turn)
 		_open_chest(str(d.chest))
 	if allow_combat and str(d.get("shop", "")) != "":
-		state.shop = {"title": str(d.shop).left(40), "items": R.shop_stock(_tier())}
+		_open_shop(str(d.shop).left(40))
 	state.turn = int(state.turn) + 1
 	state.pending = []
 	_save()
@@ -595,38 +598,32 @@ func _do_roll(pname: String) -> void:
 
 func _check_info(h: Dictionary, kind: String, what: String) -> Dictionary:
 	what = what.strip_edges()
+	var ab_over := ""
+	if what.contains("|"):
+		ab_over = _ability_from(what.get_slice("|", 1))
+		what = what.get_slice("|", 0).strip_edges()
 	if kind == "save" or what.to_lower().begins_with("спас"):
 		var a := _ability_from(what)
 		return {} if a == "" else {"label": "спасбросок " + a, "bonus": R.save_bonus(h, a)}
 	var s := _skill_from(what)
 	if s != "":
+		var base: String = R.SKILLS.get(s, "СИЛ")
+		if ab_over != "" and ab_over != base:
+			# навык на другой характеристике: угрозы силой, обман умом и т.п.
+			return {"label": "%s (%s)" % [s, ab_over], "bonus": R.skill_bonus(h, s) - R.amod(h, base) + R.amod(h, ab_over)}
 		return {"label": s, "bonus": R.skill_bonus(h, s)}
-	var a2 := _ability_from(what)
+	var a2 := _ability_from(what) if ab_over == "" else ab_over
 	return {} if a2 == "" else {"label": str(R.AB_NAME[a2]), "bonus": R.amod(h, a2)}
 
 
 ## Проверка навыка / спасбросок / характеристика. Возвращает описание броска.
 func _check(pname: String, kind: String, what: String, dc: int, adv: int, why: String) -> Dictionary:
 	var h: Dictionary = state.heroes[pname]
-	var bonus := 0
-	var label := ""
-	what = what.strip_edges()
-	if kind == "save" or what.begins_with("спас"):
-		var a := _ability_from(what)
-		if a == "":
-			return {}
-		bonus = R.save_bonus(h, a)
-		label = "спасбросок " + a
-	elif _skill_from(what) != "":
-		var s := _skill_from(what)
-		bonus = R.skill_bonus(h, s)
-		label = s
-	else:
-		var a := _ability_from(what)
-		if a == "":
-			return {}
-		bonus = R.amod(h, a)
-		label = R.AB_NAME[a]
+	var info := _check_info(h, kind, what)
+	if info.is_empty():
+		return {}
+	var bonus: int = int(info.bonus)
+	var label: String = str(info.label)
 	dc = clampi(dc, 5, 25)
 	var r := _d20(h, clampi(adv, -1, 1))
 	var total: int = r.value + bonus + r.insp
@@ -857,6 +854,45 @@ func _open_chest(title: String) -> void:
 	_add_loot(title, int(loot.gold), loot.items)
 
 
+## Торговец запоминается вместе с местом и своим (ограниченным) товаром; новый завоз — раз в 10 ходов.
+func _open_shop(merchant: String) -> void:
+	var c: Dictionary = state.campaign
+	if not c.has("merchants"):
+		c.merchants = {}
+	var m: Dictionary = c.merchants.get(merchant, {})
+	if m.is_empty() or int(state.turn) - int(m.get("turn", 0)) >= 10:
+		var stock: Array = R.shop_stock(_tier()).slice(0, 7)
+		stock.append({"id": "potion_heal"})
+		m = {"name": merchant, "items": stock, "turn": int(state.turn), "place": _place_name()}
+		c.merchants[merchant] = m
+	else:
+		m.place = _place_name()
+	state.shop = {"title": merchant, "items": (m.items as Array).duplicate(true), "merchant": merchant}
+
+
+func _place_name() -> String:
+	var mp: Dictionary = state.get("map", {})
+	var nodes: Array = mp.get("nodes", [])
+	var cur := int(mp.get("cur", -1))
+	return str(nodes[cur].get("name", "")) if cur >= 0 and cur < nodes.size() else ""
+
+
+func _save_shop_stock() -> void:
+	var mn := str(state.shop.get("merchant", ""))
+	if mn != "" and state.campaign.get("merchants", {}).has(mn):
+		state.campaign.merchants[mn].items = (state.shop.items as Array).duplicate(true)
+
+
+## Торговцы в текущем месте: для кнопки «Торговать».
+func merchants_here() -> Array:
+	var out := []
+	var here := _place_name()
+	for k in state.campaign.get("merchants", {}):
+		if str(state.campaign.merchants[k].get("place", "")) == here:
+			out.append(k)
+	return out
+
+
 ## Золото делится поровну между всеми героями отряда; остаток округляем вверх, чтобы суммы сходились.
 func _split_gold(title: String, gold: int) -> void:
 	var names: Array = []
@@ -980,8 +1016,8 @@ func _inv(op: String, a: Dictionary) -> void:
 				return
 			h.gold = int(h.gold) - price
 			h.items.append(it.duplicate())
-			if R.item_def(it).type != "potion":
-				items.remove_at(idx)
+			items.remove_at(idx)
+			_save_shop_stock()
 			_log("sys", h.name, "%s покупает %s за %d зол." % [h.name, R.item_name(it), price])
 		"sell":
 			if state.shop.is_empty() or idx < 0 or idx >= h.items.size():
@@ -990,9 +1026,19 @@ func _inv(op: String, a: Dictionary) -> void:
 			var price := maxi(1, R.item_price(it) / 2)
 			h.items.remove_at(idx)
 			h.gold = int(h.gold) + price
+			if (state.shop.items as Array).size() < 12:
+				state.shop.items.append(it.duplicate())
+				_save_shop_stock()
 			_log("sys", h.name, "%s продаёт %s за %d зол." % [h.name, R.item_name(it), price])
 		"shop_close":
+			_save_shop_stock()
 			state.shop = {}
+		"shop_open":
+			var mn := str(a.get("merchant", ""))
+			if in_combat or phase != "play" or not (mn in merchants_here()):
+				return
+			_open_shop(mn)
+			_log("sys", h.name, "%s заходит к торговцу: %s." % [h.name, mn])
 		"cast":
 			if in_combat:
 				return
@@ -1905,13 +1951,13 @@ const NARRATE_FORMAT := """Ответь строго JSON без markdown:
 {"story": "4-8 предложений", "changes": [{"who": "имя героя", "hp": 0, "gold": 0, "add": [], "remove": [], "xp": 0}], "options": {"Имя героя": ["вариант", "вариант", "вариант"]}, "place": null, "quest": "", "quests": [], "npcs": [], "chest": "", "shop": "", "combat": [], "rest": ""}
 Поля:
 - story: последствия действий каждого героя, реакция мира и персонажей (с прямой речью), новая ситуация; закончи тем, что ждёт ответа героев.
-- changes: золото-награда делится игрой поровну на всех, укажи общую сумму у любого героя. Не выдавай повторно то, что игра уже выдала (строки «Добыча», «забирает», «получает» в недавних событиях). Только реальные изменения вне боя: урон от ловушек и падений (hp отрицательный, 1-10), лечение (hp положительный), награды золотом, найденные или отданные вещи, опыт xp (10-50 за умное действие или убеждение, 50-200 за решённую загадку или выполненное поручение). add — id из каталога, можно с улучшением {"id": "longsword", "plus": 1, "name": "Меч «Рассвет»"}, или сюжетная вещь строкой ПО-РУССКИ («Древний цилиндр», «Письмо мэра»), никогда не латинский id. Пустой список, если ничего.
+- changes: ОБЯЗАТЕЛЬНО: если в story герой получил вещь (выиграл, нашёл, купил у персонажа, ему подарили), добавь её в add этого героя, иначе вещи не будет в инвентаре. Золото-награда делится игрой поровну на всех, укажи общую сумму у любого героя. Не выдавай повторно то, что игра уже выдала (строки «Добыча», «забирает», «получает» в недавних событиях). Только реальные изменения вне боя: урон от ловушек и падений (hp отрицательный, 1-10), лечение (hp положительный), награды золотом, найденные или отданные вещи, опыт xp (10-50 за умное действие или убеждение, 50-200 за решённую загадку или выполненное поручение). add — id из каталога, можно с улучшением {"id": "longsword", "plus": 1, "name": "Меч «Рассвет»"}, или сюжетная вещь строкой ПО-РУССКИ («Древний цилиндр», «Письмо мэра»), никогда не латинский id. Пустой список, если ничего.
 - options: по три коротких варианта (до 8 слов) для каждого героя: осторожный, смелый, неожиданный.
 - place: {"name": "название", "type": "тип"} только если герои пришли в новое место или вернулись в известное, иначе null. Типы: village, city, tavern, forest, road, cave, dungeon, castle, ruins, swamp, mountain, lake, camp, temple, tower, field, sea, port.
 - quests: дополнительные задания и поручения. Новое: {"title": "Найти пропавшую козу", "note": "кто дал и где искать", "status": "new"}; выполнено: {"title": то же название, "status": "done"}; провалено: "failed". Пусто, если ничего не изменилось. Названия активных заданий бери из списка выше точно.
 - npcs: важные персонажи, которых герои встретили впервые или узнали о них новое: [{"name": "Мельник Тарас", "note": "кто он, 1 фраза"}]. Пусто, если никого.
 - chest: короткое название, если герои открыли сундук, тайник или нашли клад (содержимое выдаст игра), иначе "".
-- shop: имя торговца, если герои пришли торговать к лавке/рынку/кузнецу, иначе "".
+- shop: имя торговца, если герои пришли торговать к лавке/рынку/кузнецу, иначе "". Знакомого торговца называй тем же именем.
 - combat: если начинается бой, в story опиши только появление врагов, без ударов и исхода (бой отыграет игра). Если начинается бой, список врагов [{"id": "goblin", "count": 2, "name": "Гоблин-разбойник"}], id из списка монстров; можно своего: {"name": "...", "hp": 20, "ac": 13, "atk": 4, "dmg": "1d8+2", "xp": 100}. Бой — не каждый ход, примерно каждые 3-5 ходов, когда это оправдано сюжетом. Сила врагов по уровню героев: на 1-2 уровне 1-4 слабых врага (25-50 опыта каждый), дальше сильнее.
 - rest: "short" если герои отдыхают час, "long" если ночуют в безопасном месте, иначе ""."""
 
@@ -1936,8 +1982,19 @@ kind: "skill" (навык), "save" (спасбросок от ловушки, я
 Навыки: Атлетика, Акробатика, Ловкость рук, Скрытность, Магия, История, Анализ, Природа, Религия, Уход за животными, Проницательность, Медицина, Восприятие, Выживание, Обман, Запугивание, Выступление, Убеждение.
 Характеристики (для save и ability): СИЛ, ЛОВ, ТЕЛ, ИНТ, МДР, ХАР.
 Сложность dc: 5 очень легко, 10 легко, 15 средне, 20 трудно, 25 почти невозможно.
+Способ добиться своего определяет проверку (поле ability — характеристика, на которой кидают навык, если она не обычная):
+- угроза, запугивание силой, выбивание, шантаж кулаками: Запугивание, ability "СИЛ";
+- шантаж компроматом, холодная угроза словами: Запугивание (ХАР);
+- обман, ложь, выдать себя за другого: Обман (ХАР); хитрая афера, подделка, ловушка в словах: Обман, ability "ИНТ";
+- убеждение, просьба, торг, подкуп: Убеждение (ХАР);
+- лесть, представление, развлечь толпу: Выступление;
+- кража, срезать кошелёк, подменить вещь: Ловкость рук; незаметно пробраться: Скрытность;
+- разбой, отнять силой, вырвать из рук: Атлетика (СИЛ); если жертва сопротивляется, dc выше;
+- выиграть в карты/кости: Проницательность (МДР) или Обман, ability "ИНТ" для расчёта; спор на силу, армрестлинг: Атлетика;
+- понять, врёт ли собеседник: Проницательность.
+Разные способы — разные проверки, не подставляй всегда Убеждение. Сложность зависит от того, насколько человек силён, умён и насторожен.
 adv: 1 преимущество (герою помогают, у него отличные условия), -1 помеха (темнота, ранен, спешка), иначе 0.
-Ответь строго JSON: {"checks": [{"who": "имя героя", "kind": "skill", "name": "Скрытность", "dc": 12, "adv": 0, "why": "2-4 слова"}]} или {"checks": []}.""" + _names_rule()
+Ответь строго JSON: {"checks": [{"who": "имя героя", "kind": "skill", "name": "Запугивание", "ability": "СИЛ", "dc": 13, "adv": 0, "why": "2-4 слова"}]} (ability можно опустить) или {"checks": []}.""" + _names_rule()
 	var user := "%s\nГерои:\n%s\n\nНедавние события:\n%s\n\nДействия сейчас:\n%s" % [
 		_campaign_text(), _heroes_text(), _recent_log(6), _acts_text(acts)]
 	return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
@@ -1948,7 +2005,7 @@ func _narrate_prompt(acts_text: String, rolls: Array, combat_result: String) -> 
 	if combat_result != "":
 		sys += "Только что закончился бой. Опиши, чем он завершился и что герои видят после. Добычу и опыт уже выдала игра: changes оставь пустым, бой не начинай снова.\n"
 	else:
-		sys += "Расскажи, что произошло после действий героев. Результаты бросков уже посчитаны игрой, строго следуй им: успех — получилось, провал — не вышло или вышло с неприятностью, критический успех — блестяще с бонусом, критический провал — смешная или опасная неудача.\n"
+		sys += "Расскажи, что произошло после действий героев. Результаты бросков уже посчитаны игрой, строго следуй им: успех — получилось, провал — не вышло или вышло с неприятностью, критический успех — блестяще с бонусом, критический провал — смешная или опасная неудача.\n Если герой добывал вещь или деньги (угрозой, шантажом, обманом, кражей, разбоем, уговорами, выигрышем) и проверка успешна — он ЭТО получает: добавь в changes.add или gold этого героя, у жертвы этого больше нет. При провале — последствия по способу: угрозы и разбой злят и зовут стражу, раскрытый обман портит отношения, пойманный вор платит или бежит.\n"
 	sys += NARRATE_FORMAT + _names_rule() + "\nКаталог предметов (id=название): " + R.catalog_text() + "\nМонстры (id=название): " + R.monsters_text()
 	var rl := []
 	for r in rolls:
