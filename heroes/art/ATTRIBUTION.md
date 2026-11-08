@@ -95,3 +95,18 @@ Modified: rasterized to 128x128 PNG, recolored to white on transparent backgroun
 | ui_level_up.png | [upgrade](https://game-icons.net/1x1/delapouite/upgrade.html) | Delapouite |
 | ui_chest_open.png | [open-treasure-chest](https://game-icons.net/1x1/skoll/open-treasure-chest.html) | Skoll |
 | ui_shop.png | [shop](https://game-icons.net/1x1/delapouite/shop.html) | Delapouite |
+
+## UI skin (`art/ui/`) и шрифты оформления
+
+- **`art/ui/*.png`** — сгенерированы процедурно для этого проекта (numpy/PIL, без сторонних исходников),
+  скрипт `tools/gen_ui_skin.py`. Лицензия — как у проекта (собственная работа).
+- **Шрифты** (SIL Open Font License 1.1, файлы без изменений, тексты лицензий в `fonts/`):
+
+| File | Font | Authors | License |
+|---|---|---|---|
+| `fonts/AlegreyaSC-Bold.ttf` | Alegreya SC Bold | The Alegreya Project Authors (Huerta Tipográfica) | OFL 1.1 — `fonts/OFL-AlegreyaSC.txt` |
+| `fonts/Alegreya-Variable.ttf` | Alegreya (variable `wght`; original name `Alegreya[wght].ttf`) | The Alegreya Project Authors | OFL 1.1 — `fonts/OFL-Alegreya.txt` |
+| `fonts/AlegreyaSans-Bold.ttf` | Alegreya Sans Bold | The Alegreya Sans Project Authors | OFL 1.1 — `fonts/OFL-AlegreyaSans.txt` |
+| `fonts/RuslanDisplay-Regular.ttf` | Ruslan Display (Reserved Font Name "Ruslan", "Ruslan Display") | Oleg Snarsky, Denis Masharov, Vladimir Rabdu | OFL 1.1 — `fonts/OFL-RuslanDisplay.txt` |
+
+Source: [github.com/google/fonts](https://github.com/google/fonts) (`ofl/alegreyasc`, `ofl/alegreya`, `ofl/alegreyasans`, `ofl/ruslandisplay`).

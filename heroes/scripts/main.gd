@@ -7,13 +7,14 @@ const MapView = preload("res://scripts/map_view.gd")
 const DiceView = preload("res://scripts/dice_view.gd")
 const FxView = preload("res://scripts/fx_view.gd")
 const Icons = preload("res://scripts/icons.gd")
+const UISkin = preload("res://scripts/skin.gd")
 
 const C_BG1 := Color("161827")
 const C_BG2 := Color("2a1f3d")
-const C_CARD := Color("23263a")
-const C_CARD2 := Color("2e3250")
-const C_INK := Color("f3f1ea")
-const C_MUTED := Color("a3a6c0")
+const C_CARD := Color("2a1d14")
+const C_CARD2 := Color("3a281a")
+const C_INK := Color("f3e9d2")
+const C_MUTED := Color("bfae8f")
 const C_ACCENT := Color("ffc145")
 const C_RED := Color("ff5a5f")
 const C_GREEN := Color("3ddc97")
@@ -24,6 +25,9 @@ const NAMES := ["Странник", "Искра", "Ворон", "Лис", "Со�
 
 var font_bold: Font
 var font_black: Font
+var font_title: Font
+var sheet_tab := "gear"
+var item_pop: Control
 var root_margin: MarginContainer
 var content: VBoxContainer
 var overlay: Control
@@ -62,7 +66,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_load_fonts()
 	theme = _make_theme()
-	add_child(_make_bg())
+	add_child(UISkin.make_bg_rect())
 	root_margin = MarginContainer.new()
 	root_margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "bottom"]:
@@ -215,10 +219,15 @@ func _leave() -> void:
 # ---------- меню и поиск ----------
 
 func _build_menu() -> void:
-	content.add_child(_spacer(30))
-	var t := _label("ХРОНИКИ\nДВОИХ", 84, C_ACCENT)
+	content.add_child(_spacer(10))
+	var emb := CenterContainer.new()
+	emb.add_child(UISkin.make_portrait(Icons.tex("ui_dice"), 150))
+	content.add_child(emb)
+	var t := _label("Хроники\nдвоих", 76, C_ACCENT)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	UISkin.style_title(t, 76, true)
 	content.add_child(t)
+	content.add_child(UISkin.make_divider(30))
 	var st := _label("Ролевая игра на двоих. Ведущий — нейронка", 26, C_MUTED)
 	st.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(st)
@@ -478,17 +487,16 @@ func _build_game() -> void:
 	var top := HBoxContainer.new()
 	var mh := Game.my_hero()
 	if not mh.is_empty():
-		top.add_child(_icon_rect(Icons.for_class(str(mh.cls)), 52))
+		top.add_child(UISkin.make_portrait(Icons.for_class(str(mh.cls)), 84))
+	top.add_theme_constant_override("separation", 12)
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var hl := _label("", 26, C_INK)
 	refs.hero_line = hl
 	info.add_child(hl)
 	var bar := ProgressBar.new()
-	bar.show_percentage = false
-	bar.custom_minimum_size = Vector2(0, 18)
-	bar.add_theme_stylebox_override("background", _box(C_CARD, 9, 0))
-	bar.add_theme_stylebox_override("fill", _box(C_GREEN, 9, 0))
+	UISkin.style_bar(bar, "hp")
+	bar.custom_minimum_size = Vector2(0, 30)
 	refs.hp_bar = bar
 	info.add_child(bar)
 	top.add_child(info)
@@ -501,8 +509,8 @@ func _build_game() -> void:
 			tab = t[0]
 			screen = ""
 			_refresh()), Icons.tex(t[2]), 30)
-		b.custom_minimum_size = Vector2(0, 64)
-		b.add_theme_font_size_override("font_size", 24)
+		UISkin.style_tab(b, tab == t[0], 24)
+		b.custom_minimum_size = Vector2(0, 66)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tabs.add_child(b)
 	content.add_child(tabs)
@@ -580,8 +588,7 @@ func _update_game() -> void:
 			refs.hero_line.text = "%s · %s %d · КД %d · %d зол. · Хиты %d/%d" % [h.name, h.cls, int(h.level), R.ac(h), int(h.gold), int(h.hp), int(h.max_hp)]
 			refs.hp_bar.max_value = int(h.max_hp)
 			refs.hp_bar.value = int(h.hp)
-			var frac := float(h.hp) / maxf(1.0, float(h.max_hp))
-			refs.hp_bar.add_theme_stylebox_override("fill", _box(C_GREEN if frac > 0.5 else (C_ACCENT if frac > 0.25 else C_RED), 9, 0))
+
 	if refs.has("log"):
 		_update_log()
 		_update_combat_box()
@@ -611,9 +618,7 @@ func _update_log() -> void:
 		_log_n = maxi(0, lg.size() - 60)
 		var c0: Dictionary = Game.state.campaign
 		if str(c0.get("title", "")) != "":
-			var head := _label("«%s»" % c0.title, 34, C_ACCENT)
-			head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			logv.add_child(head)
+			logv.add_child(UISkin.make_ribbon_title(str(c0.title), 30, 80))
 	for i in range(_log_n, lg.size()):
 		logv.add_child(_log_entry(lg[i]))
 	_log_n = lg.size()
@@ -630,12 +635,19 @@ func _scroll_down(sc: ScrollContainer) -> void:
 func _log_entry(e: Dictionary) -> Control:
 	match str(e.k):
 		"gm":
-			var c := _card(C_CARD)
-			c.add_child(_label(str(e.t), 26, C_INK))
-			return c.get_parent()
+			var p := PanelContainer.new()
+			p.add_theme_stylebox_override("panel", UISkin.panel("parchment", 8))
+			var r := _rich(_esc(e.t), 26)
+			UISkin.style_parchment_text(r, 26)
+			p.add_child(r)
+			return p
 		"act":
-			var l := _rich("[color=#%s]%s:[/color] %s" % [C_ACCENT.to_html(false), _esc(e.w), _esc(e.t)], 24)
-			return l
+			var p := PanelContainer.new()
+			p.add_theme_stylebox_override("panel", UISkin.panel("inset", 10))
+			var l := _rich("[color=#%s]%s:[/color] [i]%s[/i]" % [C_ACCENT.to_html(false), _esc(e.w), _esc(e.t)], 23)
+			l.add_theme_font_override("italics_font", UISkin.text_font())
+			p.add_child(l)
+			return p
 		"roll":
 			return _label("🎲 " + str(e.t), 21, C_BLUE.lightened(0.3))
 		"cbt":
@@ -658,7 +670,7 @@ func _update_combat_box() -> void:
 		ch.queue_free()
 	if c.is_empty() or Game.phase != "combat":
 		return
-	var card := _card(Color("2a1f2a"))
+	var card := _card(C_CARD)
 	var order := []
 	for i in c.order.size():
 		var o: Dictionary = c.order[i]
@@ -699,22 +711,26 @@ func _update_combat_box() -> void:
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.add_theme_font_size_override("font_size", 22)
-		b.add_theme_stylebox_override("normal", _box(C_RED.darkened(0.55) if i == _target and my_turn else C_CARD, 12, 10))
-		b.add_theme_stylebox_override("hover", _box(C_RED.darkened(0.5), 12, 10))
-		b.add_theme_stylebox_override("pressed", _box(C_RED.darkened(0.4), 12, 10))
+		var est := UISkin.button_styles("red" if i == _target and my_turn else "dark", 12)
+		for k in est:
+			b.add_theme_stylebox_override(k, est[k])
+		b.add_theme_color_override("font_color", C_INK)
+		b.add_theme_color_override("font_outline_color", UISkin.OUTLINE)
+		b.add_theme_constant_override("outline_size", 4)
+		b.custom_minimum_size = Vector2(0, 60)
 		b.pressed.connect(func():
 			_target = i
 			refs.combat_key = ""
 			_update_combat_box())
 		row.add_child(b)
 		var pb := ProgressBar.new()
-		pb.custom_minimum_size = Vector2(150, 16)
+		pb.custom_minimum_size = Vector2(150, 26)
 		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		pb.max_value = int(en.max_hp)
 		pb.value = int(en.hp)
 		pb.show_percentage = false
-		pb.add_theme_stylebox_override("background", _box(C_CARD2, 8, 0))
-		pb.add_theme_stylebox_override("fill", _box(C_RED, 8, 0))
+		UISkin.style_bar(pb, "hp")
+		pb.custom_minimum_size = Vector2(150, 26)
 		row.add_child(pb)
 		card.add_child(row)
 	box.add_child(card.get_parent())
@@ -821,6 +837,7 @@ func _update_bottom() -> void:
 func _build_ask(b: VBoxContainer) -> void:
 	for a in Game.state.ask:
 		var c := _card(Color("2b2547"))
+		c.get_parent().add_theme_stylebox_override("panel", UISkin.panel("dark", 10))
 		var adv := ""
 		if int(a.adv) > 0:
 			adv = " · с преимуществом"
@@ -971,119 +988,119 @@ func _build_sheet(v: VBoxContainer) -> void:
 		v.add_child(_label("Нет героя", 26, C_MUTED))
 		return
 	var in_combat := Game.phase == "combat"
-	var my_turn := Game.combat_actor() == Game.my_pname()
-	var can_manage := not in_combat or my_turn
+
+	# --- шапка героя: портрет, имя, опыт, хиты/КД/золото ---
 	var head := _card(C_CARD2)
-	head.add_child(_label(str(h.name), 40, C_ACCENT))
-	head.add_child(_label("%s %s, %d уровень · опыт %d/%d" % [h.race, h.cls, int(h.level), int(h.xp), R.xp_next(h)], 24, C_INK))
-	head.add_child(_label("Хиты %d/%d · КД %d · Мастерство +%d · Золото %d · Кости хитов %d" % [h.hp, h.max_hp, R.ac(h), R.prof(int(h.level)), h.gold, h.hd_left], 22, C_INK))
-	if str(h.about) != "":
-		head.add_child(_label(str(h.about), 22, C_MUTED))
+	var hrow := HBoxContainer.new()
+	hrow.add_theme_constant_override("separation", 16)
+	hrow.add_child(_portrait(str(h.cls), 120))
+	var hv := VBoxContainer.new()
+	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hv.add_theme_constant_override("separation", 4)
+	hv.add_child(_ftitle(str(h.name), 38))
+	hv.add_child(_label("%s · %s · %d уровень" % [h.race, h.cls, int(h.level)], 22, C_MUTED))
+	var xpb := _bar(int(h.xp), maxi(1, R.xp_next(h)), C_PURPLE, 14)
+	hv.add_child(xpb)
+	hv.add_child(_label("опыт %d / %d" % [int(h.xp), R.xp_next(h)], 17, C_MUTED))
+	hrow.add_child(hv)
+	head.add_child(hrow)
+	var chips := HBoxContainer.new()
+	chips.add_theme_constant_override("separation", 8)
+	chips.add_child(_chip("ui_heart", "%d/%d" % [int(h.hp), int(h.max_hp)], C_RED.lightened(0.2)))
+	chips.add_child(_chip("ui_shield_ac", "КД %d" % R.ac(h), C_BLUE.lightened(0.3)))
+	chips.add_child(_chip("ui_coin", str(int(h.gold)), C_ACCENT))
+	chips.add_child(_chip("ui_xp_star", "+%d" % R.prof(int(h.level)), C_PURPLE.lightened(0.3)))
+	head.add_child(chips)
 	v.add_child(head.get_parent())
 
-	var ab := _card()
+	# --- переключатель разделов ---
+	var seg := HBoxContainer.new()
+	seg.add_theme_constant_override("separation", 6)
+	for t in [["gear", "Снаряжение"], ["stats", "Характеристики"], ["magic", "Умения"]]:
+		var key: String = t[0]
+		var b := _button(t[1], C_ACCENT if sheet_tab == key else C_CARD, func():
+			sheet_tab = key
+			refs.sheet_key = ""
+			_update())
+		b.custom_minimum_size = Vector2(0, 58)
+		b.add_theme_font_size_override("font_size", 21)
+		if sheet_tab == key:
+			b.add_theme_color_override("font_color", Color("2a1d08"))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		seg.add_child(b)
+	v.add_child(seg)
+
+	match sheet_tab:
+		"gear": _sheet_gear(v, h, in_combat)
+		"stats": _sheet_stats(v, h)
+		_: _sheet_magic(v, h, in_combat)
+
+
+func _sheet_gear(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
+	# кукла: слоты вокруг портрета
+	var doll := _card()
+	doll.add_child(_section_title("Надето"))
 	var g := GridContainer.new()
 	g.columns = 3
-	g.add_theme_constant_override("h_separation", 10)
-	for a in R.AB:
-		var cell := VBoxContainer.new()
-		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var prof_save: bool = a in R.CLASSES[h.cls].saves
-		var s1 := _label("%s %d" % [a, R.score(h, a)], 26, C_ACCENT)
-		s1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cell.add_child(s1)
-		var s2 := _label("мод %+d · спас %+d%s" % [R.amod(h, a), R.save_bonus(h, a), "•" if prof_save else ""], 18, C_MUTED)
-		s2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cell.add_child(s2)
-		g.add_child(cell)
-	ab.add_child(g)
-	v.add_child(ab.get_parent())
-
-	var ai := R.attack_info(h)
-	var at := _card()
-	at.add_child(_label("Атака: %s %+d, урон %s%+d%s" % [ai.name, ai.atk, R.dice_ru(ai.dice), ai.bonus, " ×2" if int(ai.attacks) > 1 else ""], 24, C_INK))
-	at.add_child(_label("Умения: " + str(R.CLASSES[h.cls].features), 21, C_MUTED))
-	if h.get("second_wind", false) and not in_combat:
-		at.add_child(_small_wide_button("❤ Второе дыхание (1к10+%d)" % int(h.level), C_GREEN.darkened(0.3), func(): Game.inv("second_wind", {})))
-	v.add_child(at.get_parent())
-
-	var spells := R.known_spells(h)
-	if spells.size() > 0:
-		var sc := _card()
-		sc.add_child(_label("Заклинания (атака %+d, СЛ %d) · ячейки: %s" % [R.spell_attack(h), R.spell_dc(h), _slots_text(h)], 22, C_PURPLE.lightened(0.3)))
-		for sid in spells:
-			var sp: Dictionary = R.SPELLS[sid]
-			sc.add_child(_label("• %s%s — %s" % [sp.name, " (заговор)" if int(sp.lvl) == 0 else " (%d ур.)" % int(sp.lvl), sp.desc], 21, C_INK))
-			if sp.kind == "heal" and not in_combat and R.slot_for(h, sid) >= 0:
-				for n in Game.state.heroes:
-					var tn: String = n
-					sc.add_child(_small_wide_button("Лечить: %s" % Game.state.heroes[n].name, C_PURPLE.darkened(0.3), func(): Game.inv("cast", {"spell": sid, "target": tn})))
-		v.add_child(sc.get_parent())
-
-	var sk := _card()
-	sk.add_child(_label("Навыки (• — владеешь)", 22, C_MUTED))
-	var lines := []
-	for s in R.SKILLS:
-		lines.append("%s%s %+d" % ["• " if s in h.skills else "   ", s, R.skill_bonus(h, s)])
-	var g2 := GridContainer.new()
-	g2.columns = 2
-	for l in lines:
-		var ll := _label(l, 19, C_INK)
-		ll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		g2.add_child(ll)
-	sk.add_child(g2)
-	v.add_child(sk.get_parent())
-
-	var eq := _card()
-	eq.add_child(_label("Снаряжение", 26, C_ACCENT))
-	for slot in R.SLOT_NAMES:
-		var it = h.equip.get(slot)
-		var has: bool = it is Dictionary and not it.is_empty()
-		var row := HBoxContainer.new()
-		if has and Icons.for_item(it) != null:
-			row.add_child(_icon_rect(Icons.for_item(it), 36, C_ACCENT))
-		var txt := _label("%s: %s" % [R.SLOT_NAMES[slot], (R.item_name(it) + " — " + R.item_desc(it)) if has else "—"], 21, C_INK if has else C_MUTED)
-		txt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(txt)
-		if has and can_manage:
+	g.add_theme_constant_override("h_separation", 14)
+	g.add_theme_constant_override("v_separation", 14)
+	var layout := ["amulet", "head", "ring", "weapon", "", "offhand", "clothes", "armor", "*"]
+	for slot in layout:
+		if slot == "":
+			var pc := CenterContainer.new()
+			pc.custom_minimum_size = Vector2(150, 150)
+			pc.add_child(_portrait(str(h.cls), 140))
+			g.add_child(pc)
+		elif slot == "*":
+			var st := VBoxContainer.new()
+			st.alignment = BoxContainer.ALIGNMENT_CENTER
+			st.custom_minimum_size = Vector2(150, 150)
+			var ai := R.attack_info(h)
+			var l1 := _label("КД %d" % R.ac(h), 28, C_BLUE.lightened(0.4))
+			l1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			st.add_child(l1)
+			var l2 := _label("удар %+d\n%s%+d" % [int(ai.atk), R.dice_ru(ai.dice), int(ai.bonus)], 19, C_INK)
+			l2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			st.add_child(l2)
+			g.add_child(st)
+		else:
+			var it = h.equip.get(slot)
+			var has: bool = it is Dictionary and not it.is_empty()
 			var s: String = slot
-			row.add_child(_tiny_button("Снять", C_CARD2, func(): Game.inv("unequip", {"slot": s})))
-		eq.add_child(row)
-	v.add_child(eq.get_parent())
+			var cell := _slot_cell(it if has else {}, 150, R.SLOT_NAMES[slot], func():
+				if has:
+					_show_item(it, -1, s))
+			g.add_child(cell)
+	var gc := CenterContainer.new()
+	gc.add_child(g)
+	doll.add_child(gc)
+	v.add_child(doll.get_parent())
 
+	# сумка: сетка ячеек
 	var bag := _card()
-	bag.add_child(_label("Сумка", 26, C_ACCENT))
-	if h.items.is_empty():
-		bag.add_child(_label("пусто", 22, C_MUTED))
+	var bh := HBoxContainer.new()
+	var bt := _section_title("Сумка")
+	bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bh.add_child(bt)
+	bh.add_child(_chip("ui_coin", str(int(h.gold)), C_ACCENT))
+	bag.add_child(bh)
+	var grid := GridContainer.new()
+	grid.columns = 5
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	var cells := maxi(15, int(ceil(h.items.size() / 5.0)) * 5)
+	for i in cells:
+		if i < h.items.size():
+			var it: Dictionary = h.items[i]
+			var idx: int = i
+			grid.add_child(_slot_cell(it, 112, "", func(): _show_item(it, idx, "")))
+		else:
+			grid.add_child(_slot_cell({}, 112, "", Callable()))
+	var gcc := CenterContainer.new()
+	gcc.add_child(grid)
+	bag.add_child(gcc)
+	bag.add_child(_label("Нажми на вещь, чтобы надеть, выпить, отдать или продать.", 18, C_MUTED))
 	var partner := _partner()
-	var shop_open: bool = not Game.state.shop.is_empty()
-	for i in h.items.size():
-		var it: Dictionary = h.items[i]
-		var idx: int = i
-		var d := R.item_def(it)
-		var brow := HBoxContainer.new()
-		brow.add_theme_constant_override("separation", 8)
-		if Icons.for_item(it) != null:
-			brow.add_child(_icon_rect(Icons.for_item(it), 36, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_ACCENT))
-		var bl := _label("%s%s" % [R.item_name(it), (" — " + R.item_desc(it)) if R.item_desc(it) != "" else ""], 22, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_INK)
-		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		brow.add_child(bl)
-		bag.add_child(brow)
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
-		if R.item_slot(it) != "" and can_manage:
-			row.add_child(_tiny_button("Надеть", C_BLUE, func(): Game.inv("equip", {"idx": idx})))
-		if d.type == "potion" and not in_combat:
-			row.add_child(_tiny_button("Выпить", C_GREEN.darkened(0.3), func(): Game.inv("use", {"idx": idx})))
-			if partner != "":
-				row.add_child(_tiny_button("Напоить друга", C_GREEN.darkened(0.4), func(): Game.inv("use", {"idx": idx, "target": partner})))
-		if partner != "" and not in_combat:
-			row.add_child(_tiny_button("Отдать", C_CARD2, func(): Game.inv("give", {"idx": idx, "to": partner})))
-		if shop_open:
-			row.add_child(_tiny_button("Продать %d" % maxi(1, R.item_price(it) / 2), C_ACCENT.darkened(0.3), func(): Game.inv("sell", {"idx": idx})))
-		elif not in_combat:
-			row.add_child(_tiny_button("✖", C_CARD2, func(): Game.inv("drop", {"idx": idx})))
-		bag.add_child(row)
 	if partner != "" and int(h.gold) >= 10 and not in_combat:
 		bag.add_child(_small_wide_button("Дать другу 10 золота", C_ACCENT.darkened(0.4), func(): Game.inv("give_gold", {"to": partner, "amount": 10})))
 	v.add_child(bag.get_parent())
@@ -1091,9 +1108,303 @@ func _build_sheet(v: VBoxContainer) -> void:
 	if partner != "":
 		var ph: Dictionary = Game.state.heroes[partner]
 		var pc := _card()
-		pc.add_child(_label("Напарник: %s, %s %s %d ур." % [ph.name, ph.race, ph.cls, int(ph.level)], 22, C_INK))
-		pc.add_child(_label("Хиты %d/%d · КД %d" % [ph.hp, ph.max_hp, R.ac(ph)], 22, C_MUTED))
+		var prow := HBoxContainer.new()
+		prow.add_theme_constant_override("separation", 12)
+		prow.add_child(_portrait(str(ph.cls), 72))
+		var pv := VBoxContainer.new()
+		pv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pv.add_child(_label("%s · %s %s, %d ур." % [ph.name, ph.race, ph.cls, int(ph.level)], 22, C_INK))
+		pv.add_child(_bar(int(ph.hp), int(ph.max_hp), C_RED, 14))
+		pv.add_child(_label("Хиты %d/%d · КД %d" % [ph.hp, ph.max_hp, R.ac(ph)], 18, C_MUTED))
+		prow.add_child(pv)
+		pc.add_child(prow)
 		v.add_child(pc.get_parent())
+
+
+func _sheet_stats(v: VBoxContainer, h: Dictionary) -> void:
+	var ab := _card()
+	ab.add_child(_section_title("Характеристики"))
+	var g := GridContainer.new()
+	g.columns = 3
+	g.add_theme_constant_override("h_separation", 12)
+	g.add_theme_constant_override("v_separation", 12)
+	for a in R.AB:
+		var prof_save: bool = a in R.CLASSES[h.cls].saves
+		var cell := PanelContainer.new()
+		cell.add_theme_stylebox_override("panel", _style("medal"))
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 0)
+		var n := _label(str(R.AB_NAME.get(a, a)) if R.AB_NAME is Dictionary else str(a), 17, C_MUTED)
+		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cv.add_child(n)
+		var m := _ftitle("%+d" % R.amod(h, a), 40)
+		m.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cv.add_child(m)
+		var s := _label("%d · спас %+d%s" % [R.score(h, a), R.save_bonus(h, a), " •" if prof_save else ""], 16, C_INK if prof_save else C_MUTED)
+		s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cv.add_child(s)
+		cell.add_child(cv)
+		g.add_child(cell)
+	ab.add_child(g)
+	v.add_child(ab.get_parent())
+
+	var sk := _card()
+	sk.add_child(_section_title("Навыки"))
+	sk.add_child(_label("Золотые — те, которыми герой владеет.", 17, C_MUTED))
+	var g2 := GridContainer.new()
+	g2.columns = 2
+	g2.add_theme_constant_override("h_separation", 10)
+	g2.add_theme_constant_override("v_separation", 6)
+	for s in R.SKILLS:
+		var owned: bool = s in h.skills
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var nl := _label(s, 19, C_ACCENT if owned else C_INK)
+		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(nl)
+		var bl := _label("%+d" % R.skill_bonus(h, s), 19, C_ACCENT if owned else C_MUTED)
+		bl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		row.add_child(bl)
+		g2.add_child(row)
+	sk.add_child(g2)
+	v.add_child(sk.get_parent())
+	if str(h.about) != "":
+		var ac := _card()
+		ac.add_child(_section_title("О герое"))
+		ac.add_child(_label(str(h.about), 21, C_INK))
+		v.add_child(ac.get_parent())
+
+
+func _sheet_magic(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
+	var ai := R.attack_info(h)
+	var at := _card()
+	at.add_child(_section_title("Атака"))
+	var arow := HBoxContainer.new()
+	arow.add_theme_constant_override("separation", 12)
+	arow.add_child(_icon_rect(Icons.tex("act_attack"), 56, C_ACCENT))
+	var av := VBoxContainer.new()
+	av.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	av.add_child(_label(str(ai.name), 24, C_INK))
+	av.add_child(_label("попадание %+d · урон %s%+d%s" % [int(ai.atk), R.dice_ru(ai.dice), int(ai.bonus), " · две атаки" if int(ai.attacks) > 1 else ""], 19, C_MUTED))
+	arow.add_child(av)
+	at.add_child(arow)
+	v.add_child(at.get_parent())
+
+	var fc := _card()
+	fc.add_child(_section_title("Умения класса"))
+	var feats = R.CLASSES[h.cls].features
+	if not (feats is Array):
+		feats = str(feats).split(";" if ";" in str(feats) else ". ", false)
+	for f in feats:
+		fc.add_child(_label("✦ " + str(f).strip_edges().trim_suffix("."), 20, C_INK))
+	if h.get("second_wind", false) and not in_combat:
+		fc.add_child(_small_wide_button("Второе дыхание (1к10+%d)" % int(h.level), C_GREEN.darkened(0.3), func(): Game.inv("second_wind", {})))
+	v.add_child(fc.get_parent())
+
+	var spells := R.known_spells(h)
+	if spells.size() > 0:
+		var sc := _card()
+		sc.add_child(_section_title("Заклинания"))
+		sc.add_child(_label("атака %+d · сложность спасброска %d · ячейки: %s" % [R.spell_attack(h), R.spell_dc(h), _slots_text(h)], 18, C_PURPLE.lightened(0.4)))
+		for sid in spells:
+			var sp: Dictionary = R.SPELLS[sid]
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 12)
+			row.add_child(_icon_rect(Icons.tex("act_spell"), 40, C_PURPLE.lightened(0.4)))
+			var sv := VBoxContainer.new()
+			sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			sv.add_child(_label("%s · %s" % [sp.name, "заговор" if int(sp.lvl) == 0 else "%d круг" % int(sp.lvl)], 21, C_INK))
+			sv.add_child(_label(str(sp.desc), 17, C_MUTED))
+			row.add_child(sv)
+			sc.add_child(row)
+			if sp.kind == "heal" and not in_combat and R.slot_for(h, sid) >= 0:
+				for n in Game.state.heroes:
+					var tn: String = n
+					sc.add_child(_small_wide_button("Лечить: %s" % Game.state.heroes[n].name, C_PURPLE.darkened(0.3), func(): Game.inv("cast", {"spell": sid, "target": tn})))
+		v.add_child(sc.get_parent())
+
+
+# ---------- элементы листа героя ----------
+
+func _rarity_color(it: Dictionary) -> Color:
+	var d := R.item_def(it)
+	if d.get("magic", false):
+		return C_PURPLE.lightened(0.35)
+	if int(d.get("price", 0)) >= 50:
+		return C_BLUE.lightened(0.35)
+	return C_ACCENT
+
+
+func _slot_cell(it: Dictionary, size: int, placeholder: String, cb: Callable) -> Control:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(size, size)
+	b.focus_mode = Control.FOCUS_NONE
+	var kind := "slot"
+	if not it.is_empty():
+		var rc := _rarity_color(it)
+		kind = "slot_rare" if rc == C_PURPLE.lightened(0.35) else ("slot_magic" if rc == C_BLUE.lightened(0.35) else "slot")
+	for s in ["normal", "hover", "pressed", "disabled"]:
+		b.add_theme_stylebox_override(s, _style(kind))
+	if not it.is_empty():
+		var t := _icon_rect(Icons.for_item(it), int(size * 0.62), _rarity_color(it))
+		t.set_anchors_preset(Control.PRESET_FULL_RECT)
+		t.size_flags_vertical = Control.SIZE_FILL
+		b.add_child(t)
+	elif placeholder != "":
+		var l := _label(placeholder, 17, Color(C_MUTED, 0.55))
+		l.set_anchors_preset(Control.PRESET_FULL_RECT)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(l)
+	if cb.is_valid():
+		b.pressed.connect(cb)
+	else:
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return b
+
+
+func _chip(icon: String, text: String, color: Color) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _style("chip"))
+	var r := HBoxContainer.new()
+	r.add_theme_constant_override("separation", 6)
+	r.add_child(_icon_rect(Icons.tex(icon), 26, color))
+	var tl := _label(text, 20, C_INK)
+	tl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	r.add_child(tl)
+	p.add_child(r)
+	return p
+
+
+func _bar(val: int, maxv: int, color: Color, h := 16) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, h)
+	bar.max_value = maxi(1, maxv)
+	bar.value = clampi(val, 0, maxi(1, maxv))
+	UISkin.style_bar(bar, "xp" if _kind(color) in ["gold", "purple", "blue"] else "hp")
+	bar.custom_minimum_size = Vector2(0, maxi(h, 26))
+	return bar
+
+
+func _portrait(cls: String, size: int) -> Control:
+	return UISkin.make_portrait(Icons.for_class(cls), size)
+
+
+func _section_title(text: String) -> Label:
+	return _ftitle(text, 28)
+
+
+func _ftitle(text: String, size := 34) -> Label:
+	var l := _label(text, size, C_ACCENT)
+	return UISkin.style_title(l, size)
+
+
+func _style(kind: String) -> StyleBox:
+	match kind:
+		"slot", "slot_magic", "slot_rare", "slot_legend":
+			return UISkin.panel(kind, 0)
+		"chip":
+			var c := UISkin.panel("inset", 4)
+			c.content_margin_top = 6
+			c.content_margin_bottom = 6
+			return c
+		"medal":
+			return UISkin.panel("inset", 6)
+		"popup":
+			return UISkin.panel("dark", 18)
+	return UISkin.panel("dark")
+
+
+# ---------- карточка предмета ----------
+
+func _show_item(it: Dictionary, idx: int, slot: String) -> void:
+	_close_item()
+	var h := Game.my_hero()
+	var in_combat := Game.phase == "combat"
+	var my_turn := Game.combat_actor() == Game.my_pname()
+	var can_manage := not in_combat or my_turn
+	var partner := _partner()
+	var shop_open: bool = not Game.state.shop.is_empty()
+	var d := R.item_def(it)
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			_close_item())
+	layer.add_child(dim)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _style("popup"))
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(600, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 16)
+	top.add_child(_slot_cell(it, 120, "", Callable()))
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var nm := _ftitle(R.item_name(it), 32)
+	nm.add_theme_color_override("font_color", _rarity_color(it))
+	tv.add_child(nm)
+	var kind_txt: String = str({"weapon": "Оружие", "armor": "Доспех", "shield": "Щит", "clothes": "Одежда", "head": "Головной убор",
+		"ring": "Кольцо", "amulet": "Амулет", "potion": "Зелье", "scroll": "Свиток"}.get(str(d.get("type", "")), "Вещь"))
+	if d.get("magic", false):
+		kind_txt += " · волшебное"
+	tv.add_child(_label(kind_txt, 19, C_MUTED))
+	top.add_child(tv)
+	v.add_child(top)
+	if R.item_desc(it) != "":
+		v.add_child(_label(R.item_desc(it), 22, C_INK))
+	if str(it.get("note", "")) != "":
+		v.add_child(_label(str(it.note), 20, C_MUTED))
+	v.add_child(_label("Цена: %d зол." % R.item_price(it), 19, C_MUTED))
+	var acts := VBoxContainer.new()
+	acts.add_theme_constant_override("separation", 8)
+	var close_then := func(cb: Callable) -> Callable:
+		return func():
+			_close_item()
+			cb.call()
+	if slot != "":
+		if can_manage:
+			acts.add_child(_small_wide_button("Снять", C_CARD2, close_then.call(func(): Game.inv("unequip", {"slot": slot}))))
+	else:
+		if R.item_slot(it) != "" and can_manage:
+			acts.add_child(_small_wide_button("Надеть", C_BLUE, close_then.call(func(): Game.inv("equip", {"idx": idx}))))
+		if d.type == "potion" and not in_combat:
+			acts.add_child(_small_wide_button("Выпить", C_GREEN.darkened(0.25), close_then.call(func(): Game.inv("use", {"idx": idx}))))
+			if partner != "":
+				acts.add_child(_small_wide_button("Напоить друга", C_GREEN.darkened(0.4), close_then.call(func(): Game.inv("use", {"idx": idx, "target": partner}))))
+		if partner != "" and not in_combat:
+			acts.add_child(_small_wide_button("Отдать другу", C_CARD2, close_then.call(func(): Game.inv("give", {"idx": idx, "to": partner}))))
+		if shop_open:
+			acts.add_child(_small_wide_button("Продать за %d зол." % maxi(1, R.item_price(it) / 2), C_ACCENT.darkened(0.3), close_then.call(func(): Game.inv("sell", {"idx": idx}))))
+		elif not in_combat:
+			acts.add_child(_small_wide_button("Выбросить", C_RED.darkened(0.45), close_then.call(func(): Game.inv("drop", {"idx": idx}))))
+	if in_combat and not my_turn:
+		acts.add_child(_label("В бою вещами можно пользоваться только в свой ход.", 18, C_MUTED))
+	acts.add_child(_small_wide_button("Закрыть", C_CARD, func(): _close_item()))
+	v.add_child(acts)
+	panel.add_child(v)
+	layer.add_child(panel)
+	add_child(layer)
+	item_pop = layer
+	# по центру экрана
+	await get_tree().process_frame
+	if is_instance_valid(panel):
+		panel.position = (get_viewport_rect().size - panel.size) / 2.0
+
+
+func _close_item() -> void:
+	if item_pop and is_instance_valid(item_pop):
+		item_pop.queue_free()
+	item_pop = null
 
 
 # ---------- сундук и лавка ----------
@@ -1125,21 +1436,21 @@ func _update_overlay() -> void:
 	m.add_theme_constant_override("margin_bottom", 120)
 	overlay.add_child(m)
 	var panel := _card(C_CARD2)
+	panel.get_parent().add_theme_stylebox_override("panel", UISkin.panel("dark", 14))
 	m.add_child(panel.get_parent())
 	var scroll := _scroll()
 	var inner: VBoxContainer = scroll.get_child(0)
 	if not loot.is_empty():
-		panel.add_child(_label("💰 " + str(loot.title), 36, C_ACCENT))
+		panel.add_child(UISkin.make_ribbon_title(str(loot.title), 30, 80))
 		for i in loot.items.size():
 			var it: Dictionary = loot.items[i]
 			var idx: int = i
 			var d := R.item_def(it)
-			var c := _card(C_CARD)
+			var c := _card(Color("2b2547"))
 			var lrow := HBoxContainer.new()
 			lrow.add_theme_constant_override("separation", 10)
-			if Icons.for_item(it) != null:
-				lrow.add_child(_icon_rect(Icons.for_item(it), 48, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_ACCENT))
-			var ll := _label(R.item_name(it), 26, C_PURPLE.lightened(0.4) if d.get("magic", false) else C_INK)
+			lrow.add_child(_slot_cell(it, 88, "", Callable()))
+			var ll := _label(R.item_name(it), 26, _rarity_color(it))
 			ll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			lrow.add_child(ll)
 			c.add_child(lrow)
@@ -1150,18 +1461,17 @@ func _update_overlay() -> void:
 		panel.add_child(scroll)
 		panel.add_child(_small_wide_button("Оставить остальное", C_CARD, func(): Game.inv("loot_close", {})))
 		return
-	panel.add_child(_label("⚖ " + str(shop.title), 34, C_ACCENT))
+	panel.add_child(UISkin.make_ribbon_title(str(shop.title), 30, 80))
 	panel.add_child(_label("Твоё золото: %d. Продать можно из сумки на вкладке «Герой»." % int(h.get("gold", 0)), 20, C_MUTED))
 	for i in shop.items.size():
 		var it: Dictionary = shop.items[i]
 		var idx: int = i
 		var price := R.item_price(it)
-		var c := _card(C_CARD)
+		var c := _card(Color("2b2547"))
 		var srow := HBoxContainer.new()
 		srow.add_theme_constant_override("separation", 10)
-		if Icons.for_item(it) != null:
-			srow.add_child(_icon_rect(Icons.for_item(it), 44, C_ACCENT))
-		var sl := _label("%s — %d зол." % [R.item_name(it), price], 24, C_INK)
+		srow.add_child(_slot_cell(it, 80, "", Callable()))
+		var sl := _label("%s\n%d зол." % [R.item_name(it), price], 24, _rarity_color(it))
 		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sl)
 		c.add_child(srow)
@@ -1304,6 +1614,9 @@ func _load_fonts() -> void:
 			set(pair[0], f)
 	if font_black == null:
 		font_black = font_bold
+	font_bold = UISkin.body_font()
+	font_black = UISkin.title_font()
+	font_title = UISkin.title_font()
 
 
 func _make_bg() -> Control:
@@ -1356,6 +1669,7 @@ func _make_theme() -> Theme:
 	sb_v.set_corner_radius_all(4)
 	t.set_stylebox("grabber", "VScrollBar", sb_v)
 	t.set_stylebox("scroll", "VScrollBar", StyleBoxEmpty.new())
+	UISkin.apply_theme(t)
 	return t
 
 
@@ -1367,6 +1681,8 @@ func _label(text: String, size := 26, color := C_INK) -> Label:
 	l.add_theme_color_override("font_color", color)
 	if size >= 34 and font_black:
 		l.add_theme_font_override("font", font_black)
+		l.add_theme_color_override("font_outline_color", UISkin.OUTLINE)
+		l.add_theme_constant_override("outline_size", 5)
 	return l
 
 
@@ -1385,25 +1701,33 @@ func _esc(s) -> String:
 
 
 func _title(text: String) -> Label:
-	return _label(text, 46, C_INK)
+	var l := _label(text, 46, C_ACCENT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return UISkin.style_title(l, 46)
+
+
+func _kind(c: Color) -> String:
+	if c.s < 0.3 or c.v < 0.3:
+		return "dark"
+	var hue := c.h * 360.0
+	if hue < 18.0 or hue >= 330.0:
+		return "red"
+	if hue < 70.0:
+		return "gold"
+	if hue < 175.0:
+		return "green"
+	if hue < 250.0:
+		return "blue"
+	return "purple"
 
 
 func _button(text: String, color: Color, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(0, 88)
-	b.add_theme_font_size_override("font_size", 28)
 	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	var dark := color.get_luminance() > 0.55
-	b.add_theme_stylebox_override("normal", _box(color, 22))
-	b.add_theme_stylebox_override("hover", _box(color.lightened(0.08), 22))
-	b.add_theme_stylebox_override("pressed", _box(color.darkened(0.2), 22))
-	b.add_theme_stylebox_override("disabled", _box(color.darkened(0.45), 22))
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	for s in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color",
-			"icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color"]:
-		b.add_theme_color_override(s, Color("1b1b24") if dark else Color.WHITE)
-	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.45))
+	b.focus_mode = Control.FOCUS_NONE
+	UISkin.style_button(b, _kind(color), 28)
 	b.add_theme_constant_override("icon_max_width", 40)
 	b.add_theme_constant_override("h_separation", 10)
 	b.pressed.connect(cb)
@@ -1429,11 +1753,11 @@ func _tiny_button(text: String, color: Color, cb: Callable) -> Button:
 	b.custom_minimum_size = Vector2(0, 52)
 	b.add_theme_font_size_override("font_size", 20)
 	for s in ["normal", "hover", "pressed", "disabled"]:
-		var sb: StyleBoxFlat = b.get_theme_stylebox(s).duplicate()
-		sb.content_margin_left = 12
-		sb.content_margin_right = 12
+		var sb: StyleBox = b.get_theme_stylebox(s).duplicate()
+		sb.content_margin_left = 14
+		sb.content_margin_right = 14
 		sb.content_margin_top = 4
-		sb.content_margin_bottom = 4
+		sb.content_margin_bottom = 6
 		b.add_theme_stylebox_override(s, sb)
 	return b
 
@@ -1462,8 +1786,10 @@ func _menu_button(text: String, color: Color, cb: Callable) -> Button:
 
 ## Кнопка с переносом строк. Высота фиксированная: у Button с autowrap в Godot 4.3
 ## высота пересчитывается по кругу и кнопка растёт при каждом нажатии.
-func _wrap_button(text: String, color: Color, cb: Callable, font := 22, h := 72, text_color := Color.WHITE) -> Button:
+func _wrap_button(text: String, color: Color, cb: Callable, font := 22, h := 72, text_color := Color.TRANSPARENT) -> Button:
 	var b := _button("", color, cb)
+	if text_color == Color.TRANSPARENT:
+		text_color = UISkin.button_font_color(_kind(color))
 	b.custom_minimum_size = Vector2(0, h)
 	b.clip_contents = true
 	var l := Label.new()
@@ -1472,6 +1798,10 @@ func _wrap_button(text: String, color: Color, cb: Callable, font := 22, h := 72,
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.add_theme_font_size_override("font_size", font)
 	l.add_theme_color_override("font_color", text_color)
+	l.add_theme_font_override("font", UISkin.body_font())
+	if _kind(color) != "gold":
+		l.add_theme_color_override("font_outline_color", UISkin.OUTLINE)
+		l.add_theme_constant_override("outline_size", 3)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.set_anchors_preset(Control.PRESET_FULL_RECT)
 	l.offset_left = 16
@@ -1485,7 +1815,12 @@ func _wrap_button(text: String, color: Color, cb: Callable, font := 22, h := 72,
 
 func _card(color := C_CARD) -> VBoxContainer:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _box(color, 22, 18))
+	var kind := "dark"
+	if color == C_CARD2:
+		kind = "dark_plain"
+	elif color != C_CARD:
+		kind = "inset"
+	p.add_theme_stylebox_override("panel", UISkin.panel(kind, 10 if kind == "dark" else 14))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	p.add_child(v)
@@ -1522,6 +1857,12 @@ var _auto_n := 0
 
 
 func _autotest_setup() -> void:
+	var ms := OS.get_environment("ALIBI_MENUSHOT")
+	if ms != "":
+		await get_tree().create_timer(1.5).timeout
+		get_viewport().get_texture().get_image().save_png(ms)
+		get_tree().quit()
+		return
 	_auto = OS.get_environment("ALIBI_AUTOTEST")
 	if _auto == "":
 		return
@@ -1546,12 +1887,22 @@ func _autotest_tick() -> void:
 		return
 	var me := Game.my_pname()
 	var shot := OS.get_environment("ALIBI_SHOT")
-	if shot != "" and _auto_n % 2 == 0:
+	if shot != "" and _auto_n % 2 == 0 and not (tab == "sheet" and dice.visible):
 		get_viewport().get_texture().get_image().save_png("%s/%s_%03d_%s_%s.png" % [shot, _auto, _auto_n, Game.phase, tab])
-		if _auto == "client" and screen == "game":
+		if screen == "game":
 			var want := "story"
-			if int(Game.state.turn) in [3, 4]:
+			if int(Game.state.turn) in [3, 4, 5]:
 				want = "sheet"
+				var st: String = ["gear", "stats", "magic"][int(Game.state.turn) - 3]
+				if st != sheet_tab:
+					sheet_tab = st
+					refs.erase("sheet_key")
+					screen = ""
+					_refresh()
+				if st == "gear" and item_pop == null and not Game.my_hero().items.is_empty() and _auto_n % 6 == 0:
+					_show_item(Game.my_hero().items[0], 0, "")
+				elif st != "gear":
+					_close_item()
 			elif int(Game.state.turn) in [6, 7]:
 				want = "map"
 			if want != tab:

@@ -13,16 +13,17 @@ extends Control
 
 signal finished
 
-const C_BACKDROP := Color(0.05, 0.055, 0.09, 0.86)
-const C_CARD := Color("#23263a")
+const C_BACKDROP := Color(0.05, 0.03, 0.02, 0.84)
+const C_CARD := Color("#2a1d14")
+const UISkin = preload("res://scripts/skin.gd")
 const C_INK := Color("#f3f1ea")
 const C_ACCENT := Color("#ffc145")
 const C_RED := Color("#ff5a5f")
 const C_GREEN := Color("#3ddc97")
 const C_PURPLE := Color("#a77bff")
-const C_DIE := Color("#4b5190")
-const C_OUTLINE := Color("#10111c")
-const C_BANNER := Color("#2e3252")
+const C_DIE := Color("#6a1d1b")
+const C_OUTLINE := Color("#140a06")
+const C_BANNER := Color("#4a1c16")
 
 # timeline of one roll in seconds (full length; multiplied by _ts)
 const T_THROW := 0.42     # die is thrown in from below
@@ -711,10 +712,20 @@ func _draw_slot(s: Dictionary, alpha: float, yoff: float) -> void:
 		_glow(rect.get_center(), rect.size.x * 1.0, Color(C_ACCENT, ga * alpha))
 
 	# card
+	var skin_sb := UISkin.panel("dark", 0)
+	skin_sb.modulate_color = Color(Color(1, 1, 1).lerp(Color(1.6, 1.5, 1.4), hitflash), alpha)
+	var sh := StyleBoxFlat.new()
+	sh.bg_color = Color(0, 0, 0, 0)
+	sh.set_corner_radius_all(24)
+	sh.shadow_color = Color(0, 0, 0, 0.5 * alpha)
+	sh.shadow_size = 18
+	sh.shadow_offset = Vector2(0, 8)
+	draw_style_box(sh, rect.grow(-6))
+	draw_style_box(skin_sb, rect)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(C_CARD.lerp(Color(1, 1, 1), 0.1 * hitflash), alpha)
-	sb.set_corner_radius_all(28)
-	var border := Color(C_INK, 0.08)
+	sb.bg_color = Color(0, 0, 0, 0)
+	sb.set_corner_radius_all(20)
+	var border := Color(C_INK, 0.0)
 	if kind == "enemy":
 		border = Color(C_RED, 0.35)
 	if landed and nat == 20:
@@ -723,10 +734,7 @@ func _draw_slot(s: Dictionary, alpha: float, yoff: float) -> void:
 		border = C_RED
 	sb.border_color = Color(border, border.a * alpha)
 	sb.set_border_width_all(2 if ncols == 2 else 3)
-	sb.shadow_color = Color(0, 0, 0, 0.45 * alpha)
-	sb.shadow_size = 18
-	sb.shadow_offset = Vector2(0, 8)
-	draw_style_box(sb, rect)
+	draw_style_box(sb, rect.grow(-10))
 
 	# label
 	var label := str(r.get("label", ""))
@@ -906,7 +914,7 @@ func _draw_die(s: Dictionary, d: Dictionary, off: Vector2, alpha: float) -> void
 		elif val == 1:
 			body = Color("#8c3440")
 	if dim:
-		body = body.lerp(Color("#3a3c52"), 0.6)
+		body = body.lerp(Color("#3a2a20"), 0.6)
 
 	var ang: float = pose.ang
 	var light := Vector2(-0.45, -0.9).normalized().rotated(-ang * 1.9)

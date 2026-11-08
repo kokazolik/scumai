@@ -270,7 +270,7 @@ func _icon_pos(i: int, n: int) -> Vector2:
 func _draw_loot() -> void:
 	var t := _t
 	var fade := clampf(t / 0.2, 0.0, 1.0) * clampf((LOOT_LEN - t) / 0.3, 0.0, 1.0)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.045, 0.08, 0.72 * fade))
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.05, 0.03, 0.02, 0.72 * fade))
 	var c := _chest_c()
 	var open_k := clampf((t - 0.6) / 0.22, 0.0, 1.0)
 	# light from the chest
@@ -496,7 +496,7 @@ func _update_level(delta: float) -> void:
 func _draw_level() -> void:
 	var t := _t
 	var fade := clampf(t / 0.18, 0.0, 1.0) * clampf((LEVEL_LEN - t) / 0.35, 0.0, 1.0)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.045, 0.08, 0.7 * fade))
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.05, 0.03, 0.02, 0.7 * fade))
 	var cx := size.x * 0.5
 	var floor_y := size.y * 0.8
 	var wk := _ease_out_back(clampf(t / 0.3, 0.0, 1.0))

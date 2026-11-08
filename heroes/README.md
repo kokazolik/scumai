@@ -22,15 +22,16 @@
 - `scripts/llm.gd` — клиент OpenRouter (модель `google/gemma-4-26b-a4b-it`), `ALIBI_MOCK=1` включает заглушку.
 - `scripts/main.gd` — интерфейс: меню, лобби, создание героя, вкладки История / Герой / Карта, сундук и лавка.
 - `scripts/map_view.gd` — рисованная карта посещённых мест; `scripts/dice_view.gd` — анимация к20.
-- Шрифты: Nunito и Noto Emoji (OFL).
+- Оформление: `scripts/skin.gd` и текстуры `art/ui/` (рисуются `tools/gen_ui_skin.py`), иконки game-icons.net (CC BY 3.0).
+- Шрифты: Alegreya, Alegreya SC, Alegreya Sans, Ruslan Display, Nunito, Noto Emoji (OFL).
 
 ## Ключ
 Ключ не вшивается в сборку и не хранится в git: его вставляют в игре, он лежит в `user://secrets.cfg`
 на телефоне хоста. Репозиторий публичный, ключ из APK или git сразу утащат.
 
 ## Сборка
-`tools/build_apk.sh 0.4` — экспорт без Android SDK (подставной SDK + uber-apk-signer), подпись релизным
-ключом из папки проекта `keys/` (не из git). Результат: `build/chronicles-0.4.apk`.
+`tools/build_apk.sh 0.5` — экспорт без Android SDK (подставной SDK + uber-apk-signer), подпись релизным
+ключом из папки проекта `keys/` (не из git). Результат: `build/chronicles-0.5.apk`.
 
 ## Автотест
 ```
