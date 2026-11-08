@@ -111,6 +111,11 @@ func _ready() -> void:
 	Net.players_changed.connect(_refresh)
 	Net.rooms_changed.connect(_refresh)
 	Net.joined.connect(_refresh)
+	Net.reconnecting.connect(func(on):
+		if on:
+			_show_notice("ui_dice", "Связь с хостом прервалась", "Переподключаюсь… Игра продолжится сама, как только хост вернётся в приложение.", Callable())
+		elif Net.is_online():
+			_toast("Связь восстановлена"))
 	Net.left.connect(func(reason):
 		error_text = reason
 		local_screen = "menu"
@@ -120,6 +125,15 @@ func _ready() -> void:
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		if Net.is_host() and Game.phase != "lobby":
+			Game._save()
+	if what == NOTIFICATION_APPLICATION_RESUMED:
+		# вернулись из свёрнутого: хост рассылает состояние, клиент просит свежее
+		if Net.is_host():
+			Game._broadcast()
+		else:
+			Net.request_resync()
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		if not Net.is_online() and local_screen == "search":
 			Net.stop_search()
@@ -861,6 +875,8 @@ func _typewrite(r: RichTextLabel) -> void:
 	var n := r.get_total_character_count()
 	if n <= 0:
 		return
+	# раскладка строк считается сразу по всему тексту: слова не перепрыгивают на новую строку
+	r.visible_characters_behavior = TextServer.VC_CHARS_AFTER_SHAPING
 	r.visible_ratio = 0.0
 	var tw := r.create_tween()
 	tw.tween_property(r, "visible_ratio", 1.0, clampf(n / 55.0, 0.6, 9.0))
@@ -2271,7 +2287,9 @@ func _show_item(it: Dictionary, idx: int, slot: String) -> void:
 	if R.item_desc(it) != "":
 		v.add_child(_label(R.item_desc(it), 22, C_INK))
 	if str(it.get("note", "")) != "":
-		v.add_child(_label(str(it.note), 20, C_MUTED))
+		v.add_child(_label(str(it.note), 20, C_INK))
+	elif d.type == "misc" and R.item_desc(it) == "":
+		v.add_child(_label("Сюжетная вещь. Покажи её кому-то, используй, отдай или спрячь — ведущий это учтёт.", 19, C_MUTED))
 	v.add_child(_label("Цена: %d зол." % R.item_price(it), 19, C_MUTED))
 	var acts := VBoxContainer.new()
 	acts.add_theme_constant_override("separation", 8)
@@ -2291,6 +2309,19 @@ func _show_item(it: Dictionary, idx: int, slot: String) -> void:
 			acts.add_child(_small_wide_button("Выпить", C_GREEN.darkened(0.25), close_then.call(func(): Game.inv("use", {"idx": idx}))))
 			if partner != "":
 				acts.add_child(_small_wide_button("Напоить друга", C_GREEN.darkened(0.4), close_then.call(func(): Game.inv("use", {"idx": idx, "target": partner}))))
+		if not in_combat and Game.phase == "play":
+			var nm_it := R.item_name(it)
+			acts.add_child(_small_wide_button("Использовать в истории", C_PURPLE.darkened(0.3), close_then.call(func():
+				_draft = "Достаю «%s» и " % nm_it
+				tab = "story"
+				screen = ""
+				_panel_open = true
+				_refresh()
+				var ai = refs.get("action_input")
+				if ai and is_instance_valid(ai):
+					ai.text = _draft
+					ai.grab_focus()
+					ai.set_caret_column(ai.text.length()))))
 		if partner != "" and not in_combat:
 			acts.add_child(_small_wide_button("Отдать другу", C_CARD2, close_then.call(func(): Game.inv("give", {"idx": idx, "to": partner}))))
 		if shop_open:

@@ -514,9 +514,15 @@ static func item_from_ai(v) -> Dictionary:
 		return {"id": "misc", "name": _humanize(s).left(40)}
 	if v is Dictionary:
 		var id := str(v.get("id", "misc"))
-		if not ITEMS.has(id):
-			return {"id": "misc", "name": _humanize(str(v.get("name", id))).left(40)}
+		var note := str(v.get("note", v.get("desc", ""))).strip_edges().left(200)
+		if not ITEMS.has(id) or id == "misc":
+			var mi := {"id": "misc", "name": _humanize(str(v.get("name", id))).left(40)}
+			if note != "":
+				mi.note = note
+			return mi
 		var it := {"id": id}
+		if note != "":
+			it.note = note
 		var plus := clampi(int(v.get("plus", 0)), 0, 3)
 		if plus > 0:
 			it.plus = plus

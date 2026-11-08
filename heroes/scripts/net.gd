@@ -7,6 +7,16 @@ signal players_changed
 signal rooms_changed
 signal joined          # клиент подключился и зарегистрирован
 signal left(reason: String)  # нас отключили / не смогли подключиться
+signal reconnecting(on: bool)  # связь с хостом пропала, пробуем вернуться
+
+## Сколько ENet ждёт молчащего собеседника: телефон хоста могут свернуть на несколько минут.
+const PEER_TIMEOUT_MIN := 120000
+const PEER_TIMEOUT_MAX := 600000
+const RECONNECT_FOR := 180.0
+
+var last_ip := ""
+var _reconnect_left := 0.0
+var _reconnect_t := 0.0
 
 const PORT := 7777
 const DISCOVERY_PORT := 7778
@@ -26,8 +36,33 @@ func _ready() -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected)
-	multiplayer.connection_failed.connect(func(): _drop("Не удалось подключиться"))
-	multiplayer.server_disconnected.connect(func(): _drop("Хост закрыл комнату"))
+	multiplayer.connection_failed.connect(func():
+		if _reconnect_left > 0.0:
+			return  # ещё пробуем
+		_drop("Не удалось подключиться"))
+	multiplayer.server_disconnected.connect(_on_server_lost)
+
+
+func is_reconnecting() -> bool:
+	return _reconnect_left > 0.0
+
+
+## Хост пропал посреди игры (свернул приложение, моргнул Wi-Fi): не выкидываем в меню, а переподключаемся.
+func _on_server_lost() -> void:
+	if Game.phase == "lobby" or last_ip == "":
+		_drop("Хост закрыл комнату")
+		return
+	_reconnect_left = RECONNECT_FOR
+	_reconnect_t = 0.5
+	reconnecting.emit(true)
+
+
+func _relax_timeout(id: int) -> void:
+	var mp = multiplayer.multiplayer_peer
+	if mp is ENetMultiplayerPeer:
+		var pp = mp.get_peer(id)
+		if pp:
+			pp.set_timeout(32, PEER_TIMEOUT_MIN, PEER_TIMEOUT_MAX)
 
 
 func is_online() -> bool:
@@ -66,11 +101,14 @@ func join_room(ip: String) -> String:
 	if e != OK:
 		return "Не удалось подключиться к %s" % ip
 	multiplayer.multiplayer_peer = p
-	players = {}
+	last_ip = ip.strip_edges()
+	if _reconnect_left <= 0.0:
+		players = {}
 	return ""
 
 
 func stop() -> void:
+	_reconnect_left = 0.0
 	if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
@@ -112,6 +150,20 @@ func _is_172(a: String) -> bool:
 
 
 func _process(delta: float) -> void:
+	if _reconnect_left > 0.0:
+		_reconnect_left -= delta
+		_reconnect_t -= delta
+		if _reconnect_left <= 0.0:
+			reconnecting.emit(false)
+			_drop("Хост не вернулся")
+			return
+		if _reconnect_t <= 0.0:
+			_reconnect_t = 4.0
+			var st := -1
+			if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
+				st = multiplayer.multiplayer_peer.get_connection_status()
+			if st != MultiplayerPeer.CONNECTION_CONNECTING:
+				join_room(last_ip)
 	if _beacon and is_host():
 		_beacon_t -= delta
 		if _beacon_t <= 0.0:
@@ -147,8 +199,8 @@ func _send_beacon() -> void:
 		_beacon.put_packet(msg)
 
 
-func _on_peer_connected(_id: int) -> void:
-	pass  # ждём, пока клиент назовёт себя в _register
+func _on_peer_connected(id: int) -> void:
+	_relax_timeout(id)  # ждём, пока клиент назовёт себя в _register
 
 
 func _on_peer_disconnected(id: int) -> void:
@@ -159,6 +211,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 
 func _on_connected() -> void:
+	_relax_timeout(1)
 	_register.rpc_id(1, my_name)
 
 
@@ -191,7 +244,22 @@ func _register(pname: String) -> void:
 
 @rpc("authority", "reliable")
 func _welcome() -> void:
+	if _reconnect_left > 0.0:
+		_reconnect_left = 0.0
+		reconnecting.emit(false)
 	joined.emit()
+
+
+## Вернулись из свёрнутого состояния: попросить у хоста свежее состояние игры.
+func request_resync() -> void:
+	if is_online() and not is_host():
+		_resync.rpc_id(1)
+
+
+@rpc("any_peer", "reliable")
+func _resync() -> void:
+	if is_host():
+		Game.send_state_to(multiplayer.get_remote_sender_id())
 
 
 @rpc("authority", "reliable")
