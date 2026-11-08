@@ -27,6 +27,7 @@ var font_bold: Font
 var font_black: Font
 var font_title: Font
 var sheet_tab := "gear"
+var _panel_open := true
 var item_pop: Control
 var root_margin: MarginContainer
 var content: VBoxContainer
@@ -547,10 +548,42 @@ func _build_story_tab() -> void:
 	content.add_child(scroll)
 	refs.log = logv
 	refs.log_scroll = scroll
+	# полоска между текстом и действиями: «новое» и свернуть/развернуть
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 8)
+	var nb := _tiny_button("▼ Новое", C_ACCENT, func():
+		refs.new_btn.visible = false
+		_scroll_down(refs.log_scroll))
+	nb.visible = false
+	nb.custom_minimum_size = Vector2(190, 48)
+	refs.new_btn = nb
+	bar.add_child(nb)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.add_child(sp)
+	var tg := _tiny_button("", C_CARD, func():
+		_panel_open = not _panel_open
+		_apply_panel())
+	tg.custom_minimum_size = Vector2(230, 48)
+	refs.panel_btn = tg
+	bar.add_child(tg)
+	content.add_child(bar)
 	var bottom := VBoxContainer.new()
 	bottom.add_theme_constant_override("separation", 8)
 	content.add_child(bottom)
 	refs.bottom = bottom
+	_apply_panel()
+
+
+func _apply_panel() -> void:
+	if not refs.has("bottom"):
+		return
+	refs.bottom.visible = _panel_open
+	var hint := ""
+	var m := _bottom_key
+	if m.begins_with("myturn") or m.begins_with("ask") or m.begins_with("input"):
+		hint = " · твой ход"
+	refs.panel_btn.text = ("Свернуть ▾" if _panel_open else "Действия ▴" + hint)
 
 
 func _update() -> void:
@@ -619,10 +652,30 @@ func _update_log() -> void:
 		var c0: Dictionary = Game.state.campaign
 		if str(c0.get("title", "")) != "":
 			logv.add_child(UISkin.make_ribbon_title(str(c0.title), 30, 80))
+	var sc: ScrollContainer = refs.log_scroll
+	var vb := sc.get_v_scroll_bar()
+	var at_bottom := _log_n <= 0 or sc.scroll_vertical >= vb.max_value - vb.page - 160
+	var mine := false
 	for i in range(_log_n, lg.size()):
-		logv.add_child(_log_entry(lg[i]))
+		var en: Control = _log_entry(lg[i])
+		_pass_mouse(en)
+		logv.add_child(en)
+		if str(lg[i].k) == "act" and str(lg[i].get("w", "")) == str(Game.my_hero().get("name", "?")):
+			mine = true
 	_log_n = lg.size()
-	_scroll_down(refs.log_scroll)
+	if at_bottom or mine:
+		_scroll_down(sc)
+	elif refs.has("new_btn"):
+		refs.new_btn.visible = true
+
+
+## Чтобы текст листался пальцем: карточки и RichTextLabel не должны «съедать» касание.
+func _pass_mouse(c: Control) -> void:
+	if c.mouse_filter == Control.MOUSE_FILTER_STOP and not (c is BaseButton) and not (c is LineEdit) and not (c is TextEdit):
+		c.mouse_filter = Control.MOUSE_FILTER_PASS
+	for ch in c.get_children():
+		if ch is Control:
+			_pass_mouse(ch)
 
 
 func _scroll_down(sc: ScrollContainer) -> void:
@@ -630,6 +683,8 @@ func _scroll_down(sc: ScrollContainer) -> void:
 	await get_tree().process_frame
 	if is_instance_valid(sc):
 		sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)
+		if refs.has("new_btn") and is_instance_valid(refs.new_btn) and sc == refs.get("log_scroll"):
+			refs.new_btn.visible = false
 
 
 func _log_entry(e: Dictionary) -> Control:
@@ -692,7 +747,7 @@ func _update_combat_box() -> void:
 		elif dead:
 			s = "[color=#777777]%s[/color]" % s
 		order.append(s)
-	card.add_child(_rich("Раунд %d: %s" % [int(c.round), " · ".join(order)], 21))
+	card.add_child(_rich("Раунд %d: %s" % [int(c.round), " · ".join(order)], 19))
 	var alive := []
 	for i in c.enemies.size():
 		if not c.enemies[i].dead:
@@ -700,39 +755,56 @@ func _update_combat_box() -> void:
 	if _target not in alive and alive.size() > 0:
 		_target = alive[0]
 	var my_turn := Game.combat_actor() == Game.my_pname()
+	var strip := ScrollContainer.new()
+	strip.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	strip.custom_minimum_size = Vector2(0, 124)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	strip.add_child(row)
 	for i in alive:
 		var en: Dictionary = c.enemies[i]
-		var row := HBoxContainer.new()
+		var sel: bool = i == _target and my_turn
 		var b := Button.new()
-		b.text = ("🎯 " if i == _target and my_turn else "") + "%s%s  КД %d" % [en.name, " 💤" if en.asleep else "", int(en.ac)]
-		b.icon = Icons.for_monster(str(en.get("base_name", en.name)))
-		b.add_theme_constant_override("icon_max_width", 36)
-		b.add_theme_color_override("icon_normal_color", Color("ffb3a8"))
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.add_theme_font_size_override("font_size", 22)
-		var est := UISkin.button_styles("red" if i == _target and my_turn else "dark", 12)
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(200, 118)
+		var est := UISkin.button_styles("red" if sel else "dark", 8)
 		for k in est:
 			b.add_theme_stylebox_override(k, est[k])
-		b.add_theme_color_override("font_color", C_INK)
-		b.add_theme_color_override("font_outline_color", UISkin.OUTLINE)
-		b.add_theme_constant_override("outline_size", 4)
-		b.custom_minimum_size = Vector2(0, 60)
+		var v := VBoxContainer.new()
+		v.set_anchors_preset(Control.PRESET_FULL_RECT)
+		v.offset_left = 12
+		v.offset_right = -12
+		v.offset_top = 8
+		v.offset_bottom = -10
+		v.add_theme_constant_override("separation", 2)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var top := HBoxContainer.new()
+		top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		top.add_child(_icon_rect(Icons.for_monster(str(en.get("base_name", en.name))), 40, Color("ffd2c8")))
+		var nm := _label("%s%s" % [en.name, " 💤" if en.asleep else ""], 18, C_INK)
+		nm.autowrap_mode = TextServer.AUTOWRAP_OFF
+		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		nm.clip_text = true
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top.add_child(nm)
+		v.add_child(top)
+		var ac := _label(("🎯 цель · " if sel else "") + "КД %d · %d/%d" % [int(en.ac), int(en.hp), int(en.max_hp)], 16, C_ACCENT if sel else C_MUTED)
+		ac.autowrap_mode = TextServer.AUTOWRAP_OFF
+		v.add_child(ac)
+		var pb := ProgressBar.new()
+		pb.max_value = int(en.max_hp)
+		pb.value = int(en.hp)
+		UISkin.style_bar(pb, "hp")
+		pb.custom_minimum_size = Vector2(0, 22)
+		pb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(pb)
+		b.add_child(v)
 		b.pressed.connect(func():
 			_target = i
 			refs.combat_key = ""
 			_update_combat_box())
 		row.add_child(b)
-		var pb := ProgressBar.new()
-		pb.custom_minimum_size = Vector2(150, 26)
-		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		pb.max_value = int(en.max_hp)
-		pb.value = int(en.hp)
-		pb.show_percentage = false
-		UISkin.style_bar(pb, "hp")
-		pb.custom_minimum_size = Vector2(150, 26)
-		row.add_child(pb)
-		card.add_child(row)
+	card.add_child(strip)
 	box.add_child(card.get_parent())
 
 
@@ -774,6 +846,9 @@ func _update_bottom() -> void:
 	if old_input and is_instance_valid(old_input):
 		_draft = old_input.text
 	_bottom_key = mode
+	if mode.begins_with("myturn") or mode.begins_with("ask"):
+		_panel_open = true
+	_apply_panel.call_deferred()
 	refs.erase("action_input")
 	refs.erase("wait_label")
 	var b: VBoxContainer = refs.bottom
@@ -909,7 +984,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 			_update_bottom()))
 		return
 	var ai := R.attack_info(h)
-	var l := _label("Твой ход! Цель выбирается в списке врагов.", 22, C_ACCENT)
+	var l := _label("Твой ход! Цель: нажми на врага сверху.", 21, C_ACCENT)
 	b.add_child(l)
 	var g := GridContainer.new()
 	g.columns = 2
@@ -935,8 +1010,8 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	acts.append(["Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"}), "act_flee"])
 	for a in acts:
 		var bt := _with_icon(_button(a[0], a[1], a[2]), Icons.tex(a[3]), 34)
-		bt.custom_minimum_size = Vector2(0, 72)
-		bt.add_theme_font_size_override("font_size", 22)
+		bt.custom_minimum_size = Vector2(0, 62)
+		bt.add_theme_font_size_override("font_size", 21)
 		bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		g.add_child(bt)
 	b.add_child(g)
@@ -1691,6 +1766,7 @@ func _rich(bb: String, size := 24) -> RichTextLabel:
 	l.bbcode_enabled = true
 	l.fit_content = true
 	l.scroll_active = false
+	l.mouse_filter = Control.MOUSE_FILTER_PASS
 	l.add_theme_font_size_override("normal_font_size", size)
 	l.text = bb
 	return l
@@ -1821,6 +1897,7 @@ func _card(color := C_CARD) -> VBoxContainer:
 	elif color != C_CARD:
 		kind = "inset"
 	p.add_theme_stylebox_override("panel", UISkin.panel(kind, 10 if kind == "dark" else 14))
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	p.add_child(v)
@@ -1879,7 +1956,40 @@ func _autotest_setup() -> void:
 	add_child(t)
 
 
+var _drag_done := false
+
+
+func _drag_test() -> void:
+	# ALIBI_DRAGTEST=1: проверка, что историю можно листать пальцем поверх карточек
+	var sc: ScrollContainer = refs.log_scroll
+	var before := sc.scroll_vertical
+	var p0 := Vector2(360, sc.global_position.y + sc.size.y * 0.3)
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = p0
+	ev.global_position = p0
+	Input.parse_input_event(ev)
+	for k in 12:
+		await get_tree().process_frame
+		var mv := InputEventMouseMotion.new()
+		mv.position = p0 + Vector2(0, 25 * (k + 1))
+		mv.global_position = mv.position
+		mv.relative = Vector2(0, 25)
+		mv.button_mask = MOUSE_BUTTON_MASK_LEFT
+		Input.parse_input_event(mv)
+	var up := ev.duplicate()
+	up.pressed = false
+	up.position = p0 + Vector2(0, 300)
+	Input.parse_input_event(up)
+	await get_tree().create_timer(0.5).timeout
+	print("[%s] DRAGTEST before=%d after=%d max=%d touch=%s" % [_auto, before, sc.scroll_vertical, int(sc.get_v_scroll_bar().max_value), DisplayServer.is_touchscreen_available()])
+
+
 func _autotest_tick() -> void:
+	if OS.get_environment("ALIBI_DRAGTEST") != "" and not _drag_done and screen == "game" and tab == "story" and int(Game.state.turn) >= 9 and refs.has("log_scroll"):
+		_drag_done = true
+		_drag_test()
 	_auto_n += 1
 	if _auto_n > 1000:
 		print("[%s] AUTOTEST TIMEOUT" % _auto)

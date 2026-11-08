@@ -256,6 +256,8 @@ static func item_def(it: Dictionary) -> Dictionary:
 static func item_name(it: Dictionary) -> String:
 	var d := item_def(it)
 	var n := str(d.get("name", "Вещь"))
+	if "_" in n:
+		n = _humanize(n)
 	var plus := int(it.get("plus", 0))
 	if plus > 0 and not n.ends_with("+%d" % plus):
 		n += " +%d" % plus
@@ -317,6 +319,14 @@ static func item_price(it: Dictionary) -> int:
 
 
 ## Создаёт предмет из ответа нейронки: id из каталога, либо свободная вещь.
+## «ancient_cylinder» → «Ancient cylinder»: хотя бы без подчёркиваний, с заглавной буквы.
+static func _humanize(s: String) -> String:
+	s = s.replace("_", " ").strip_edges()
+	if s == "":
+		return "Вещь"
+	return s.left(1).to_upper() + s.substr(1)
+
+
 static func item_from_ai(v) -> Dictionary:
 	if v is String:
 		var s := str(v).strip_edges()
@@ -325,11 +335,11 @@ static func item_from_ai(v) -> Dictionary:
 		for id in ITEMS:
 			if ITEMS[id].name.to_lower() == s.to_lower():
 				return {"id": id}
-		return {"id": "misc", "name": s.left(40)}
+		return {"id": "misc", "name": _humanize(s).left(40)}
 	if v is Dictionary:
 		var id := str(v.get("id", "misc"))
 		if not ITEMS.has(id):
-			return {"id": "misc", "name": str(v.get("name", id)).left(40)}
+			return {"id": "misc", "name": _humanize(str(v.get("name", id))).left(40)}
 		var it := {"id": id}
 		var plus := clampi(int(v.get("plus", 0)), 0, 3)
 		if plus > 0:
