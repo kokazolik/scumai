@@ -275,12 +275,10 @@ func _build_lobby() -> void:
 	var nc := _card()
 	nc.add_child(_label("Новая кампания: выбери мир", 24, C_MUTED))
 	for i in Game.SETTINGS.size():
-		var b := _button(Game.SETTINGS[i], C_PURPLE if i == _setting else C_CARD2, func():
+		var b := _wrap_button(Game.SETTINGS[i], C_PURPLE if i == _setting else C_CARD2, func():
 			_setting = i
 			screen = ""
-			_refresh())
-		b.custom_minimum_size.y = 76
-		b.add_theme_font_size_override("font_size", 24)
+			_refresh(), 23, 80)
 		nc.add_child(b)
 	nc.add_child(_label("Пожелания ведущему (необязательно)", 22, C_MUTED))
 	var wish := LineEdit.new()
@@ -667,8 +665,14 @@ func _update_combat_box() -> void:
 func _bottom_mode() -> String:
 	var me := Game.my_pname()
 	var h := Game.my_hero()
+	var asks: Array = Game.state.get("ask", [])
+	if asks.size() > 0:
+		var sig := "ask"
+		for a in asks:
+			sig += "%s%s" % [a.who, a.done]
+		return sig
 	match Game.phase:
-		"thinking":
+		"thinking", "roll":
 			return "thinking"
 		"combat":
 			if Game.state.combat.get("wait", false):
@@ -709,6 +713,9 @@ func _update_bottom() -> void:
 		b.add_child(l)
 		return
 	refs.erase("dots")
+	if mode.begins_with("ask"):
+		_build_ask(b)
+		return
 	if mode.begins_with("myturn"):
 		_build_turn_menu(b)
 		return
@@ -738,16 +745,7 @@ func _update_bottom() -> void:
 	input.text = _draft
 	refs.action_input = input
 	for o in opts:
-		var ob := Button.new()
-		ob.text = "› " + str(o)
-		ob.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		ob.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		ob.add_theme_font_size_override("font_size", 22)
-		ob.add_theme_color_override("font_color", C_ACCENT)
-		ob.add_theme_stylebox_override("normal", _box(C_CARD, 12, 10))
-		ob.add_theme_stylebox_override("hover", _box(C_CARD2, 12, 10))
-		ob.add_theme_stylebox_override("pressed", _box(C_CARD2, 12, 10))
-		ob.pressed.connect(func(): input.text = str(o))
+		var ob := _wrap_button("› " + str(o), C_CARD, func(): input.text = str(o), 21, 60, C_ACCENT)
 		b.add_child(ob)
 	b.add_child(input)
 	var row := HBoxContainer.new()
@@ -760,6 +758,27 @@ func _update_bottom() -> void:
 	go.custom_minimum_size.y = 80
 	row.add_child(go)
 	b.add_child(row)
+
+
+func _build_ask(b: VBoxContainer) -> void:
+	for a in Game.state.ask:
+		var c := _card(Color("2b2547"))
+		var adv := ""
+		if int(a.adv) > 0:
+			adv = " · с преимуществом"
+		elif int(a.adv) < 0:
+			adv = " · с помехой"
+		c.add_child(_label("Проверка: %s — %s" % [a.hero, a.label], 24, C_ACCENT))
+		c.add_child(_label("Сложность %d · бонус %+d%s%s" % [int(a.dc), int(a.bonus), adv, (" · " + str(a.why)) if str(a.why) != "" else ""], 22, C_INK))
+		if a.done:
+			c.add_child(_label("Брошено", 22, C_GREEN))
+		elif str(a.who) == Game.my_pname():
+			var rb := _button("🎲 Бросить к20", C_ACCENT, func():
+				Game.roll_now())
+			c.add_child(rb)
+		else:
+			c.add_child(_label("Ждём, когда %s бросит кубик" % a.hero, 22, C_MUTED))
+		b.add_child(c.get_parent())
 
 
 func _wait_text() -> String:
@@ -1293,7 +1312,7 @@ func _button(text: String, color: Color, cb: Callable) -> Button:
 	b.text = text
 	b.custom_minimum_size = Vector2(0, 88)
 	b.add_theme_font_size_override("font_size", 28)
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	var dark := color.get_luminance() > 0.55
 	b.add_theme_stylebox_override("normal", _box(color, 22))
 	b.add_theme_stylebox_override("hover", _box(color.lightened(0.08), 22))
@@ -1336,8 +1355,29 @@ func _tiny_button(text: String, color: Color, cb: Callable) -> Button:
 
 
 func _menu_button(text: String, color: Color, cb: Callable) -> Button:
-	var b := _small_wide_button(text, color, cb)
-	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	return _wrap_button(text, color, cb, 21, 72)
+
+
+## Кнопка с переносом строк. Высота фиксированная: у Button с autowrap в Godot 4.3
+## высота пересчитывается по кругу и кнопка растёт при каждом нажатии.
+func _wrap_button(text: String, color: Color, cb: Callable, font := 22, h := 72, text_color := Color.WHITE) -> Button:
+	var b := _button("", color, cb)
+	b.custom_minimum_size = Vector2(0, h)
+	b.clip_contents = true
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", font)
+	l.add_theme_color_override("font_color", text_color)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.offset_left = 16
+	l.offset_right = -12
+	l.offset_top = 4
+	l.offset_bottom = -4
+	l.clip_text = true
+	b.add_child(l)
 	return b
 
 
@@ -1416,6 +1456,10 @@ func _autotest_tick() -> void:
 				tab = want
 				screen = ""
 				_refresh()
+	for a in Game.state.get("ask", []):
+		if str(a.who) == me and not a.done:
+			Game.roll_now()
+			return
 	match Game.phase:
 		"lobby":
 			if _auto == "host" and Net.players.size() >= 2:

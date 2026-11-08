@@ -8,6 +8,7 @@ extends Node
 
 signal state_changed
 signal rolls_shown(rolls: Array)   # для анимации кубиков на всех телефонах
+signal _asks_finished
 
 const R = preload("res://scripts/rules.gd")
 const MapView = preload("res://scripts/map_view.gd")
@@ -48,7 +49,7 @@ func _fresh_state() -> Dictionary:
 	return {"phase": "lobby", "campaign": {}, "heroes": {}, "log": [], "options": {},
 		"pending": [], "error": "", "save_info": _save_info(), "turn": 0,
 		"map": {"nodes": [], "edges": [], "cur": -1}, "combat": {}, "loot": {}, "shop": {},
-		"rolls": [], "roll_seq": 0}
+		"rolls": [], "roll_seq": 0, "ask": []}
 
 
 func hero_of(pname: String) -> Dictionary:
@@ -222,6 +223,9 @@ func _all_acted() -> bool:
 
 
 func on_player_left(_id: int) -> void:
+	for a in state.ask:
+		if not a.done and not (str(a.who) in Net.players.values()):
+			_do_roll(str(a.who))
 	if phase == "play" and _all_acted():
 		_resolve()
 	elif phase == "create" and _all_have_heroes() and not state.heroes.is_empty():
@@ -384,7 +388,10 @@ func _resolve() -> void:
 
 	# 1) какие нужны проверки
 	var rolls := []
-	var res: Dictionary = await LLM.chat_json(_checks_prompt(acts), 0.3, 400)
+	var res: Dictionary = await LLM.chat_json(_checks_prompt(acts), 0.3, 500)
+	if not Net.is_host():
+		return
+	var asks := []
 	if res.ok and res.data.get("checks") is Array:
 		var seen := {}
 		for c in res.data.checks:
@@ -393,24 +400,20 @@ func _resolve() -> void:
 			var pname := _player_by_hero(str(c.get("who", "")))
 			if pname == "" or seen.has(pname) or not acts.has(pname):
 				continue
-			var r := _check(pname, str(c.get("kind", "skill")), str(c.get("name", "")), int(c.get("dc", 12)),
+			var a := _make_ask(pname, str(c.get("kind", "skill")), str(c.get("name", "")), int(c.get("dc", 12)),
 				int(c.get("adv", 0)), str(c.get("why", "")))
-			if r.is_empty():
+			if a.is_empty():
 				continue
 			seen[pname] = true
-			rolls.append(r)
+			asks.append(a)
+	if asks.size() > 0:
+		rolls = await _ask_rolls(asks, "roll")
 	var t0 := Time.get_ticks_msec()
-	if rolls.size() > 0:
-		_show_rolls(rolls)
-		for r in rolls:
-			_log("roll", r.hero, r.text)
-		_set_phase("thinking")
+	_set_phase("thinking")
 
 	# 2) рассказ
 	res = await LLM.chat_json(_narrate_prompt(_acts_text(acts), rolls, ""), 0.9, 1400)
-	var wait := (2300 * rolls.size()) - (Time.get_ticks_msec() - t0)
-	if rolls.size() > 0 and wait > 0:
-		await get_tree().create_timer(wait / 1000.0).timeout
+	await _wait_rolls(300)
 	_busy = false
 	if not Net.is_host():
 		return
@@ -460,6 +463,82 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 		_update_chronicle()
 
 
+## Готовит проверку, которую игрок бросит сам: показываем сложность, ждём нажатия «Бросить».
+func _make_ask(pname: String, kind: String, what: String, dc: int, adv: int, why: String) -> Dictionary:
+	var h: Dictionary = state.heroes[pname]
+	var info := _check_info(h, kind, what)
+	if info.is_empty():
+		return {}
+	return {"who": pname, "hero": h.name, "kind": kind, "what": what, "label": info.label, "bonus": info.bonus,
+		"dc": clampi(dc, 5, 25), "adv": clampi(adv, -1, 1), "why": why, "done": false}
+
+
+## Ставит проверки игрокам и ждёт, пока все бросят. Отсутствующие бросают автоматически.
+func _ask_rolls(asks: Array, ask_phase: String) -> Array:
+	state.ask = asks
+	if ask_phase != "":
+		phase = ask_phase
+		state.phase = ask_phase
+	_broadcast()
+	for a in asks:
+		if not (str(a.who) in Net.players.values()):
+			_do_roll(str(a.who))
+	if not _asks_done():
+		await _asks_finished
+	var rolls := []
+	for a in state.ask:
+		if a.has("result"):
+			rolls.append(a.result)
+	state.ask = []
+	return rolls
+
+
+func _asks_done() -> bool:
+	for a in state.ask:
+		if not a.done:
+			return false
+	return true
+
+
+func roll_now() -> void:
+	_roll_rpc.rpc_id(1)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func _roll_rpc() -> void:
+	if Net.is_host():
+		_do_roll(_sender_name())
+
+
+func _do_roll(pname: String) -> void:
+	for a in state.ask:
+		if str(a.who) == pname and not a.done:
+			var r := _check(pname, str(a.kind), str(a.what), int(a.dc), int(a.adv), str(a.why))
+			if r.is_empty():
+				r = _check(pname, "ability", "СИЛ", int(a.dc), 0, str(a.why))
+			a.done = true
+			a.result = r
+			_show_rolls([r])
+			_log("roll", r.hero, r.text)
+			_broadcast()
+			if _asks_done():
+				# даём докатиться последнему кубику
+				get_tree().create_timer(maxf(0.1, (_rolls_until - Time.get_ticks_msec()) / 1000.0)).timeout.connect(func(): _asks_finished.emit())
+			return
+
+
+func _check_info(h: Dictionary, kind: String, what: String) -> Dictionary:
+	what = what.strip_edges()
+	if kind == "save" or what.to_lower().begins_with("спас"):
+		var a := _ability_from(what)
+		return {} if a == "" else {"label": "спасбросок " + a, "bonus": R.save_bonus(h, a)}
+	var s := _skill_from(what)
+	if s != "":
+		return {"label": s, "bonus": R.skill_bonus(h, s)}
+	var a2 := _ability_from(what)
+	return {} if a2 == "" else {"label": str(R.AB_NAME[a2]), "bonus": R.amod(h, a2)}
+
+
 ## Проверка навыка / спасбросок / характеристика. Возвращает описание броска.
 func _check(pname: String, kind: String, what: String, dc: int, adv: int, why: String) -> Dictionary:
 	var h: Dictionary = state.heroes[pname]
@@ -493,7 +572,8 @@ func _check(pname: String, kind: String, what: String, dc: int, adv: int, why: S
 	var txt := "%s (%s): к20 = %d%s%s = %d против %d — %s" % [label, why, r.value, _sgn(bonus),
 		(" + вдохновение %d" % r.insp) if r.insp > 0 else "", total, dc, outcome]
 	return {"who": pname, "hero": h.name, "label": "%s · %s" % [h.name, label], "d20": r.value, "d20b": r.other,
-		"adv": r.adv, "mod": bonus + r.insp, "total": total, "dc": dc, "outcome": outcome, "text": txt}
+		"adv": r.adv, "mod": bonus + r.insp, "total": total, "dc": dc, "outcome": outcome, "text": txt,
+		"kind": "save" if label.begins_with("спас") else "check"}
 
 
 func _skill_from(s: String) -> String:
@@ -1083,8 +1163,10 @@ func _enemy_turn(i: int) -> void:
 		var crit := v == 20 or (hit and int(h.hp) <= 0)
 		var line := "%s атакует %s: %d против КД %d — " % [en.name, h.name, total, hac]
 		var outcome := "промах"
+		var dealt := -1
 		if hit:
 			var dmg := _roll_damage(str(en.dmg), crit)
+			dealt = dmg
 			outcome = "критическое попадание" if crit else "попадание"
 			line += "%s, %d урона." % [outcome, dmg]
 			var extra := _damage_hero(target, dmg, crit)
@@ -1096,7 +1178,8 @@ func _enemy_turn(i: int) -> void:
 			line += "промах."
 		_log("cbt", en.name, line)
 		rolls.append({"label": "%s ⚔ %s" % [en.name, h.name], "d20": v, "d20b": -1 if adv == 0 else (b if v == a else a),
-			"adv": adv, "mod": int(en.atk), "total": total, "dc": hac, "outcome": outcome})
+			"adv": adv, "mod": int(en.atk), "total": total, "dc": hac, "outcome": outcome,
+			"kind": "enemy", "dmg": dealt, "target": target})
 	_show_rolls(rolls)
 
 
@@ -1136,7 +1219,7 @@ func _death_save(pname: String) -> void:
 		else:
 			_log("cbt", h.name, "%s: спасбросок от смерти %d — провал (%d/3)." % [h.name, v, h.death_f])
 	_show_rolls([{"label": "%s · спасбросок от смерти" % h.name, "d20": v, "d20b": -1, "adv": 0, "mod": 0,
-		"total": v, "dc": 10, "outcome": outcome}])
+		"total": v, "dc": 10, "outcome": outcome, "kind": "death"}])
 
 
 ## Конец боя: победа, поражение или бегство. Возвращает true, если бой закончен.
@@ -1271,10 +1354,10 @@ func _cact(a: Dictionary) -> void:
 			state.heroes[to].inspired = true
 			_log("cbt", h.name, "%s вдохновляет %s песней: +1к6 к следующему броску." % [h.name, state.heroes[to].name])
 		"flee":
-			var r := _check(pname, "skill", "Акробатика", 10 + _alive_enemies().size(), 0, "сбежать")
-			_show_rolls([r])
-			_log("roll", h.name, r.text)
-			if r.outcome.contains("успех"):
+			_busy = true
+			var rr: Array = await _ask_rolls([_make_ask(pname, "skill", "Акробатика", 10 + _alive_enemies().size(), 0, "сбежать")], "")
+			_busy = false
+			if rr.size() > 0 and str(rr[0].outcome).contains("успех"):
 				c.fled = true
 		"free":
 			_busy = true
@@ -1325,6 +1408,7 @@ func _hero_attack(pname: String, target: int) -> bool:
 		var crit: bool = r.value == 20 or (hit and en.asleep and not info.ranged)
 		var line := "%s бьёт %s (%s): %d против КД %d — " % [h.name, en.name, info.name, total, en.ac]
 		var outcome := "промах"
+		var dealt := -1
 		if hit:
 			var dmg := _roll_damage(str(info.dice), crit) + int(info.bonus)
 			var sneak := ""
@@ -1334,13 +1418,15 @@ func _hero_attack(pname: String, target: int) -> bool:
 				dmg += sd
 				sneak = " + скрытая атака"
 			dmg = maxi(1, dmg)
+			dealt = dmg
 			outcome = "критическое попадание" if crit else "попадание"
 			line += "%s%s, %d урона. %s" % [outcome, sneak, dmg, _hit_enemy(ti, dmg, "")]
 		else:
 			line += "промах."
 		_log("cbt", h.name, line)
 		rolls.append({"label": "%s ⚔ %s" % [h.name, en.name], "d20": r.value, "d20b": r.other, "adv": r.adv,
-			"mod": int(info.atk) + r.insp, "total": total, "dc": int(en.ac), "outcome": outcome})
+			"mod": int(info.atk) + r.insp, "total": total, "dc": int(en.ac), "outcome": outcome,
+			"kind": "attack", "dmg": dealt, "dmg_text": "%s%+d" % [R.dice_ru(str(info.dice)), int(info.bonus)]})
 	_show_rolls(rolls)
 	return true
 
@@ -1383,14 +1469,17 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				var hit: bool = (total >= int(en.ac) or r.value == 20) and r.value != 1
 				var crit: bool = r.value == 20
 				var line := "%s в %s: %d против КД %d — " % [head, en.name, total, en.ac]
+				var dealt := -1
 				if hit:
 					var dmg := _roll_damage(dice, crit)
+					dealt = dmg
 					line += "попадание, %d урона. %s" % [dmg, _hit_enemy(ti, dmg, "")]
 				else:
 					line += "промах."
 				_log("cbt", h.name, line)
 				rolls.append({"label": "%s · %s" % [h.name, sp.name], "d20": r.value, "d20b": r.other, "adv": r.adv,
-					"mod": sa + r.insp, "total": total, "dc": int(en.ac), "outcome": ("попадание" if hit else "промах")})
+					"mod": sa + r.insp, "total": total, "dc": int(en.ac), "outcome": ("попадание" if hit else "промах"),
+					"kind": "spell", "dmg": dealt})
 		"auto":
 			var ti := _target_enemy(int(target) if (target is int or target is float) else -1)
 			if ti < 0:
@@ -1470,24 +1559,37 @@ func _hero_free(pname: String, text: String) -> void:
 	_log("act", h.name, text)
 	state.combat.wait = true
 	_broadcast()
-	var res: Dictionary = await LLM.chat_json(_free_combat_prompt(pname, text), 0.5, 400)
+	var res: Dictionary = await LLM.chat_json(_free_combat_prompt(pname, text), 0.5, 700)
 	if state.combat.is_empty():
 		return
 	state.combat.erase("wait")
-	if not res.ok:
-		_log("cbt", h.name, "Ведущий не понял затею, %s теряет ход." % h.name)
+	var low := text.to_lower()
+	var plain_attack := false
+	for w in ["бью", "бьёт", "бить", "удар", "атак", "рублю", "рубан", "колю", "режу", "стреля", "пронза", "мечом", "топором", "кинжал"]:
+		if low.contains(w):
+			plain_attack = true
+	if not res.ok or (plain_attack and not low.contains("толк") and not low.contains("брос")):
+		# обычный удар своими словами — просто атакуем, ход не теряется
+		var target: int = int(_last_target.get(pname, -1))
+		for i in _alive_enemies():
+			var nm := str(state.combat.enemies[i].base_name).to_lower()
+			if nm.length() >= 4 and low.contains(nm.left(nm.length() - 2)):
+				target = i
+				break
+		_hero_attack(pname, target)
 		return
 	var d: Dictionary = res.data
 	var chk = d.get("check")
 	if not (chk is Dictionary) or str(chk.get("name", "")) == "":
 		chk = {"kind": "skill", "name": "Атлетика", "dc": 13}
-	var success := false
-	var r := _check(pname, str(chk.get("kind", "skill")), str(chk.name), clampi(int(chk.get("dc", 13)), 10, 20), int(chk.get("adv", 0)), "затея")
-	if r.is_empty():
-		r = _check(pname, "skill", "Атлетика", 13, 0, "затея")
-	_show_rolls([r])
-	_log("roll", h.name, r.text)
-	success = r.outcome.contains("успех")
+	var a := _make_ask(pname, str(chk.get("kind", "skill")), str(chk.name), clampi(int(chk.get("dc", 13)), 10, 20), int(chk.get("adv", 0)), "затея")
+	if a.is_empty():
+		a = _make_ask(pname, "skill", "Атлетика", 13, 0, "затея")
+	var rr: Array = await _ask_rolls([a], "")
+	if state.combat.is_empty() or rr.is_empty():
+		return
+	var r: Dictionary = rr[0]
+	var success: bool = r.outcome.contains("успех")
 	var txt := str(d.get("success" if success else "fail", ""))
 	if txt != "":
 		_log("gm", "", txt)
