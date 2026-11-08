@@ -2530,6 +2530,8 @@ func _check_notices() -> void:
 		for n in pend:
 			if str(n) != me and not (n in _seen_pending) and Game.state.heroes.has(n):
 				var hn := str(Game.state.heroes[n].name)
+				if tab == "story" and _panel_open:
+					continue   # на экране истории это уже видно плашкой над вариантами
 				_show_notice("ui_hero", "%s сделал(а) ход" % hn, "Действие выбрано. Ждём тебя, чтобы ведущий продолжил.", Callable())
 	_seen_pending = pend.duplicate()
 	var v: Dictionary = Game.state.get("vote", {})
