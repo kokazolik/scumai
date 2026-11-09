@@ -6,6 +6,7 @@ extends Node
 ## Фазы: lobby ⚔ create ⚔ world ⚔ play ⇄ thinking (→ rolling) ⚔ play …
 ##       play ⚔ combat (пошагово по инициативе) ⚔ thinking (итоги боя) ⚔ play
 
+signal save_received(slot: int, title: String)
 signal state_changed
 signal rolls_shown(rolls: Array)   # для анимации кубиков на всех телефонах
 signal _asks_finished
@@ -13,7 +14,13 @@ signal _asks_finished
 const R = preload("res://scripts/rules.gd")
 const MapView = preload("res://scripts/map_view.gd")
 
-const SAVE_PATH := "user://campaign.json"
+const OLD_SAVE_PATH := "user://campaign.json"   # до 0.27: одна ячейка
+const SLOTS := 3
+var slot := 0   # в какую ячейку пишется текущая кампания
+
+
+static func slot_path(i: int) -> String:
+	return "user://save_%d.json" % i
 const SETTINGS := [
 	"Классическое фэнтези: драконы, гномы, древние руины",
 	"Сказочная Русь: леший, Кощей, богатыри, заколдованные леса",
@@ -44,12 +51,16 @@ func reset_local() -> void:
 	_busy = false
 	_actions = {}
 	_seen_roll_seq = 0
+	_sent_hash = {}
+	_sent_log = []
+	_patch_seen = -1
+	_resync_asked = false
 	state_changed.emit()
 
 
 func _fresh_state() -> Dictionary:
 	return {"phase": "lobby", "campaign": {}, "heroes": {}, "log": [], "options": {},
-		"pending": [], "error": "", "save_info": _save_info(), "turn": 0,
+		"pending": [], "error": "", "saves": save_infos(), "turn": 0,
 		"map": {"nodes": [], "edges": [], "cur": -1}, "combat": {}, "loot": {}, "shop": {},
 		"rolls": [], "roll_seq": 0, "ask": []}
 
@@ -99,15 +110,94 @@ func _broadcast() -> void:
 					t += " (помогает: %s)" % str(state.heroes[_helps[n]].name)
 				acts[n] = t
 		state.acts = acts
-		_sync.rpc(state)
+		_apply_state(state)
+		var patch := _make_patch()
+		if not patch.is_empty():
+			_sync_patch.rpc(patch)
 
 
 func send_state_to(id: int) -> void:
-	_sync.rpc_id(id, state)
+	_sync_full.rpc_id(id, state, _patch_seq)
 
 
-@rpc("authority", "call_local", "reliable")
-func _sync(s: Dictionary) -> void:
+# По сети уходят только изменившиеся части состояния; журнал — только новыми записями.
+var _sent_hash := {}
+var _sent_log := []
+var _patch_seq := 0
+var _patch_seen := -1   # у клиента: номер последнего применённого пакета (-1 — ещё не было полного состояния)
+var _resync_asked := false
+
+
+func _make_patch() -> Dictionary:
+	var patch := {}
+	for k in state:
+		if k == "log":
+			continue
+		var h := hash(state[k])
+		if not _sent_hash.has(k) or int(_sent_hash[k]) != h:
+			patch[k] = state[k]
+			_sent_hash[k] = h
+	var dels := []
+	for k in _sent_hash.keys():
+		if k != "log" and not state.has(k):
+			dels.append(k)
+			_sent_hash.erase(k)
+	if dels.size() > 0:
+		patch["__del"] = dels
+	var log_now: Array = state.get("log", [])
+	var lh := hash(log_now)
+	if not _sent_hash.has("log") or int(_sent_hash.log) != lh:
+		var last_i := -1
+		for e in _sent_log:
+			last_i = maxi(last_i, int(e.get("i", -1)))
+		var add := []
+		for e in log_now:
+			if int(e.get("i", -1)) > last_i:
+				add.append(e)
+		var expect: Array = (_sent_log + add).slice(-200)
+		if _sent_hash.has("log") and hash(expect) == lh:
+			patch["__log_add"] = add
+		else:
+			patch["log"] = log_now
+		_sent_hash.log = lh
+		_sent_log = log_now.duplicate(true)
+	if patch.is_empty():
+		return {}
+	patch["__base"] = _patch_seq
+	_patch_seq += 1
+	patch["__seq"] = _patch_seq
+	return patch
+
+
+@rpc("authority", "call_remote", "reliable")
+func _sync_full(s: Dictionary, seq: int) -> void:
+	_patch_seen = seq
+	_resync_asked = false
+	_apply_state(s)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _sync_patch(p: Dictionary) -> void:
+	if _patch_seen < 0:
+		return   # ещё ждём полное состояние
+	if int(p.get("__base", -1)) != _patch_seen:
+		if not _resync_asked:
+			_resync_asked = true
+			Net.request_resync()   # пропустили пакет — просим всё целиком
+		return
+	var s := state.duplicate(false)
+	for k in p:
+		if not str(k).begins_with("__"):
+			s[k] = p[k]
+	for k in p.get("__del", []):
+		s.erase(k)
+	if p.has("__log_add"):
+		s.log = ((s.get("log", []) as Array) + (p.__log_add as Array)).slice(-200)
+	_patch_seen = int(p.__seq)
+	_apply_state(s)
+
+
+func _apply_state(s: Dictionary) -> void:
 	var seq := int(s.get("roll_seq", 0))
 	var new_rolls := seq != _seen_roll_seq
 	_seen_roll_seq = seq
@@ -441,27 +531,29 @@ func on_player_left(_id: int) -> void:
 
 # ---------- кампания ----------
 
-func new_campaign(setting: String, wishes: String) -> void:
+func new_campaign(setting: String, wishes: String, to_slot := -1) -> void:
 	if not Net.is_host() or _busy:
 		return
+	slot = to_slot if to_slot >= 0 else free_slot()
 	state = _fresh_state()
 	state.campaign = {"setting": setting, "wishes": wishes.strip_edges().left(200)}
 	_set_phase("create")
 
 
-func continue_campaign() -> void:
+func continue_campaign(from_slot := 0) -> void:
 	if not Net.is_host() or _busy:
 		return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if f == null:
-		state.error = "Сохранение не найдено"
+	var d = _read_save(from_slot)
+	if not (d is Dictionary):
+		state.error = "Сохранение не найдено или повреждено"
 		_broadcast()
 		return
-	var d = JSON.parse_string(f.get_as_text())
-	if not (d is Dictionary) or not d.has("heroes"):
-		state.error = "Сохранение повреждено"
-		_broadcast()
-		return
+	slot = from_slot
+	load_campaign_dict(d)
+
+
+## Запустить кампанию из словаря сохранения (из ячейки или из файла, присланного напарником).
+func load_campaign_dict(d: Dictionary) -> void:
 	d = R.intify(d)
 	state = _fresh_state()
 	state.campaign = d.campaign
@@ -489,6 +581,17 @@ func continue_campaign() -> void:
 	_fix_bug_gold()
 	_dedup_quests()
 	_log("sys", "", "Кампания продолжается. Ход %d." % (int(state.turn) + 1))
+	state.loot = d.get("loot", {})
+	if d.has("shops"):
+		state.shops = d.shops
+	var cb: Dictionary = d.get("combat", {})
+	if not cb.is_empty() and _all_have_heroes():
+		state.combat = cb
+		cb.wait = false
+		_log("cbt", "", "Бой продолжается с того места, где прервался.")
+		_set_phase("combat")
+		_combat_continue()
+		return
 	_set_phase("play" if _all_have_heroes() else "create")
 
 
@@ -517,35 +620,115 @@ func _fix_bug_gold() -> void:
 		_log("sys", "", "Исправлено золото, выданное по ошибке: " + ", ".join(parts) + ".")
 
 
+## Передать кампанию напарнику: она ляжет в свободную ячейку на его телефоне, и он сможет стать хостом.
+func give_save_to_partner(i: int) -> void:
+	if not Net.is_host():
+		return
+	var d = _read_save(i)
+	if not (d is Dictionary):
+		return
+	for id in Net.players:
+		if int(id) != Net.my_id():
+			_receive_save.rpc_id(int(id), JSON.stringify(d))
+
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_save(txt: String) -> void:
+	var d = JSON.parse_string(txt)
+	if not (d is Dictionary) or not d.has("heroes"):
+		return
+	var to := free_slot()
+	var f := FileAccess.open(slot_path(to), FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(txt)
+	f.close()
+	save_received.emit(to, str(d.get("campaign", {}).get("title", "кампания")))
+
+
 func back_to_lobby() -> void:
 	if Net.is_host():
 		state = _fresh_state()
 		_set_phase("lobby")
 
 
+func save_dict() -> Dictionary:
+	return {"campaign": state.campaign, "heroes": state.heroes,
+		"log": state.log.slice(-150), "options": state.options, "turn": state.turn, "map": state.map,
+		"companions": state.get("companions", []), "chat": state.get("chat", []).slice(-40), "chat_n": int(state.get("chat_n", 0)),
+		"combat": state.combat if phase == "combat" else {}, "loot": state.get("loot", {}), "shops": state.get("shops", {}),
+		"saved_at": Time.get_datetime_string_from_system(false, true)}
+
+
+## Запись без риска потерять кампанию: сначала во временный файл, прошлая версия остаётся как .bak.
 func _save() -> void:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if state.get("campaign", {}).is_empty() or state.heroes.is_empty():
+		return
+	var path := slot_path(slot)
+	var f := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if f == null:
 		return
-	f.store_string(JSON.stringify({"campaign": state.campaign, "heroes": state.heroes,
-		"log": state.log.slice(-150), "options": state.options, "turn": state.turn, "map": state.map,
-		"companions": state.get("companions", []), "chat": state.get("chat", []).slice(-40), "chat_n": int(state.get("chat_n", 0))}))
+	f.store_string(JSON.stringify(save_dict()))
 	f.close()
-	state.save_info = _save_info()
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path + ".bak")
+		DirAccess.rename_absolute(path, path + ".bak")
+	DirAccess.rename_absolute(path + ".tmp", path)
+	state.saves = save_infos()
 
 
-func _save_info() -> String:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if f == null:
-		return ""
-	var d = JSON.parse_string(f.get_as_text())
-	if not (d is Dictionary) or not d.has("campaign"):
-		return ""
-	var names := []
-	for n in d.get("heroes", {}):
-		var h: Dictionary = d.heroes[n]
-		names.append("%s, %s %d ур." % [h.get("name", n), h.get("cls", ""), int(h.get("level", 1))])
-	return "«%s», ход %d (%s)" % [d.campaign.get("title", "Без названия"), int(d.get("turn", 0)), "; ".join(names)]
+static func _parse_save(path: String):
+	if not FileAccess.file_exists(path):
+		return null
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+	return d if d is Dictionary and d.has("heroes") and d.has("campaign") else null
+
+
+## Ячейка: основной файл, при поломке — резервная копия.
+static func _read_save(i: int):
+	_migrate_old_save()
+	var d = _parse_save(slot_path(i))
+	if d == null:
+		d = _parse_save(slot_path(i) + ".bak")
+	return d
+
+
+static func _migrate_old_save() -> void:
+	if FileAccess.file_exists(OLD_SAVE_PATH) and not FileAccess.file_exists(slot_path(0)):
+		DirAccess.rename_absolute(OLD_SAVE_PATH, slot_path(0))
+
+
+static func free_slot() -> int:
+	for i in SLOTS:
+		if _read_save(i) == null:
+			return i
+	return 0
+
+
+func delete_slot(i: int) -> void:
+	if not Net.is_host():
+		return
+	for ext in ["", ".bak", ".tmp"]:
+		DirAccess.remove_absolute(slot_path(i) + ext)
+	state.saves = save_infos()
+	_broadcast()
+
+
+## Описание всех ячеек для меню: [{"slot", "info"}], info пустой — ячейка свободна.
+static func save_infos() -> Array:
+	var out := []
+	for i in SLOTS:
+		var d = _read_save(i)
+		var info := ""
+		if d is Dictionary:
+			var names := []
+			for n in d.get("heroes", {}):
+				var h: Dictionary = d.heroes[n]
+				names.append("%s, %s %d ур." % [h.get("name", n), h.get("cls", ""), int(h.get("level", 1))])
+			info = "«%s», ход %d (%s)%s" % [d.campaign.get("title", "Без названия"), int(d.get("turn", 0)), "; ".join(names),
+				" · идёт бой" if not d.get("combat", {}).is_empty() else ""]
+		out.append({"slot": i, "info": info})
+	return out
 
 
 func _log(kind: String, who: String, text: String) -> void:
@@ -2080,6 +2263,7 @@ func _combat_continue() -> void:
 			_next_turn()
 			continue
 		_broadcast()   # ждём действие игрока
+		_save()
 		break
 	_busy = false
 

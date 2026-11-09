@@ -62,10 +62,13 @@ var _cls := "Воин"
 # лобби
 var _setting := 0
 var _confirm_new := false
+var _confirm_del := -1
+var _new_slot := -1
 
 
 func _ready() -> void:
 	get_tree().set_quit_on_go_back(false)
+	DisplayServer.screen_set_keep_on(true)   # погасший экран ставит игру на паузу и рвёт связь у хоста
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_load_fonts()
 	theme = _make_theme()
@@ -104,6 +107,8 @@ func _ready() -> void:
 
 	Net.my_name = _load_name()
 	Game.state_changed.connect(_refresh)
+	Game.save_received.connect(func(sl: int, title: String):
+		_show_notice("ui_story", "Тебе передали кампанию", "«%s» в ячейке %d. Создай комнату и нажми «Продолжить»." % [title, sl + 1], Callable()))
 	Game.rolls_shown.connect(func(rolls):
 		if OS.get_environment("ALIBI_NODICE") == "":
 			dice.play(rolls)
@@ -528,13 +533,41 @@ func _build_lobby() -> void:
 		return
 	var scroll := _scroll()
 	var inner: VBoxContainer = scroll.get_child(0)
-	var info := str(Game.state.get("save_info", ""))
-	if info != "":
+	var saves: Array = Game.state.get("saves", [])
+	var used := {}
+	for sv in saves:
+		var si := int(sv.slot)
+		var sinfo := str(sv.info)
+		used[si] = sinfo != ""
+		if sinfo == "":
+			continue
 		var cc := _card(C_CARD2)
-		cc.add_child(_label("Сохранённая кампания", 22, C_MUTED))
-		cc.add_child(_label(info, 26, C_INK))
-		cc.add_child(_button("Продолжить", C_GREEN, Game.continue_campaign))
+		cc.add_child(_label("Ячейка %d" % (si + 1), 22, C_MUTED))
+		cc.add_child(_label(sinfo, 24, C_INK))
+		cc.add_child(_button("Продолжить", C_GREEN, func(): Game.continue_campaign(si)))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		if Net.players.size() >= 2:
+			var give := _small_wide_button("Отдать напарнику", C_CARD, func():
+				Game.give_save_to_partner(si)
+				_toast("Кампания отправлена напарнику — теперь он может стать хостом"))
+			give.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(give)
+		var del := _small_wide_button("Удалить", C_CARD, func():
+			if _confirm_del != si:
+				_confirm_del = si
+				_toast("Кампания удалится насовсем. Нажми ещё раз")
+				return
+			_confirm_del = -1
+			Game.delete_slot(si)
+			screen = ""
+			_refresh())
+		del.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(del)
+		cc.add_child(row)
 		inner.add_child(cc.get_parent())
+	if _new_slot < 0 or _new_slot >= Game.SLOTS:
+		_new_slot = Game.free_slot()
 	var nc := _card()
 	nc.add_child(_label("Новая кампания: выбери мир", 24, C_MUTED))
 	for i in Game.SETTINGS.size():
@@ -543,6 +576,18 @@ func _build_lobby() -> void:
 			screen = ""
 			_refresh(), 23, 80)
 		nc.add_child(b)
+	nc.add_child(_label("Записать в ячейку", 22, C_MUTED))
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 10)
+	for i in Game.SLOTS:
+		var sb := _small_wide_button("%d%s" % [i + 1, " (занята)" if used.get(i, false) else ""], C_PURPLE if i == _new_slot else C_CARD2, func():
+			_new_slot = i
+			_confirm_new = false
+			screen = ""
+			_refresh())
+		sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		srow.add_child(sb)
+	nc.add_child(srow)
 	nc.add_child(_label("Пожелания ведущему (необязательно)", 22, C_MUTED))
 	var wish := LineEdit.new()
 	wish.placeholder_text = "побольше юмора, загадки, дракон…"
@@ -552,12 +597,13 @@ func _build_lobby() -> void:
 		if not LLM.has_key():
 			_paste_key()
 			return
-		if info != "" and not _confirm_new:
+		if used.get(_new_slot, false) and not _confirm_new:
 			_confirm_new = true
-			_toast("Новая кампания сотрёт сохранение. Нажми ещё раз")
+			_toast("Новая кампания сотрёт ячейку %d. Нажми ещё раз" % (_new_slot + 1))
 			return
 		_confirm_new = false
-		Game.new_campaign(Game.SETTINGS[_setting], wish.text))
+		Game.new_campaign(Game.SETTINGS[_setting], wish.text, _new_slot)
+		_new_slot = -1)
 	refs.start = start
 	nc.add_child(start)
 	inner.add_child(nc.get_parent())
@@ -3628,6 +3674,13 @@ func _autotest_tick() -> void:
 					await get_tree().create_timer(4.0).timeout
 				get_tree().quit()
 		"combat":
+			if OS.get_environment("ALIBI_SAVETEST") != "" and _auto == "host" and int(Game.state.combat.get("round", 1)) >= 2 and not refs.has("auto_savetest"):
+				refs.auto_savetest = true
+				var sd = Game._read_save(Game.slot)
+				print("[host] SAVETEST combat_in_save=%s saves=%s" % [str(sd is Dictionary and not sd.get("combat", {}).is_empty()), JSON.stringify(Game.state.saves)])
+				Game.continue_campaign(Game.slot)
+				print("[host] SAVETEST reloaded phase=%s round=%s" % [Game.phase, str(Game.state.combat.get("round", -1))])
+				return
 			if Game.combat_actor() == me:
 				var h := Game.my_hero()
 				var u: Dictionary = Game.state.combat.get("used", {}).get(me, {})
