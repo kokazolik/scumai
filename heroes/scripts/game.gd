@@ -1372,7 +1372,6 @@ func _merge_steps(holder: Dictionary, key: String, d: Dictionary, what: String, 
 				if not e.ok and _same_quest(str(e.t), tx):
 					e.ok = true
 					_log("quest", "", "Пункт %s выполнен: %s" % [what, e.t])
-					_gain_insp("пункт выполнен")
 					break
 
 
@@ -3065,11 +3064,20 @@ func _cact(a: Dictionary) -> void:
 					_fx_event("env_cliff", "c9a27a", "Толчок с обрыва", "%s · %d урона" % [en.name, _last_dmg])
 					_log("cbt", h.name, "%s сталкивает %s с обрыва: %d урона от падения. %s" % [h.name, en.name, dmg, note])
 					if not en.dead:
-						_add_cond(en, "prone", 1)
+						_add_cond(en, "stunned", 1)
+						_log("cbt", "", "%s карабкается обратно наверх — ход потерян." % en.name)
 				else:
 					_add_cond(en, "prone", 1)
 					en.pos = "front"
-					_log("cbt", h.name, "%s сбивает %s с ног! Пока он лежит, удары вблизи — с преимуществом." % [h.name, en.name])
+					var into := ""
+					match str(_surf().get("t", "")):
+						"fire":
+							var fd := R.roll("2d6")
+							into = " Прямо в огонь: %s" % _hit_enemy(ti, fd, "огонь", "огонь")
+						"web":
+							_add_cond(en, "stunned", 1)
+							into = " Прямо в паутину — запутался на ход."
+					_log("cbt", h.name, "%s сбивает %s с ног! Пока он лежит, удары вблизи — с преимуществом.%s" % [h.name, en.name, into])
 			else:
 				_log("cbt", h.name, "%s пытается толкнуть %s, но тот устоял." % [h.name, en.name])
 		"hide":
@@ -3100,16 +3108,19 @@ func _cact(a: Dictionary) -> void:
 			var th: Dictionary = state.heroes[to]
 			if int(th.hp) > 0 or th.get("dead", false):
 				return
-			# как в BG3 «Помочь»: без броска, упавший встаёт с 1 хитом
-			if hero_pos(to) == "front" and hero_pos(pname) != "front":
+			# как в BG3 «Помочь»: без броска, упавший встаёт с 1 хитом; спасатель заслоняет его, а раненого оттаскивает в тыл
+			var shield_txt := ""
+			if hero_pos(pname) != "front":
 				c.pos[pname] = "front"
-				_log("cbt", h.name, "%s бросается вперёд." % h.name)
+				c.get("high", {}).erase(pname)
+				shield_txt = " %s встаёт впереди и заслоняет собой." % h.name
+			c.pos[to] = "back"
 			th.hp = 1
 			th.stable = false
 			th.death_s = 0
 			th.death_f = 0
 			_fx_event("act_revive", "6fe3a0", "%s на ногах" % th.name, "%s поднимает напарника: 1 хит" % h.name, true)
-			_log("cbt", h.name, "%s тормошит %s и ставит на ноги: 1 хит. Самое время выпить зелье!" % [h.name, th.name])
+			_log("cbt", h.name, "%s тормошит %s, ставит на ноги (1 хит) и оттаскивает в тыл.%s" % [h.name, th.name, shield_txt])
 		"disengage":
 			if not c.has("diseng"):
 				c.diseng = {}
@@ -3126,10 +3137,30 @@ func _cact(a: Dictionary) -> void:
 			if not c.has("dip"):
 				c.dip = {}
 			c.dip[pname] = int(c.round) + 1
+			var near_fire := str(_surf().get("t", "")) == "fire" and hero_pos(pname) == "front"
+			for e in c.get("env", []):
+				if str(e.id) == "brazier" and not e.used:
+					near_fire = true
+			if not near_fire:
+				var tix := -1
+				for k in h.items.size():
+					if str(h.items[k].get("id", "")) == "torch":
+						tix = k
+				if tix >= 0:
+					h.items.remove_at(tix)
+					_log("cbt", h.name, "Факел догорает, но клинок уже в огне.")
 			_fx_event("act_dip", "ff9a4a", "%s: оружие в огне" % h.name, "+1к4 огнём к ударам до конца следующего хода", true)
 			_log("cbt", h.name, "%s окунает оружие в огонь: удары +1к4 огнём до конца следующего хода." % h.name)
 		"throw":
 			ok = _hero_throw(pname, int(a.get("idx", -1)), a.get("target", -1))
+		"insp":
+			if insp_pool() <= 0 or c.get("help", {}).get(pname, false):
+				return
+			state.campaign.insp = insp_pool() - 1
+			if not c.has("help"):
+				c.help = {}
+			c.help[pname] = true
+			_log("cbt", h.name, "✨ %s тратит вдохновение группы: следующая атака — с преимуществом." % h.name)
 		"env":
 			var ei := int(a.get("idx", -1))
 			var envs: Array = c.get("env", [])
@@ -3180,6 +3211,8 @@ func action_cost(pname: String, a: Dictionary) -> String:
 			return "b" if h.cls == "Плут" else "a"
 		"throw":
 			return "a"
+		"insp":
+			return "f"
 		"spell":
 			var sp := str(a.get("spell", ""))
 			return "b" if R.SPELLS.has(sp) and R.SPELLS[sp].get("bonus", false) else "a"
@@ -3220,6 +3253,10 @@ func has_bonus_left(pname: String) -> bool:
 	for sp in R.known_spells(h):
 		if R.SPELLS[sp].get("bonus", false) and R.slot_for(h, sp) >= 0:
 			return true
+	if can_dip(pname) and _count_item(h, "torch") == 0:
+		return true   # жаровня или горящая земля рядом — окунуть оружие стоит
+	if hero_pos(pname) == "front" and _front_enemies().size() > 0 and (_env_find("cliff") >= 0 or str(_surf().get("t", "")) in ["fire", "web"]):
+		return true   # толкнуть с обрыва или в огонь/паутину — это имеет смысл
 	return false
 
 
@@ -3784,25 +3821,43 @@ func _surface_tick(i: int) -> bool:
 			return not en.dead
 		"oil", "ice":
 			var sv := randi_range(1, 20) + _msave(en, "ЛОВ")
-			if sv < 12:
+			if sv < 11 - (4 if int(en.max_hp) >= 50 else 0):
 				_add_cond(en, "prone", 1)
-				_log("cbt", "", "%s поскальзывается (%s, ЛОВ %d против 12) и падает — ход потерян." % [en.name, "масло" if str(sf.t) == "oil" else "лёд", sv])
+				_log("cbt", "", "%s поскальзывается (%s, ЛОВ %d) и падает — ход потерян." % [en.name, "масло" if str(sf.t) == "oil" else "лёд", sv])
 				return false
 		"web":
 			var sv := randi_range(1, 20) + maxi(_msave(en, "СИЛ"), int(en.atk) - 3)
-			if sv < 12:
-				_log("cbt", "", "%s вязнет в паутине (СИЛ %d против 12) и не может атаковать." % [en.name, sv])
+			if sv < 11 - (4 if int(en.max_hp) >= 50 else 0):
+				_log("cbt", "", "%s вязнет в паутине (СИЛ %d) и не может атаковать." % [en.name, sv])
 				return false
 		"shock":
 			var sv := randi_range(1, 20) + _msave(en, "ТЕЛ")
-			if sv < 12:
-				_log("cbt", "", "%s бьётся в судорогах от тока (ТЕЛ %d против 12) — ход потерян." % [en.name, sv])
+			if sv < 11 - (4 if int(en.max_hp) >= 50 else 0):
+				_log("cbt", "", "%s бьётся в судорогах от тока (ТЕЛ %d) — ход потерян." % [en.name, sv])
 				return false
 		"water":
 			if not en.has("conds"):
 				en.conds = {}
 			en.conds.wet = maxi(int(en.conds.get("wet", 0)), 2)
 	return true
+
+
+## Шанс толкнуть врага (состязание к20 + Атлетика против к20 + его модификатора), в процентах.
+func shove_chance(pname: String, ti: int) -> int:
+	var c: Dictionary = state.get("combat", {})
+	if c.is_empty() or ti < 0 or ti >= c.enemies.size():
+		return 0
+	var en: Dictionary = c.enemies[ti]
+	if en.asleep or en.get("conds", {}).has("stunned") or en.get("conds", {}).has("held"):
+		return 95
+	var a := R.skill_bonus(state.heroes[pname], "Атлетика")
+	var b := maxi(int(en.get("dex", 0)), int(en.atk) - 2) + (4 if int(en.max_hp) >= 50 else 0)
+	var win := 0
+	for x in range(1, 21):
+		for y in range(1, 21):
+			if x + a >= maxi(5, y + b):
+				win += 1
+	return roundi(win / 4.0)
 
 
 ## Можно ли окунуть оружие в огонь: жаровня, горящая земля или факел в сумке.
@@ -3831,9 +3886,7 @@ static func throw_info(it: Dictionary) -> Dictionary:
 		return {"kind": "hit", "dmg": "1d4", "dt": "огонь"}
 	if d.type == "weapon" and not d.get("ranged", false):
 		return {"kind": "hit", "dmg": str(d.dmg), "dt": R.weapon_dt(d), "weapon": true}
-	if d.type in ["misc", "reagent", "weapon", "head", "shield"] and not (id in ["spellbook", "holy_symbol", "thieves_tools", "lute"]) and str(it.get("note", "")) == "":
-		return {"kind": "hit", "dmg": "1d4", "dt": "дробящий"}
-	return {}
+	return {}   # прочий хлам метать бессмысленно — не загромождаем меню
 
 
 func _hero_throw(pname: String, idx: int, target) -> bool:
