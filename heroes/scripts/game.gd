@@ -121,6 +121,8 @@ func send_state_to(id: int) -> void:
 
 
 # По сети уходят только изменившиеся части состояния; журнал — только новыми записями.
+var _story_all := []   # вся история кампании для «Летописи» (живёт только у хоста и в сохранении)
+signal chronicle_ready(text: String)
 var _sent_hash := {}
 var _sent_log := []
 var _patch_seq := 0
@@ -537,6 +539,7 @@ func new_campaign(setting: String, wishes: String, to_slot := -1) -> void:
 	slot = to_slot if to_slot >= 0 else free_slot()
 	state = _fresh_state()
 	state.campaign = {"setting": setting, "wishes": wishes.strip_edges().left(200)}
+	_story_all = []
 	_set_phase("create")
 
 
@@ -555,6 +558,11 @@ func continue_campaign(from_slot := 0) -> void:
 ## Запустить кампанию из словаря сохранения (из ячейки или из файла, присланного напарником).
 func load_campaign_dict(d: Dictionary) -> void:
 	d = R.intify(d)
+	_story_all = d.get("story_all", [])
+	if _story_all.is_empty():   # старое сохранение: берём что есть в журнале
+		for e in d.get("log", []):
+			if str(e.get("k", "")) in ["gm", "act", "quest", "lvl", "loot"]:
+				_story_all.append({"k": e.k, "w": e.get("w", ""), "t": e.t, "turn": 0})
 	state = _fresh_state()
 	state.campaign = d.campaign
 	state.log = d.get("log", [])
@@ -646,6 +654,50 @@ func _receive_save(txt: String) -> void:
 	save_received.emit(to, str(d.get("campaign", {}).get("title", "кампания")))
 
 
+## «Летопись»: вся история кампании одним текстом.
+func chronicle_text() -> String:
+	var c: Dictionary = state.campaign
+	var out := PackedStringArray()
+	out.append("ХРОНИКИ ДВОИХ — «%s»" % str(c.get("title", "Без названия")))
+	var heroes := []
+	for n in state.heroes:
+		var h: Dictionary = state.heroes[n]
+		heroes.append("%s (%s %s, %d ур.)" % [h.name, h.get("race", ""), h.get("cls", ""), int(h.get("level", 1))])
+	out.append("Герои: " + ", ".join(heroes))
+	if str(c.get("world", "")) != "":
+		out.append("Мир: " + str(c.world))
+	if str(c.get("chronicle", "")) != "":
+		out.append("\nКратко: " + str(c.chronicle))
+	out.append("")
+	for e in _story_all:
+		match str(e.k):
+			"gm":
+				out.append(str(e.t) + "\n")
+			"act":
+				out.append("— %s: %s" % [e.w, e.t])
+			_:
+				out.append("✦ " + str(e.t))
+	return "\n".join(out)
+
+
+func request_chronicle() -> void:
+	if Net.is_host():
+		chronicle_ready.emit(chronicle_text())
+	else:
+		_ask_chronicle.rpc_id(1)
+
+
+@rpc("any_peer", "reliable")
+func _ask_chronicle() -> void:
+	if Net.is_host():
+		_send_chronicle.rpc_id(multiplayer.get_remote_sender_id(), chronicle_text())
+
+
+@rpc("authority", "reliable")
+func _send_chronicle(text: String) -> void:
+	chronicle_ready.emit(text)
+
+
 func back_to_lobby() -> void:
 	if Net.is_host():
 		state = _fresh_state()
@@ -657,7 +709,7 @@ func save_dict() -> Dictionary:
 		"log": state.log.slice(-150), "options": state.options, "turn": state.turn, "map": state.map,
 		"companions": state.get("companions", []), "chat": state.get("chat", []).slice(-40), "chat_n": int(state.get("chat_n", 0)),
 		"combat": state.combat if phase == "combat" else {}, "loot": state.get("loot", {}), "shops": state.get("shops", {}),
-		"saved_at": Time.get_datetime_string_from_system(false, true)}
+		"saved_at": Time.get_datetime_string_from_system(false, true), "story_all": _story_all}
 
 
 ## Запись без риска потерять кампанию: сначала во временный файл, прошлая версия остаётся как .bak.
@@ -740,6 +792,8 @@ func _log(kind: String, who: String, text: String) -> void:
 		state.log_n = mx
 	state.log_n = int(state.log_n) + 1
 	state.log.append({"k": kind, "w": who, "t": text, "i": int(state.log_n)})
+	if kind in ["gm", "act", "quest", "lvl", "loot"]:
+		_story_all.append({"k": kind, "w": who, "t": text, "turn": int(state.get("turn", 0))})
 	if state.log.size() > 200:
 		state.log = state.log.slice(-200)
 

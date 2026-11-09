@@ -107,6 +107,13 @@ func _ready() -> void:
 
 	Net.my_name = _load_name()
 	Game.state_changed.connect(_refresh)
+	Game.chronicle_ready.connect(func(text: String):
+		DisplayServer.clipboard_set(text)
+		var f := FileAccess.open("user://letopis.txt", FileAccess.WRITE)
+		if f:
+			f.store_string(text)
+			f.close()
+		_toast("Летопись скопирована (%d символов) — вставь в заметки или мессенджер" % text.length()))
 	Game.save_received.connect(func(sl: int, title: String):
 		_show_notice("ui_story", "Тебе передали кампанию", "«%s» в ячейке %d. Создай комнату и нажми «Продолжить»." % [title, sl + 1], Callable()))
 	Game.rolls_shown.connect(func(rolls):
@@ -382,7 +389,11 @@ func _build_menu() -> void:
 			_update())
 		content.add_child(diag_btn)
 	var mi := LLM.model_info()
-	var model_btn := _wrap_button("Нейронка: %s\n%s" % [mi.name, mi.note], C_CARD2, func():
+	var note := str(mi.note)
+	if LLM.provider() == "gc":
+		var used := LLM.gc_tokens_used()
+		note += "\nПотрачено в этом году: %s из 25 млн токенов (~%d ходов осталось)" % [_fmt_tokens(used), maxi(0, (25000000 - used) / 10000)]
+	var model_btn := _wrap_button("Нейронка: %s\n%s" % [mi.name, note], C_CARD2, func():
 		LLM.cycle_model()
 		screen = ""
 		_refresh(), 20, 92)
@@ -722,9 +733,16 @@ func _hero_card(h: Dictionary) -> Control:
 	var c := _card(C_CARD2)
 	if h.is_empty():
 		return c.get_parent()
-	c.add_child(_label(str(h.name), 36, C_ACCENT))
-	c.add_child(_label("%s %s, %d уровень" % [h.race, h.cls, int(h.level)], 24, C_INK))
-	c.add_child(_label("Хиты %d/%d · КД %d · Золото %d" % [h.hp, h.max_hp, R.ac(h), h.gold], 24, C_INK))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	row.add_child(_portrait(str(h.cls), 104, str(h.race)))
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(_label(str(h.name), 36, C_ACCENT))
+	col.add_child(_label("%s %s, %d уровень" % [h.race, h.cls, int(h.level)], 24, C_INK))
+	col.add_child(_label("Хиты %d/%d · КД %d · Золото %d" % [h.hp, h.max_hp, R.ac(h), h.gold], 24, C_INK))
+	row.add_child(col)
+	c.add_child(row)
 	return c.get_parent()
 
 
@@ -735,7 +753,7 @@ func _build_game() -> void:
 	var top := HBoxContainer.new()
 	var mh := Game.my_hero()
 	if not mh.is_empty():
-		top.add_child(UISkin.make_portrait(Icons.for_class(str(mh.cls)), 84))
+		top.add_child(_portrait(str(mh.cls), 84, str(mh.get("race", ""))))
 	top.add_theme_constant_override("separation", 12)
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1225,7 +1243,7 @@ func _update_combat_box() -> void:
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var top := HBoxContainer.new()
 		top.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		top.add_child(_icon_rect(Icons.for_monster(str(en.get("base_name", en.name))), 40, Color("ffd2c8")))
+		top.add_child(UISkin.make_enemy_portrait(Icons.for_monster(str(en.get("base_name", en.name))), 48, bool(en.get("boss", false))))
 		var nm := _label("%s%s" % [en.name, " 💤" if en.asleep else ""], 18, C_INK)
 		nm.autowrap_mode = TextServer.AUTOWRAP_OFF
 		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -1470,9 +1488,11 @@ func _update_bottom() -> void:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		refs.dots = l
 		refs.dots_text = "Ведущий думает"
+		refs.dots_t0 = Time.get_ticks_msec()
 		b.add_child(l)
 		return
 	refs.erase("dots")
+	refs.erase("dots_t0")
 	if mode.begins_with("ask"):
 		_build_ask(b)
 		return
@@ -2051,6 +2071,7 @@ func _build_journal(v: VBoxContainer) -> void:
 	var c: Dictionary = Game.state.campaign
 	if str(c.get("title", "")) != "":
 		v.add_child(UISkin.make_ribbon_title(str(c.title), 30, 80))
+	v.add_child(_small_wide_button("Летопись: скопировать всю историю", C_CARD2, Game.request_chronicle))
 	var main := _card()
 	main.add_child(_section_title("Главная цель"))
 	main.add_child(_label(str(c.get("quest", "пока неизвестна")), 23, C_INK))
@@ -2339,7 +2360,7 @@ func _build_sheet(v: VBoxContainer) -> void:
 	var head := _card(C_CARD2)
 	var hrow := HBoxContainer.new()
 	hrow.add_theme_constant_override("separation", 16)
-	hrow.add_child(_portrait(str(h.cls), 120))
+	hrow.add_child(_portrait(str(h.cls), 120, str(h.get("race", ""))))
 	var hv := VBoxContainer.new()
 	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hv.add_theme_constant_override("separation", 4)
@@ -2441,7 +2462,7 @@ func _sheet_gear(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
 		if slot == "":
 			var pc := CenterContainer.new()
 			pc.custom_minimum_size = Vector2(150, 150)
-			pc.add_child(_portrait(str(h.cls), 140))
+			pc.add_child(_portrait(str(h.cls), 140, str(h.get("race", ""))))
 			g.add_child(pc)
 		elif slot == "*":
 			var st := VBoxContainer.new()
@@ -2502,7 +2523,7 @@ func _sheet_gear(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
 		var pc := _card()
 		var prow := HBoxContainer.new()
 		prow.add_theme_constant_override("separation", 12)
-		prow.add_child(_portrait(str(ph.cls), 72))
+		prow.add_child(_portrait(str(ph.cls), 72, str(ph.get("race", ""))))
 		var pv := VBoxContainer.new()
 		pv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		pv.add_child(_label("%s · %s %s, %d ур." % [ph.name, ph.race, ph.cls, int(ph.level)], 22, C_INK))
@@ -2687,8 +2708,8 @@ func _bar(val: int, maxv: int, color: Color, h := 16) -> ProgressBar:
 	return bar
 
 
-func _portrait(cls: String, size: int) -> Control:
-	return UISkin.make_portrait(Icons.for_class(cls), size)
+func _portrait(cls: String, size: int, race := "") -> Control:
+	return UISkin.make_hero_portrait(Icons.for_race(race) if race != "" else null, Icons.for_class(cls), cls, size)
 
 
 func _section_title(text: String) -> Label:
@@ -2953,7 +2974,14 @@ func _update_rooms() -> void:
 func _process(delta: float) -> void:
 	if refs.has("dots") and is_instance_valid(refs.dots):
 		_dots_t += delta
-		refs.dots.text = refs.dots_text + ".".repeat(int(_dots_t * 2.0) % 4)
+		var dt := ""
+		if refs.has("dots_t0"):
+			var sec := (Time.get_ticks_msec() - int(refs.dots_t0)) / 1000
+			if sec >= 5:
+				dt = "  ·  %d с" % sec
+			if sec >= 25:
+				dt += "\n" + ["Пишет длинную сцену…", "Сверяется с правилами…", "Бросает кубики за кадром…"][(sec / 12) % 3]
+		refs.dots.text = refs.dots_text + ".".repeat(int(_dots_t * 2.0) % 4) + dt
 	_follow_keyboard()
 	_apply_follow()
 
@@ -2991,6 +3019,14 @@ func _join(ip: String) -> void:
 		error_text = e
 		local_screen = "search"
 	_refresh()
+
+
+static func _fmt_tokens(n: int) -> String:
+	if n >= 1000000:
+		return "%.1f млн" % (n / 1000000.0)
+	if n >= 1000:
+		return "%d тыс." % (n / 1000)
+	return str(n)
 
 
 func _paste_key() -> void:
@@ -3053,6 +3089,8 @@ func _check_notices() -> void:
 		if str(m.p) != Game.my_pname():
 			_show_notice("ui_chat", "%s пишет:" % m.w, str(m.t), func(): _open_chat())
 			_sfx("page", -4.0)
+			if str(m.t) == PING_TEXT:
+				Input.vibrate_handheld(500)
 	if refs.has("chat_btn") and is_instance_valid(refs.chat_btn):
 		var u := _chat_unread()
 		refs.chat_btn.text = "Чат" + (" (%d)" % u if u > 0 else "")
@@ -3116,6 +3154,9 @@ func _show_notice(icon: String, title: String, text: String, cb: Callable) -> vo
 			p.queue_free())
 
 
+const PING_TEXT := "🔔 Твой ход! Ждём тебя"
+
+
 func _open_chat() -> void:
 	if _chat_pop != null and is_instance_valid(_chat_pop):
 		return
@@ -3174,6 +3215,20 @@ func _open_chat() -> void:
 	var sb := _button("➤", C_ACCENT, send)
 	sb.custom_minimum_size = Vector2(90, 64)
 	row.add_child(sb)
+	# быстрые реакции и «позвать» напарника (у него телефон завибрирует)
+	var quick := HBoxContainer.new()
+	quick.add_theme_constant_override("separation", 6)
+	for em in ["👍", "⚔️", "😂", "😱", "❤️"]:
+		var qb := _tiny_button(em, C_CARD2, func(): Game.send_chat(em))
+		qb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		quick.add_child(qb)
+	var ping := _tiny_button("🔔 Твой ход!", C_ACCENT, func():
+		Game.send_chat(PING_TEXT)
+		_toast("Напарник получит вибросигнал"))
+	ping.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ping.size_flags_stretch_ratio = 2.2
+	quick.add_child(ping)
+	v.add_child(quick)
 	v.add_child(row)
 	# в корневых полях: поднимается вместе с клавиатурой
 	root_margin.add_child(layer)

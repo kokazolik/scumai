@@ -344,6 +344,8 @@ func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int
 		if r[0] == HTTPRequest.RESULT_SUCCESS and code == 200 and data is Dictionary and data.get("choices") is Array and (data.choices as Array).size() > 0:
 			var c = data.choices[0].get("message", {}).get("content")
 			var text := "" if c == null else str(c)
+			if data.get("usage") is Dictionary:
+				_count_tokens(int(data.usage.get("total_tokens", 0)))
 			if text.strip_edges() != "":
 				return {"ok": true, "text": text, "error": ""}
 			continue
@@ -371,6 +373,27 @@ func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int
 			msg += ": " + str(data.message)
 		return {"ok": false, "text": "", "error": msg}
 	return {"ok": false, "text": "", "error": "GigaChat не ответил"}
+
+
+## Сколько токенов GigaChat потрачено в этом году (бесплатно — 25 млн на Max/Pro/Lite в год).
+func gc_tokens_used() -> int:
+	var sc := ConfigFile.new()
+	sc.load("user://settings.cfg")
+	if int(sc.get_value("ai", "tokens_year", 0)) != Time.get_date_dict_from_system().year:
+		return 0
+	return int(sc.get_value("ai", "tokens_used", 0))
+
+
+func _count_tokens(n: int) -> void:
+	if n <= 0:
+		return
+	var sc := ConfigFile.new()
+	sc.load("user://settings.cfg")
+	var y: int = Time.get_date_dict_from_system().year
+	var used := int(sc.get_value("ai", "tokens_used", 0)) if int(sc.get_value("ai", "tokens_year", 0)) == y else 0
+	sc.set_value("ai", "tokens_year", y)
+	sc.set_value("ai", "tokens_used", used + n)
+	sc.save("user://settings.cfg")
 
 
 func save_key(key: String) -> void:

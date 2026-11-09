@@ -260,6 +260,41 @@ static func make_portrait(icon: Texture2D, size := 112, tint := GOLD_LIGHT) -> C
 	return root
 
 
+## Портрет героя: силуэт расы в цвете класса и значок класса в углу.
+const CLASS_TINT := {"Воин": Color("ffb27a"), "Маг": Color("9fc4ff"), "Плут": Color("c8e6a0"),
+	"Жрец": Color("fff0b0"), "Следопыт": Color("a8e0c0"), "Бард": Color("f0b0e8")}
+
+static func make_hero_portrait(race_icon: Texture2D, cls_icon: Texture2D, cls: String, size := 112) -> Control:
+	var root := make_portrait(race_icon if race_icon else cls_icon, size, CLASS_TINT.get(cls, GOLD_LIGHT))
+	if race_icon and cls_icon:
+		var bs := size * 0.38
+		var badge := PanelContainer.new()
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.12, 0.08, 0.05, 0.95)
+		sb.border_color = GOLD_LIGHT
+		sb.set_border_width_all(maxi(1, int(size / 40)))
+		sb.set_corner_radius_all(int(bs))
+		badge.add_theme_stylebox_override("panel", sb)
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.position = Vector2(size - bs - size * 0.02, size - bs - size * 0.02)
+		badge.size = Vector2(bs, bs)
+		var ic := TextureRect.new()
+		ic.texture = cls_icon
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.custom_minimum_size = Vector2(bs * 0.7, bs * 0.7)
+		ic.self_modulate = CLASS_TINT.get(cls, GOLD_LIGHT)
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.add_child(ic)
+		root.add_child(badge)
+	return root
+
+
+## Портрет врага: красноватый, у главаря — золотой.
+static func make_enemy_portrait(icon: Texture2D, size := 56, boss := false) -> Control:
+	return make_portrait(icon, size, Color("ffd36b") if boss else Color("ff9c8a"))
+
+
 ## Ячейка инвентаря size x size с иконкой (или пустая с бледным силуэтом placeholder).
 static func make_slot(icon: Texture2D, rarity := "common", size := 96, empty := false) -> PanelContainer:
 	var pc := PanelContainer.new()
