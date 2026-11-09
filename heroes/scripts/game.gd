@@ -883,6 +883,11 @@ func _log(kind: String, who: String, text: String) -> void:
 		state.log = state.log.slice(-200)
 
 
+## Сложность от ведущего не выше разумного для уровня героев: 1–2 ур. — до 18, 3–4 — до 20, дальше выше.
+func _dc_fair(dc: int) -> int:
+	return clampi(dc, 5, 16 + 2 * _tier())
+
+
 func _tier() -> int:
 	var lv := 0
 	for n in state.heroes:
@@ -990,7 +995,7 @@ func _resolve() -> void:
 			var cname := str(c.get("name", ""))
 			if str(c.get("ability", "")).strip_edges() != "":
 				cname += "|" + str(c.get("ability", ""))
-			var a := _make_ask(pname, str(c.get("kind", "skill")), cname, int(c.get("dc", 12)),
+			var a := _make_ask(pname, str(c.get("kind", "skill")), cname, _dc_fair(int(c.get("dc", 12))),
 				int(c.get("adv", 0)), str(c.get("why", "")))
 			if a.is_empty():
 				continue
@@ -1926,7 +1931,7 @@ func _map_options(opts) -> Dictionary:
 								what += "|" + str(ck.ability)
 							var info := _check_info(state.heroes[pname], str(ck.get("kind", "skill")), what)
 							if not info.is_empty():
-								e.chk = {"kind": str(ck.get("kind", "skill")), "what": what, "dc": clampi(int(ck.get("dc", 12)), 5, 25),
+								e.chk = {"kind": str(ck.get("kind", "skill")), "what": what, "dc": _dc_fair(int(ck.get("dc", 12))),
 									"label": info.label, "bonus": info.bonus}
 						arr.append(e)
 					else:
@@ -4153,7 +4158,7 @@ func _checks_prompt(acts: Dictionary) -> Array:
 kind: "skill" (навык), "save" (спасбросок от ловушки, яда, магии), "ability" (чистая характеристика).
 Навыки: Атлетика, Акробатика, Ловкость рук, Скрытность, Магия, История, Анализ, Природа, Религия, Уход за животными, Проницательность, Медицина, Восприятие, Выживание, Обман, Запугивание, Выступление, Убеждение.
 Характеристики (для save и ability): СИЛ, ЛОВ, ТЕЛ, ИНТ, МДР, ХАР.
-Сложность dc: 5 очень легко, 10 легко, 15 средне, 20 трудно, 25 почти невозможно.
+Сложность dc — насколько трудна сама задача (как в BG3): 5 пустяк, 10 обычное дело, 12-13 непросто, 15 трудно, 18 очень трудно, 20 и выше — подвиг для опытных героев. Большинство проверок 10-15. Не завышай: высокая сложность только для по-настоящему трудного (стражник-ветеран, древний замок, прыжок через пропасть). Насторожённый, умный или сильный противник — +2-3, ничего не подозревающий — -2-3.
 Способ добиться своего определяет проверку (поле ability — характеристика, на которой кидают навык, если она не обычная):
 - угроза, запугивание силой, выбивание, шантаж кулаками: Запугивание, ability "СИЛ";
 - шантаж компроматом, холодная угроза словами: Запугивание (ХАР);

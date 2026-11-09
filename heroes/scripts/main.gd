@@ -1573,7 +1573,7 @@ func _update_bottom() -> void:
 				_opt_pick = -1, 21, 60, C_ACCENT)
 			b.add_child(ob)
 		else:
-			var ob := _wrap_button("› %s\n🎲 %s %+d · сложность %d (%s)" % [ot, chk.label, int(chk.bonus), int(chk.dc), _dc_word(int(chk.dc))], C_CARD, func():
+			var ob := _wrap_button("› %s\n🎲 %s %+d · сложность %d (%s) · шанс ≈%d%%" % [ot, chk.label, int(chk.bonus), int(chk.dc), _dc_word(int(chk.dc)), _check_chance(int(chk.dc), int(chk.bonus), R.check_adv(Game.my_hero()))], C_CARD, func():
 				input.text = ot
 				_opt_pick = idx, 19, 76, C_ACCENT)
 			b.add_child(ob)
@@ -1676,6 +1676,8 @@ func _build_ask(b: VBoxContainer) -> void:
 			adv = " · с помехой"
 		c.add_child(_label("Проверка: %s — %s" % [a.hero, a.label], 24, C_ACCENT))
 		c.add_child(_label("Сложность %d · бонус %+d%s%s" % [int(a.dc), int(a.bonus), adv, (" · " + str(a.why)) if str(a.why) != "" else ""], 22, C_INK))
+		var ch := _check_chance(int(a.dc), int(a.bonus), int(a.adv))
+		c.add_child(_label("Шанс успеха ≈ %d%%" % ch, 20, C_GREEN if ch >= 60 else (C_ACCENT if ch >= 35 else C_RED)))
 		if a.done:
 			c.add_child(_label("Брошено", 22, C_GREEN))
 		elif str(a.who) == Game.my_pname():
@@ -1688,6 +1690,16 @@ func _build_ask(b: VBoxContainer) -> void:
 		else:
 			c.add_child(_label("Ждём, когда %s бросит кубик" % a.hero, 22, C_MUTED))
 		b.add_child(c.get_parent())
+
+
+## Шанс пройти проверку: к20 + бонус против сложности, 20 — всегда успех, 1 — всегда провал (как в BG3).
+func _check_chance(dc: int, bonus: int, adv: int) -> int:
+	var p := clampf((21.0 - float(dc - bonus)) / 20.0, 0.05, 0.95)
+	if adv > 0:
+		p = 1.0 - (1.0 - p) * (1.0 - p)
+	elif adv < 0:
+		p = p * p
+	return roundi(p * 100.0)
 
 
 func _wait_text() -> String:
