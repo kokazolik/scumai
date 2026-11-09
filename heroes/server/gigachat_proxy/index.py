@@ -20,7 +20,9 @@ import urllib.request
 import uuid
 
 OAUTH_URL = os.environ.get("GC_OAUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth")
-CHAT_URL = os.environ.get("GC_CHAT_URL", "https://gigachat.devices.sberbank.ru/api/v1/chat/completions")
+CHAT_URLS = [os.environ["GC_CHAT_URL"]] if os.environ.get("GC_CHAT_URL") else [
+    "https://gigachat.devices.sberbank.ru/api/v1/chat/completions", "https://api.giga.chat/v1/chat/completions"]
+_good_url = [0]  # какой адрес чата ответил в прошлый раз
 ALLOWED_MODELS = {"GigaChat-2-Max", "GigaChat-2-Pro", "GigaChat-2", "GigaChat-Max", "GigaChat-Pro", "GigaChat"}
 
 _ctx = ssl.create_default_context()
@@ -97,6 +99,22 @@ def handler(event, context):
         return _resp(500, {"message": "%s: %s" % (type(e).__name__, e)})
 
 
+def _chat(tok, body, timeout=26):
+    """Запрос к чату: сначала адрес, что сработал в прошлый раз, при сбое сети — второй."""
+    data = json.dumps(body, ensure_ascii=False).encode()
+    hdr = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer " + tok}
+    errors = []
+    order = [_good_url[0]] + [i for i in range(len(CHAT_URLS)) if i != _good_url[0]]
+    for i in order:
+        try:
+            res = _http(CHAT_URLS[i], data, hdr, timeout=timeout)
+            _good_url[0] = i
+            return res
+        except ProxyError as e:
+            errors.append(str(e))
+    raise ProxyError(" | ".join(errors))
+
+
 def _handle(event):
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     if event.get("httpMethod", "POST") == "GET":
@@ -114,7 +132,14 @@ def _handle(event):
         if err:
             return _resp(200, {"ok": False, "step": "oauth", "http": err[0], "message": err[1].get("message", ""),
                                "key": _key_shape(key), "sec": round(time.time() - t0, 1)})
-        return _resp(200, {"ok": True, "step": "oauth", "sec": round(time.time() - t0, 1)})
+        t1 = time.time()
+        try:
+            code, out = _chat(tok, {"model": "GigaChat-2", "messages": [{"role": "user", "content": "Ответь одним словом: привет"}],
+                                    "max_tokens": 10}, timeout=20)
+        except ProxyError as e:
+            return _resp(200, {"ok": False, "step": "chat", "oauth_sec": round(t1 - t0, 1), "message": str(e), "sec": round(time.time() - t1, 1)})
+        return _resp(200, {"ok": code == 200, "step": "chat", "http": code, "url": CHAT_URLS[_good_url[0]].split("/")[2],
+                           "answer": out.decode("utf-8", "replace")[:300], "sec": round(time.time() - t1, 1)})
     app_token = os.environ.get("APP_TOKEN", "")
     if app_token and headers.get("x-app-token", "") != app_token:
         return _resp(403, {"message": "wrong app token"})
@@ -140,9 +165,7 @@ def _handle(event):
         if err:
             return _resp(401 if err[0] in (400, 401, 403) else 502,
                          {"message": "oauth %s: %s" % (err[0], err[1].get("message", ""))})
-        code, out = _http(CHAT_URL, json.dumps(body, ensure_ascii=False).encode(), {
-            "Content-Type": "application/json", "Accept": "application/json",
-            "Authorization": "Bearer " + tok}, timeout=50)
+        code, out = _chat(tok, body)
         if code == 401 and attempt == 0:
             continue
         return {"statusCode": code, "headers": {"Content-Type": "application/json; charset=utf-8"},
