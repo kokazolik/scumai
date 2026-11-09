@@ -30,7 +30,7 @@
 на телефоне хоста. Репозиторий публичный, ключ из APK или git сразу утащат.
 
 ## Сборка
-`tools/build_apk.sh 0.18` — экспорт без Android SDK (подставной SDK + uber-apk-signer), подпись релизным
+`tools/build_apk.sh 0.19` — экспорт без Android SDK (подставной SDK + uber-apk-signer), подпись релизным
 ключом из папки проекта `keys/` (не из git). Результат: `build/chronicles-0.8.apk`.
 
 ## Автотест
