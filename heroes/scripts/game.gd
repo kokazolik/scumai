@@ -478,6 +478,7 @@ func continue_campaign() -> void:
 				state.options[n] = state.options[old]
 	state.heroes = heroes
 	_fix_bug_gold()
+	_dedup_quests()
 	_log("sys", "", "Кампания продолжается. Ход %d." % (int(state.turn) + 1))
 	_set_phase("play" if _all_have_heroes() else "create")
 
@@ -726,8 +727,13 @@ func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 		elif _start_combat(d.combat, d.get("env", []) if d.get("env") is Array else []):
 			return
 	_set_phase("play")
-	if not (d.get("quests") is Array and (d.quests as Array).size() > 0):
-		_extract_quests(str(d.story))
+	var gd = d.get("goal")
+	var marked: bool = gd is Dictionary and gd.has("done_steps")
+	if d.get("quests") is Array:
+		for q in d.quests:
+			if q is Dictionary and (q.has("done_steps") or str(q.get("status", "")) == "done"):
+				marked = true
+	_extract_quests(str(d.story), d.get("quests") is Array and (d.quests as Array).size() > 0, marked)
 	var vd = d.get("vote")
 	if vd is Dictionary and str(vd.get("q", "")) != "" and vd.get("opts") is Array and (vd.opts as Array).size() >= 2:
 		var vo := []
@@ -815,27 +821,145 @@ const QUEST_HINTS := ["прос", "поруч", "задани", "помоги", 
 
 
 ## Ведущий иногда забывает записать поручение: если в рассказе похоже на просьбу, отдельно спрашиваем, есть ли новое задание.
-func _extract_quests(story: String) -> void:
+func _extract_quests(story: String, got_quests := false, got_marks := false) -> void:
+	if OS.get_environment("ALIBI_MOCK") != "":
+		return
 	var low := story.to_lower()
 	var hit := false
 	for k in QUEST_HINTS:
 		if low.contains(k):
 			hit = true
 			break
-	if not hit or OS.get_environment("ALIBI_MOCK") != "":
-		return
+	var c: Dictionary = state.campaign
 	var act := []
-	for q in state.campaign.get("quests", []):
+	var open_steps := []
+	for q in c.get("quests", []):
 		if q.s == "active":
-			act.append(str(q.t))
-	var sys := """Ты секретарь ролевой игры. Прочитай отрывок. Если в нём кто-то дал героям поручение, просьбу или работу (даже мелкую), или герои взяли на себя цель — верни её. Уже записанные задания не повторяй. Ответь строго JSON: {"quests": [{"title": "до 6 слов", "note": "кто дал и что нужно, 1 фраза", "status": "new"}]} или {"quests": []}. Если отрывок сообщает, что одно из записанных заданий выполнено, верни его с тем же названием и "status": "done"."""
-	var user := "Записанные задания: %s\n\nОтрывок:\n%s" % ["; ".join(act) if act.size() > 0 else "нет", story]
-	var res: Dictionary = await LLM.chat_json([{"role": "system", "content": sys}, {"role": "user", "content": user}], 0.2, 300)
+			var sts := []
+			for e in q.get("st", []):
+				if not e.ok:
+					sts.append(str(e.t))
+					open_steps.append(str(e.t))
+			act.append(str(q.t) + ((" [пункты: " + "; ".join(sts) + "]") if sts.size() > 0 else ""))
+	for e in c.get("goal_steps", []):
+		if not e.ok:
+			open_steps.append(str(e.t))
+	var need_new := hit and not got_quests
+	var need_marks := not got_marks and (open_steps.size() > 0 or act.size() > 0)
+	if not need_new and not need_marks:
+		return
+	var goal_line := ""
+	if str(c.get("goal", "")) != "":
+		var gs := []
+		for e in c.get("goal_steps", []):
+			if not e.ok:
+				gs.append(str(e.t))
+		goal_line = "\nЦель группы: %s%s" % [c.goal, (" [пункты: " + "; ".join(gs) + "]") if gs.size() > 0 else ""]
+	var sys := """Ты секретарь ролевой игры, ведёшь дневник. Прочитай отрывок и сверь с записанными заданиями.
+1) Если в отрывке кто-то дал героям НОВОЕ поручение или герои взяли новую цель, которой нет в списке и которая не совпадает с целью группы или её пунктами — верни в quests.
+2) Если в отрывке что-то из пунктов УЖЕ сделано (механизм активировали, лодку нашли, до места добрались) — верни точный текст этих пунктов в done_steps.
+3) Если задание целиком выполнено — его точное название в done_quests.
+Не выдумывай: только то, что прямо случилось в отрывке. Ответь строго JSON: {"quests": [{"title": "до 6 слов", "note": "кто дал и что нужно", "status": "new"}], "done_steps": [], "done_quests": []}"""
+	var user := "Записанные задания: %s%s\n\nОтрывок:\n%s" % ["; ".join(act) if act.size() > 0 else "нет", goal_line, story]
+	var res: Dictionary = await LLM.chat_json([{"role": "system", "content": sys}, {"role": "user", "content": user}], 0.2, 400)
 	if not Net.is_host() or not res.ok:
 		return
-	_apply_journal({"quests": res.data.get("quests", [])})
+	var r: Dictionary = res.data
+	var qs := []
+	if need_new and r.get("quests") is Array:
+		qs = (r.quests as Array).duplicate()
+	var ds = r.get("done_steps", [])
+	if ds is Array and ds.size() > 0:
+		for q in c.get("quests", []):
+			if q.s == "active":
+				_merge_steps(q, "st", {"done_steps": ds}, "задания", str(q.t))
+		if str(c.get("goal", "")) != "":
+			_merge_steps(c, "goal_steps", {"done_steps": ds}, "цели", str(c.goal))
+	var dq = r.get("done_quests", [])
+	if dq is Array:
+		for t in dq:
+			qs.append({"title": str(t), "status": "done"})
+	if qs.size() > 0:
+		_apply_journal({"quests": qs})
 	_save()
 	_broadcast()
+
+
+## Похожи ли два названия задания/пункта: «Найти зацепку» и «Найти зацепку (через карту…)» — одно и то же.
+static func _qkey(t: String) -> String:
+	var x := t.to_lower().replace("ё", "е")
+	var p := x.find("(")
+	if p > 0:
+		x = x.left(p)
+	for ch in ["«", "»", "\"", ".", ",", "!", "?", ":", "—", "-"]:
+		x = x.replace(ch, " ")
+	return " ".join(x.split(" ", false))
+
+
+static func _same_quest(a: String, b: String) -> bool:
+	var x := _qkey(a)
+	var y := _qkey(b)
+	if x == "" or y == "":
+		return false
+	if x == y or (x.length() >= 10 and y.begins_with(x)) or (y.length() >= 10 and x.begins_with(y)):
+		return true
+	# совпадение по смыслу: большинство значимых слов одинаковы (по основе из 5 букв)
+	var wa := {}
+	for w in x.split(" ", false):
+		if w.length() >= 4:
+			wa[w.left(5)] = true
+	var wb := {}
+	for w in y.split(" ", false):
+		if w.length() >= 4:
+			wb[w.left(5)] = true
+	if wa.size() < 2 or wb.size() < 2:
+		return false
+	var common := 0
+	for k in wa:
+		if wb.has(k):
+			common += 1
+	return float(common) / float(mini(wa.size(), wb.size())) >= 0.75
+
+
+## Убираем дубли: одинаковые задания склеиваем, задания-копии цели группы или её пунктов убираем.
+func _dedup_quests() -> void:
+	var c: Dictionary = state.campaign
+	var qs: Array = c.get("quests", [])
+	var keep := []
+	for q in qs:
+		if q.s == "active":
+			if str(c.get("goal", "")) != "" and _same_quest(str(q.t), str(c.goal)):
+				_merge_steps(c, "goal_steps", {"steps": (q.get("st", []) as Array).map(func(e): return e.t)}, "цели", str(c.goal))
+				continue
+			var is_step := false
+			for e in c.get("goal_steps", []):
+				if _same_quest(str(q.t), str(e.t)):
+					is_step = true
+			if is_step:
+				continue
+		var twin: Dictionary = {}
+		for k in keep:
+			if k.s == q.s and _same_quest(str(k.t), str(q.t)):
+				twin = k
+				break
+		if twin.is_empty():
+			keep.append(q)
+			continue
+		if _qkey(str(q.t)).length() < _qkey(str(twin.t)).length():
+			twin.t = q.t   # оставляем короткое, без хвоста в скобках
+		if str(twin.get("d", "")) == "":
+			twin.d = q.get("d", "")
+		var st: Array = twin.get("st", [])
+		for e in q.get("st", []):
+			var f := false
+			for e2 in st:
+				if _same_quest(str(e2.t), str(e.t)):
+					e2.ok = e2.ok or e.ok
+					f = true
+			if not f and st.size() < 8:
+				st.append(e)
+		twin.st = st
+	c.quests = keep
 
 
 ## Цель группы: строка или {"t", "steps", "done_steps", "place"}. Пункты видны в дневнике.
@@ -860,19 +984,34 @@ func _apply_goal(g) -> void:
 		c.goal = ""
 		c.goal_steps = []
 		return
-	if gl != "" and gl.to_lower() != str(c.get("goal", "")).to_lower():
+	var cur_goal := str(c.get("goal", ""))
+	if gl != "" and cur_goal != "" and not _same_quest(gl, cur_goal):
+		# ведущий подсунул пункт текущей цели вместо неё самой — цель не меняем, пункт отметится отдельно
+		for e in c.get("goal_steps", []):
+			if not e.ok and _same_quest(gl, str(e.t)):
+				gl = cur_goal
+				break
+	if gl != "" and not _same_quest(gl, cur_goal):
+		if cur_goal != "":
+			var left := 0
+			for e in c.get("goal_steps", []):
+				if not e.ok:
+					left += 1
+			_log("quest", "", "Цель сменилась: «%s»%s." % [cur_goal, (" осталась незаконченной (%d пунктов)" % left) if left > 0 else ""])
+			state.map = MapView.drop_targets(state.map, "★" + cur_goal)
 		c.goal = gl.left(100)
 		c.goal_turn = int(state.turn)
 		c.goal_steps = []
 		_log("quest", "", "Цель группы: " + gl.left(100))
 	if str(c.get("goal", "")) == "":
 		return
-	_merge_steps(c, "goal_steps", gd, "цели")
+	_merge_steps(c, "goal_steps", gd, "цели", str(c.goal))
 	_add_target_from(gd.get("place"), "★" + str(c.goal))
+	_dedup_quests()
 
 
 ## Пункты задания или цели: новые добавляются, выполненные отмечаются галочкой.
-func _merge_steps(holder: Dictionary, key: String, d: Dictionary, what: String) -> void:
+func _merge_steps(holder: Dictionary, key: String, d: Dictionary, what: String, title := "") -> void:
 	if not holder.has(key) or not (holder[key] is Array):
 		holder[key] = []
 	var st: Array = holder[key]
@@ -880,9 +1019,9 @@ func _merge_steps(holder: Dictionary, key: String, d: Dictionary, what: String) 
 	if steps is Array:
 		for x in steps:
 			var tx := str(x.get("t", "") if x is Dictionary else x).strip_edges().left(70)
-			if tx == "" or st.size() >= 8:
+			if tx == "" or st.size() >= 8 or (title != "" and _same_quest(tx, title)):
 				continue
-			if not st.any(func(e): return MapView._same_place(str(e.t), tx)):
+			if not st.any(func(e): return _same_quest(str(e.t), tx)):
 				st.append({"t": tx, "ok": false})
 	var done = d.get("done_steps", [])
 	if done is String:
@@ -891,7 +1030,7 @@ func _merge_steps(holder: Dictionary, key: String, d: Dictionary, what: String) 
 		for x in done:
 			var tx := str(x).strip_edges()
 			for e in st:
-				if not e.ok and (MapView._same_place(str(e.t), tx) or str(e.t).to_lower() == tx.to_lower()):
+				if not e.ok and _same_quest(str(e.t), tx):
 					e.ok = true
 					_log("quest", "", "Пункт %s выполнен: %s" % [what, e.t])
 					break
@@ -928,31 +1067,38 @@ func _apply_journal(d: Dictionary) -> void:
 			var st := str(q.get("status", "new"))
 			var found: Dictionary = {}
 			for e in c.quests:
-				if str(e.t).to_lower() == title.to_lower():
+				if _same_quest(str(e.t), title) and (found.is_empty() or e.s == "active"):
 					found = e
 			if found.is_empty():
 				if st in ["done", "failed"]:
 					continue
+				var dup_goal := str(c.get("goal", "")) != "" and _same_quest(title, str(c.goal))
+				for e in c.get("goal_steps", []):
+					if _same_quest(title, str(e.t)):
+						dup_goal = true
+				if dup_goal:
+					continue   # это и так цель группы или её пункт — второй раз не пишем
 				found = {"t": title, "d": str(q.get("note", "")).left(200), "s": "active", "turn": int(state.turn)}
 				c.quests.append(found)
 				_log("quest", "", "Новое задание: %s" % title)
-				_merge_steps(found, "st", q, "задания")
+				_merge_steps(found, "st", q, "задания", title)
 				_add_target_from(q.get("place"), title)
 			elif found.s == "active":
-				_merge_steps(found, "st", q, "задания")
+				_merge_steps(found, "st", q, "задания", str(found.t))
 				_add_target_from(q.get("place"), title)
 				if str(q.get("note", "")) != "":
 					found.d = str(q.note).left(200)
 				if st == "done" and found.s == "active":
-					found.s = "done"
-					for e in found.get("st", []):
-						e.ok = true
+					for e2 in c.quests:
+						if e2.s == "active" and _same_quest(str(e2.t), title):
+							e2.s = "done"   # и его дубли тоже
 					state.map = MapView.drop_targets(state.map, title)
-					_log("quest", "", "Задание выполнено: %s" % title)
+					_log("quest", "", "Задание выполнено: %s" % found.t)
 				elif st == "failed" and found.s == "active":
 					found.s = "failed"
 					state.map = MapView.drop_targets(state.map, title)
 					_log("quest", "", "Задание провалено: %s" % title)
+	_dedup_quests()
 	var ns = d.get("npcs", [])
 	if ns is Array:
 		for n in ns:
@@ -3161,7 +3307,7 @@ const NARRATE_FORMAT := """Ответь строго JSON без markdown:
 - rep: репутация у города, деревни, гильдии или фракции, если герои совершили заметный поступок: [{"name": "Деревня Верба", "change": -1, "why": "ограбили лавку"}]. change от -2 до 2. При репутации -3 и ниже стража враждебна, торговцы отказывают; при 3 и выше — почёт, помощь, скидки.
 - consequences: решения, которые должны аукнуться позже (пощадили врага, обманули влиятельного человека, украли реликвию): ["Пощадили гоблина Шныря — может вернуться с подмогой или с благодарностью"]. resolved: начала тех отложенных последствий, которые ты сейчас вернул в сюжет.
 - companions: если к отряду присоединился наёмник или зверь (нанят, приручён, спасён): [{"name": "Серый", "kind": "волк", "monster": "wolf", "owner": "имя героя"}]; monster — id из списка монстров по силе; ушёл: {"name": "Серый", "leave": true}. Не больше двух спутников.
-- goal: ближайшая цель группы, когда герои решили, куда идут или что делают дальше: {"t": "Доплыть до маяка на Скалистом мысу", "steps": ["Найти лодку", "Пережить бурю", "Подняться на маяк"], "place": {"name": "Маяк на Скалистом мысу", "type": "tower", "dist": 3}}. steps — 2-4 понятных пункта, что нужно сделать; place — только если героям известно, где это место (им показали на карте, объяснили дорогу, видно вдали), dist — сколько событий в пути до него (1-6, по расстоянию: соседняя деревня 1-2, через лес или горы 3-4, другой край земли 5-6); если место неизвестно — без place. Когда пункт выполнен: {"t": та же цель, "done_steps": ["Найти лодку"]}. "done" — цель достигнута; "" если ничего не изменилось. Пока цель не достигнута, каждый ход приближай героев к ней.
+- goal: ближайшая цель группы, когда герои решили, куда идут или что делают дальше: {"t": "Доплыть до маяка на Скалистом мысу", "steps": ["Найти лодку", "Пережить бурю", "Подняться на маяк"], "place": {"name": "Маяк на Скалистом мысу", "type": "tower", "dist": 3}}. steps — 2-4 понятных пункта, что нужно сделать; place — только если героям известно, где это место (им показали на карте, объяснили дорогу, видно вдали), dist — сколько событий в пути до него (1-6, по расстоянию: соседняя деревня 1-2, через лес или горы 3-4, другой край земли 5-6); если место неизвестно — без place. Когда пункт выполнен: {"t": та же цель, "done_steps": ["Найти лодку"]}. "done" — цель достигнута; "" если ничего не изменилось. Цель — крупная задача; не подменяй её её же пунктом и не дублируй цель и её пункты в quests. Сделанное сразу отмечай в done_steps. Пока цель не достигнута, каждый ход приближай героев к ней.
 - vote: если перед группой важная развилка, где герои могут не сойтись (кого спасти, чью сторону принять, куда идти), предложи голосование {"q": "Вопрос?", "opts": ["вариант 1", "вариант 2"]}; иначе null. Не чаще раза в 4-5 ходов.
 - chest: короткое название, если герои открыли сундук, тайник или нашли клад (содержимое выдаст игра), иначе "".
 - shop: имя торговца, если герои пришли торговать к лавке/рынку/кузнецу, иначе "". Знакомого торговца называй тем же именем.

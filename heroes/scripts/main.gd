@@ -2005,8 +2005,8 @@ func _quest_row(q: Dictionary, icon: String, col: Color) -> Control:
 	qv.add_child(_label(str(q.t), 22, C_INK if q.s == "active" else C_MUTED))
 	if str(q.get("d", "")) != "" and q.s == "active":
 		qv.add_child(_label(str(q.d), 18, C_MUTED))
-	_add_steps(qv, q.get("st", []))
 	if q.s == "active":
+		_add_steps(qv, q.get("st", []))
 		_add_target_note(qv, str(q.t))
 	row.add_child(qv)
 	return row
