@@ -108,6 +108,7 @@ func _ready() -> void:
 		if OS.get_environment("ALIBI_NODICE") == "":
 			dice.play(rolls)
 		_roll_sfx(rolls))
+	LLM.note.connect(func(t): _show_notice("ui_story", "Нейронка", t, Callable()))
 	Net.players_changed.connect(_refresh)
 	Net.rooms_changed.connect(_refresh)
 	Net.joined.connect(_refresh)
@@ -353,6 +354,12 @@ func _build_menu() -> void:
 	var key_btn := _button("", C_CARD2, _paste_key)
 	refs.key_btn = key_btn
 	content.add_child(key_btn)
+	var mi := LLM.model_info()
+	var model_btn := _wrap_button("Нейронка: %s\n%s" % [mi.name, mi.note], C_CARD2, func():
+		LLM.cycle_model()
+		screen = ""
+		_refresh(), 20, 92)
+	content.add_child(model_btn)
 	var err := _label("", 24, C_RED)
 	refs.err = err
 	content.add_child(err)
@@ -1269,8 +1276,23 @@ func _bottom_mode() -> String:
 				return "waiting"
 			if not Game.state.get("vote", {}).is_empty():
 				return "vote" + JSON.stringify(Game.state.vote)
-			return "input" + JSON.stringify(Game.state.options.get(me, [])) + str(Game.merchants_here()) + str(Game.state.pending) + str(_help_on)
+			# без state.pending: ход напарника не должен пересоздавать поле ввода и сбрасывать набранный текст
+			return "input" + JSON.stringify(Game.state.options.get(me, [])) + str(Game.merchants_here()) + str(_help_on)
 	return "other"
+
+
+## Плашка «напарник уже выбрал действие» обновляется на месте, не трогая поле ввода.
+func _update_pending_banner() -> void:
+	var wl = refs.get("pending_label")
+	if wl == null or not is_instance_valid(wl):
+		return
+	var me := Game.my_pname()
+	var others := []
+	for n in Game.state.pending:
+		if str(n) != me and Game.state.heroes.has(n):
+			others.append(str(Game.state.heroes[n].name))
+	wl.text = "✋ %s %s действие — все ждут тебя" % [", ".join(others), "уже выбрали" if others.size() > 1 else "уже выбрал(а)"] if others.size() > 0 else ""
+	refs.pending_card.visible = others.size() > 0
 
 
 func _update_bottom() -> void:
@@ -1281,6 +1303,7 @@ func _update_bottom() -> void:
 	if mode == _bottom_key:
 		if waiting_label and is_instance_valid(waiting_label):
 			waiting_label.text = _wait_text()
+		_update_pending_banner()
 		return
 	var old_input = refs.get("action_input")
 	if old_input and is_instance_valid(old_input):
@@ -1291,6 +1314,7 @@ func _update_bottom() -> void:
 	_apply_panel.call_deferred()
 	refs.erase("action_input")
 	refs.erase("wait_label")
+	refs.erase("pending_label")
 	var b: VBoxContainer = refs.bottom
 	for c in b.get_children():
 		c.queue_free()
@@ -1338,17 +1362,20 @@ func _update_bottom() -> void:
 	for n in Game.state.pending:
 		if str(n) != me and Game.state.heroes.has(n):
 			others.append(str(Game.state.heroes[n].name))
-	if others.size() > 0:
-		var wb := _card(C_CARD2)
-		b.add_child(wb.get_parent())
-		var wl := _label("✋ %s %s действие — все ждут тебя" % [", ".join(others), "уже выбрали" if others.size() > 1 else "уже выбрал(а)"], 21, C_GREEN)
-		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		wb.add_child(wl)
+	var wb := _card(C_CARD2)
+	b.add_child(wb.get_parent())
+	var wl := _label("", 21, C_GREEN)
+	wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wb.add_child(wl)
+	refs.pending_label = wl
+	refs.pending_card = wb.get_parent()
+	_update_pending_banner()
 	var input := TextEdit.new()
 	input.placeholder_text = "Что делает %s?" % Game.my_hero().get("name", "твой герой")
 	input.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	input.custom_minimum_size = Vector2(0, 100)
 	input.text = _draft
+	input.text_changed.connect(func(): _draft = input.text)
 	refs.action_input = input
 	for oi in opts.size():
 		var o = opts[oi]

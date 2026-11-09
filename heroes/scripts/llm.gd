@@ -12,8 +12,19 @@ extends Node
 const API_URL := "https://openrouter.ai/api/v1/chat/completions"
 const MODEL := "google/gemma-4-26b-a4b-it"
 const RETRY_CODES := [429, 500, 502, 503, 504]
+## Выбор нейронки (кнопка в меню). Цена — примерно за один ход двоих игроков.
+const MODELS := [
+	{"id": "google/gemma-4-26b-a4b-it", "name": "Gemma 4", "note": "дёшево: ~0,1 коп. за ход, при пустом балансе сама переходит на бесплатную"},
+	{"id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "note": "~0,1 коп. за ход, живее пишет по-русски"},
+	{"id": "google/gemma-4-26b-a4b-it:free", "name": "Gemma 4 бесплатно", "note": "0 ₽, но OpenRouter ограничивает число запросов в день"},
+]
+const FREE_FALLBACK := "google/gemma-4-26b-a4b-it:free"
+
+signal note(text: String)
 
 var api_key := ""
+var model := MODEL
+var _broke := false   # на балансе OpenRouter кончились деньги — до перезапуска идём в бесплатную модель
 var mock := false
 
 
@@ -24,6 +35,32 @@ func _ready() -> void:
 		var cfg := ConfigFile.new()
 		if cfg.load("user://secrets.cfg") == OK:
 			api_key = str(cfg.get_value("openrouter", "api_key", ""))
+	var sc := ConfigFile.new()
+	if sc.load("user://settings.cfg") == OK:
+		model = str(sc.get_value("ai", "model", MODEL))
+	if not MODELS.any(func(m): return m.id == model):
+		model = MODEL
+
+
+func model_info() -> Dictionary:
+	for m in MODELS:
+		if m.id == model:
+			return m
+	return MODELS[0]
+
+
+## Следующая модель из списка (кнопка в меню).
+func cycle_model() -> void:
+	var i := 0
+	for k in MODELS.size():
+		if MODELS[k].id == model:
+			i = k
+	model = MODELS[(i + 1) % MODELS.size()].id
+	_broke = false
+	var sc := ConfigFile.new()
+	sc.load("user://settings.cfg")
+	sc.set_value("ai", "model", model)
+	sc.save("user://settings.cfg")
 
 
 func has_key() -> bool:
@@ -46,8 +83,9 @@ func chat(messages: Array, temperature := 0.9, max_tokens := 600, retries := 3) 
 	if api_key.is_empty():
 		return {"ok": false, "text": "", "error": "Нет API-ключа OpenRouter"}
 
+	var use_model := FREE_FALLBACK if _broke else model
 	var body := JSON.stringify({
-		"model": MODEL,
+		"model": use_model,
 		"messages": messages,
 		"temperature": temperature,
 		"max_tokens": max_tokens,
@@ -80,6 +118,17 @@ func chat(messages: Array, temperature := 0.9, max_tokens := 600, retries := 3) 
 				continue
 			return {"ok": true, "text": text, "error": ""}
 
+		var emsg := ""
+		if data is Dictionary and data.get("error") is Dictionary:
+			emsg = str(data["error"].get("message", ""))
+		# деньги на OpenRouter кончились: тот же запрос — в бесплатную модель
+		if (code == 402 or emsg.contains("afford") or emsg.contains("credits")) and use_model != FREE_FALLBACK:
+			_broke = true
+			note.emit("На балансе OpenRouter кончились деньги — ведущий перешёл на бесплатную Gemma 4")
+			push_warning("OpenRouter: баланс пуст, переходим на " + FREE_FALLBACK)
+			return await chat(messages, temperature, max_tokens, retries)
+		if code == 429 and use_model.ends_with(":free") and attempt >= 1:
+			return {"ok": false, "text": "", "error": "бесплатный лимит OpenRouter на сегодня исчерпан — пополни баланс или подожди до завтра"}
 		var retryable: bool = r[0] != HTTPRequest.RESULT_SUCCESS or code in RETRY_CODES
 		if retryable and attempt < retries:
 			await get_tree().create_timer(pow(2.0, attempt)).timeout
@@ -87,6 +136,8 @@ func chat(messages: Array, temperature := 0.9, max_tokens := 600, retries := 3) 
 		var msg := "HTTP %d" % code if code != 0 else "нет сети (код %d)" % r[0]
 		if code == 401:
 			msg = "ключ OpenRouter не подходит"
+		elif code == 402:
+			msg = "на балансе OpenRouter кончились деньги"
 		elif data is Dictionary and data.get("error") is Dictionary:
 			msg += ": " + str(data["error"].get("message", ""))
 		return {"ok": false, "text": "", "error": msg}
