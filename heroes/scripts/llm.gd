@@ -241,6 +241,12 @@ func _gc_http(url: String, headers: PackedStringArray, body: String) -> Array:
 ## Проверка связи со Сбером: какие способы подключения проходят. Текст для пересылки разработчику.
 func gc_diagnose() -> String:
 	var lines := PackedStringArray(["Godot " + Engine.get_version_info().string + ", " + OS.get_name()])
+	if not gc_proxy.is_empty():
+		var t0 := Time.get_ticks_msec()
+		var r: Dictionary = await _gc_chat([{"role": "user", "content": "Ответь одним словом: привет"}], 0.3, 10, 0)
+		lines.append("сервер-посредник: %s (%.1f с)" % ["✔ " + str(r.text).strip_edges().left(20) if r.ok else "✘ " + str(r.error).left(80), (Time.get_ticks_msec() - t0) / 1000.0])
+	else:
+		lines.append("сервер-посредник: не задан")
 	var n := await _fetch_ru_ca()
 	lines.append("доп. сертификаты Минцифры: %d" % n)
 	var any_ca := X509Certificate.new()
