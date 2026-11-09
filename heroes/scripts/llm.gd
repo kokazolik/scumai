@@ -320,8 +320,7 @@ func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int
 		if via_proxy:
 			var parts := gc_proxy.split("#", true, 1)
 			var ph := PackedStringArray(["Content-Type: application/json", "Accept: application/json", "User-Agent: Chronicles"])
-			if not gc_key.is_empty():
-				ph.append("X-Gigachat-Key: " + gc_key)
+			# ключ телефона серверу не шлём: у сервера свой (в переменных функции), а старый ключ на телефоне мог устареть
 			if parts.size() > 1 and parts[1] != "":
 				ph.append("X-App-Token: " + parts[1])
 			var http := HTTPRequest.new()
