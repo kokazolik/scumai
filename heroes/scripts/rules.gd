@@ -44,7 +44,7 @@ const CLASSES := {
 	"Маг": {"armor": [], "hd": 6, "saves": ["ИНТ", "МДР"], "main": "ИНТ", "caster": "ИНТ",
 		"scores": {"ИНТ": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ХАР": 10, "СИЛ": 8},
 		"skills": ["Магия", "История", "Анализ"],
-		"spells": ["fire_bolt", "ray_of_frost", "shocking_grasp", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball", "ice_storm", "cone_of_cold"],
+		"spells": ["fire_bolt", "ray_of_frost", "shocking_grasp", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball", "lightning_bolt", "ice_storm", "cone_of_cold"],
 		"start": [["quarterstaff", true], ["mage_robe", true], ["spellbook", false], ["potion_heal", false]],
 		"features": "Заклинания на Интеллекте: огонь, лёд, усыпление",
 		"desc": "Огонь, лёд и тайные знания"},
@@ -57,7 +57,7 @@ const CLASSES := {
 	"Жрец": {"armor": ["лёгкий", "средний", "тяжёлый", "shield"], "hd": 8, "saves": ["МДР", "ХАР"], "main": "МДР", "caster": "МДР",
 		"scores": {"МДР": 15, "ТЕЛ": 14, "СИЛ": 13, "ХАР": 12, "ИНТ": 10, "ЛОВ": 8},
 		"skills": ["Медицина", "Религия", "Проницательность"],
-		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "bless", "shield_of_faith", "spiritual_weapon", "hold_person", "mass_healing_word", "guardian_faith", "flame_strike", "mass_cure_wounds"],
+		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "inflict_wounds", "bless", "shield_of_faith", "spiritual_weapon", "hold_person", "mass_healing_word", "guardian_faith", "flame_strike", "mass_cure_wounds"],
 		"start": [["mace", true], ["scale_mail", true], ["shield", true], ["holy_symbol", true]],
 		"features": "Заклинания на Мудрости: лечение, свет, защита",
 		"desc": "Лечит друзей и жжёт нежить"},
@@ -266,7 +266,8 @@ const SLOT_NAMES := {"weapon": "Оружие", "offhand": "Щит", "armor": "Д
 ## Предметы. type: weapon / armor / shield / clothes / head / ring / amulet / potion / scroll / misc.
 ## weapon: dmg, ability (СИЛ / ЛОВ / fin = лучшая из двух), ranged, two (двуручное).
 ## armor: ac, dex_max (-1 = без ограничения), cat. Бонусы: ac, attack, damage, save, abil {}, skill {}.
-const ITEMS := {
+## Базовые предметы игры. Полный список (всё оружие, доспехи и магические вещи SRD 5.1) — в ITEMS после загрузки data/items.json.
+const ITEMS_BASE := {
 	"dagger": {"name": "Кинжал", "type": "weapon", "dt": "колющий", "dmg": "1d4", "ability": "fin", "price": 2},
 	"shortsword": {"name": "Короткий меч", "type": "weapon", "dt": "колющий", "dmg": "1d6", "ability": "fin", "price": 10},
 	"rapier": {"name": "Рапира", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "fin", "price": 25},
@@ -427,11 +428,14 @@ const SPELLS := {
 	"confusion": {"dt": "психический", "col": "ff8fd0", "name": "Смятение", "lvl": 4, "kind": "save", "save": "МДР", "dmg": "3d8", "aoe": true, "cond": "stunned", "desc": "враги теряются: 3к8 и пропуск хода"},
 	"guardian_faith": {"dt": "излучение", "col": "ffd75e", "name": "Страж веры", "lvl": 4, "kind": "save", "save": "ЛОВ", "dmg": "6d8", "desc": "призрачный страж бьёт врага, 6к8"},
 	"flame_strike": {"dt": "огонь", "col": "ffb35e", "name": "Небесный огонь", "lvl": 5, "kind": "save", "save": "ЛОВ", "dmg": "8d6", "aoe": true, "desc": "столб огня и света по всем врагам, 8к6"},
+	"lightning_bolt": {"dt": "молния", "col": "9fe8ff", "name": "Молния", "lvl": 3, "kind": "save", "save": "ЛОВ", "dmg": "8d6", "aoe": true, "desc": "разряд по всем врагам в линию, 8к6"},
+	"inflict_wounds": {"dt": "некротический", "col": "8fae5a", "name": "Нанесение ран", "lvl": 1, "kind": "attack", "dmg": "3d10", "desc": "касание смерти, 3к10"},
 	"mass_cure_wounds": {"col": "6fe3a0", "name": "Массовое лечение ран", "lvl": 5, "kind": "heal", "dmg": "3d8", "all": true, "desc": "лечит всех союзников на 3к8 + мод."},
 }
 
-## Монстры (упрощённые статблоки SRD). atk — бонус атаки, multi — атак за ход.
-const MONSTERS := {
+## Свои монстры и тактические добавки к официальным (tac, drop, boss). Остальной бестиарий — data/monsters.json (SRD 5.1).
+## atk — бонус атаки, multi — атак за ход.
+const MONSTERS_CUSTOM := {
 	"kobold": {"name": "Кобольд", "tac": ["oil"], "bow": true, "ac": 12, "hp": 5, "atk": 4, "dmg": "1d4+2", "dex": 2, "xp": 25},
 	"giant_rat": {"name": "Гигантская крыса", "ac": 12, "hp": 7, "atk": 4, "dmg": "1d4+2", "dex": 2, "xp": 25},
 	"bandit": {"name": "Бандит", "tac": ["fire_arrow"], "bow": true, "ac": 12, "hp": 11, "atk": 3, "dmg": "1d6+1", "dex": 1, "xp": 25},
@@ -494,6 +498,123 @@ const SURFACES := {
 	"web": {"name": "Паутина", "col": "c8c8c8", "desc": "липко: можно застрять на ход; огонь сожжёт"},
 	"shock": {"name": "Вода под током", "col": "9fe8ff", "desc": "бьёт током: можно оцепенеть"},
 }
+
+
+## Весь бестиарий: 325 официальных монстров SRD 5.1 + свои. Грузится один раз.
+static var MONSTERS := {}
+const CUSTOM_OVERLAY := ["tac", "drop", "boss"]
+
+
+static func _static_init() -> void:
+	load_monsters()
+	load_items()
+
+
+static var ITEMS := {}
+const RARITY := {"c": "обычный", "u": "необычный", "r": "редкий", "v": "очень редкий", "l": "легендарный"}
+
+
+static func load_items() -> void:
+	if not ITEMS.is_empty():
+		return
+	ITEMS = ITEMS_BASE.duplicate(true)
+	var f := FileAccess.open("res://data/items.json", FileAccess.READ)
+	var d = JSON.parse_string(f.get_as_text()) if f != null else null
+	if d is Dictionary:
+		for id in d:
+			if ITEMS.has(id):
+				continue
+			var it: Dictionary = d[id]
+			if it.has("base"):
+				var b: Dictionary = ITEMS.get(str(it.base), {}).duplicate(true)
+				for k in ["desc", "name", "price"]:
+					b.erase(k)
+				for k in it:
+					if k != "base":
+						b[k] = it[k]
+				it = b
+			for k in ["price", "ac", "attack", "damage", "save", "charges", "hits", "dc", "spell_atk", "crit", "crit_bonus", "bow_dmg", "dex_max", "skill_all"]:
+				if it.has(k):
+					it[k] = int(it[k])
+			ITEMS[id] = it
+	# свиток на каждое заклинание
+	var have := []
+	for id in ITEMS:
+		if str(ITEMS[id].type) == "scroll" and int(ITEMS[id].get("charges", 0)) == 0:
+			have.append(str(ITEMS[id].get("spell", "")))
+	for sp in SPELLS:
+		if sp in have:
+			continue
+		var lv := int(SPELLS[sp].lvl)
+		var sid := "scroll_" + str(sp)
+		if not ITEMS.has(sid):
+			ITEMS[sid] = {"name": "Свиток: " + str(SPELLS[sp].name), "type": "scroll", "spell": sp, "price": [25, 60, 150, 300, 600, 1200][clampi(lv, 0, 5)],
+				"rar": ["c", "c", "u", "u", "r", "r"][clampi(lv, 0, 5)]}
+
+
+static func load_monsters() -> void:
+	if not MONSTERS.is_empty():
+		return
+	var f := FileAccess.open("res://data/monsters.json", FileAccess.READ)
+	if f != null:
+		var d = JSON.parse_string(f.get_as_text())
+		if d is Dictionary:
+			MONSTERS = d
+	for id in MONSTERS_CUSTOM:
+		var cm: Dictionary = MONSTERS_CUSTOM[id]
+		if MONSTERS.has(id):
+			for k in CUSTOM_OVERLAY:
+				if cm.has(k):
+					MONSTERS[id][k] = cm[k]
+		else:
+			MONSTERS[id] = cm.duplicate(true)
+	for id in MONSTERS:
+		var m: Dictionary = MONSTERS[id]
+		m.ac = int(m.get("ac", 12))
+		m.hp = int(m.get("hp", 10))
+		m.atk = int(m.get("atk", 3))
+		m.xp = maxi(10, int(m.get("xp", 10)))
+		m.dex = int(m.get("dex", 0))
+		if not m.has("cr"):
+			m.cr = cr_of_xp(int(m.xp))
+
+
+const CR_XP := [[0, 10], [0.125, 25], [0.25, 50], [0.5, 100], [1, 200], [2, 450], [3, 700], [4, 1100], [5, 1800], [6, 2300], [7, 2900],
+	[8, 3900], [9, 5000], [10, 5900], [11, 7200], [12, 8400], [13, 10000], [14, 11500], [15, 13000], [16, 15000], [17, 18000],
+	[18, 20000], [19, 22000], [20, 25000], [21, 33000], [22, 41000], [23, 50000], [24, 62000], [30, 155000]]
+
+
+static func cr_of_xp(xp: int) -> float:
+	var best := 0.0
+	for r in CR_XP:
+		if xp >= int(r[1]):
+			best = float(r[0])
+	return best
+
+
+static func cr_text(cr: float) -> String:
+	if cr == 0.125:
+		return "1/8"
+	if cr == 0.25:
+		return "1/4"
+	if cr == 0.5:
+		return "1/2"
+	return str(int(cr))
+
+
+## Поиск монстра по id, английскому или русскому имени (ведущий может написать как угодно).
+static func find_monster(key: String) -> String:
+	var k := key.strip_edges().to_lower().replace(" ", "_").replace("-", "_")
+	if MONSTERS.has(k):
+		return k
+	var low := key.strip_edges().to_lower()
+	if low == "":
+		return ""
+	for id in MONSTERS:
+		var m: Dictionary = MONSTERS[id]
+		if str(m.get("en", "")).to_lower() == low or str(m.name).to_lower() == low:
+			return id
+	return ""
 
 
 static func weapon_dt(w: Dictionary) -> String:
@@ -603,17 +724,24 @@ static func item_desc(it: Dictionary) -> String:
 		"shield":
 			parts.append("+%d КД" % int(d.ac))
 		"potion":
-			parts.append("лечит %s" % dice_ru(str(d.heal)))
+			if str(d.get("heal", "")) != "":
+				parts.append("лечит %s" % dice_ru(str(d.heal)))
 			if d.has("cure"):
 				parts.append("снимает отравление")
 		"reagent":
 			parts.append("ингредиент для алхимии")
 		"coat":
-			parts.append("яд на оружие: %d попадания +%s и отравление" % [int(d.hits), dice_ru(str(d.dice))])
+			if str(d.get("dt", "яд")) == "яд":
+				parts.append("яд на оружие: %d попадания +%s и отравление" % [int(d.hits), dice_ru(str(d.dice))])
+			else:
+				parts.append("натереть оружие: %d попаданий +%s" % [int(d.hits), dice_ru(str(d.dice))])
 		"bomb":
 			parts.append("бросить во врага: %s, спасбросок %s СЛ %d — половина" % [dice_ru(str(d.dmg)), d.save, int(d.dc)])
 		"scroll":
-			parts.append("одно заклинание: " + str(SPELLS.get(str(d.spell), {}).get("name", "?")))
+			if int(d.get("charges", 0)) > 0:
+				parts.append("заряды: %d/%d · %s" % [int(d.get("ch", d.charges)), int(d.charges), str(SPELLS.get(str(d.spell), {}).get("name", "?"))])
+			else:
+				parts.append("одно заклинание: " + str(SPELLS.get(str(d.spell), {}).get("name", "?")))
 	if d.type not in ["armor", "shield"] and int(d.get("ac", 0)) > 0:
 		parts.append("+%d КД" % int(d.ac))
 	if int(d.get("attack", 0)) > 0 and d.type == "weapon":
@@ -622,6 +750,16 @@ static func item_desc(it: Dictionary) -> String:
 		parts.append("+%d к спасброскам" % int(d.save))
 	for a in d.get("abil", {}):
 		parts.append("%s +%d" % [a, int(d.abil[a])])
+	for a in d.get("abil_set", {}):
+		parts.append("%s = %d" % [a, int(d.abil_set[a])])
+	if not d.get("res", []).is_empty():
+		parts.append("сопротивление: " + ", ".join(d.res))
+	if d.type != "scroll" and int(d.get("charges", 0)) > 0 and SPELLS.has(str(d.get("spell", ""))):
+		parts.append("заряды «%s»: %d/%d" % [SPELLS[str(d.spell)].name, int(d.get("ch", d.charges)), int(d.charges)])
+	if str(d.get("rar", "")) != "":
+		parts.append(str(RARITY.get(str(d.rar), "")))
+	if d.get("cursed", false):
+		parts.append("☠ проклятый")
 	for s in d.get("skill", {}):
 		parts.append("%s +%d" % [s, int(d.skill[s])])
 	if str(d.get("desc", "")) != "":
@@ -685,50 +823,83 @@ static func item_from_ai(v) -> Dictionary:
 	return {}
 
 
-## Лут из сундука: золото и 1-3 предмета. tier 1..4 по уровню героев.
+## Лут из сундука: золото и 1-3 предмета. tier 1..4 по уровню героев. Магия — по редкости (как в DMG): чем выше уровень, тем реже обычное.
+static func by_rarity(r: String, types: Array = []) -> Array:
+	var out := []
+	for id in ITEMS:
+		var d: Dictionary = ITEMS[id]
+		if str(d.get("rar", "")) == r and (types.is_empty() or str(d.type) in types):
+			out.append(id)
+	return out
+
+
+static func mundane(types: Array) -> Array:
+	var out := []
+	for id in ITEMS:
+		var d: Dictionary = ITEMS[id]
+		if str(d.type) in types and not d.get("magic", false) and str(d.get("rar", "")) == "" and id != "misc":
+			out.append(id)
+	return out
+
+
+static func roll_magic(tier: int) -> Dictionary:
+	var table: Array = {1: [["c", 50], ["u", 45], ["r", 5]], 2: [["c", 15], ["u", 55], ["r", 28], ["v", 2]],
+		3: [["u", 30], ["r", 50], ["v", 18], ["l", 2]], 4: [["r", 40], ["v", 45], ["l", 15]]}[clampi(tier, 1, 4)]
+	var x := randi_range(1, 100)
+	var r := "u"
+	for row in table:
+		x -= int(row[1])
+		if x <= 0:
+			r = str(row[0])
+			break
+	var pool := by_rarity(r)
+	if pool.is_empty():
+		pool = by_rarity("u")
+	return {"id": pool[randi() % pool.size()]}
+
+
 static func roll_loot(tier: int) -> Dictionary:
 	tier = clampi(tier, 1, 4)
 	var gold := roll("%dd10" % (tier * 2)) * (5 if tier < 3 else 15)
 	var items := []
 	var n := randi_range(1, 2 + (1 if tier >= 2 else 0))
-	var commons := ["potion_heal", "potion_heal", "dagger", "shortsword", "leather", "studded", "chain_shirt", "shield",
-		"leather_cap", "helmet", "rope", "torch", "rations", "scroll_missile", "scroll_cure", "fine_clothes", "hunter_cloak",
-		"crossbow", "spear", "battleaxe", "warhammer", "shortbow", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask"]
-	var uncommons := ["potion_greater", "scale_mail", "breastplate", "longsword", "rapier", "longbow", "greatsword",
-		"greataxe", "chain_mail", "scroll_fire", "ring_luck"]
-	var magic := ["elven_cloak", "cloak_protection", "ring_protection", "amulet_health", "gauntlets_power",
-		"amulet_ward", "circlet_wisdom", "potion_superior", "half_plate", "splint", "plate"]
-	if tier >= 2:
-		magic += ["flame_tongue", "frost_brand", "vampire_blade", "storm_bow", "thunder_hammer", "sun_mace"]
+	var commons := ["potion_heal", "potion_heal", "rope", "torch", "rations", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask",
+		"scroll_missile", "scroll_cure", "leather_cap", "helmet", "fine_clothes", "hunter_cloak"]
+	var gear := mundane(["weapon", "armor", "shield"])
 	for i in n:
 		var r := randf()
 		var it := {}
-		if r < 0.12 * tier:
-			it = {"id": magic[randi() % magic.size()]}
-		elif r < 0.12 * tier + 0.15:
-			var weapons := ["longsword", "rapier", "shortsword", "longbow", "battleaxe", "mace", "warhammer", "greatsword"]
-			it = {"id": weapons[randi() % weapons.size()], "plus": clampi(randi_range(1, tier - 1 + 1), 1, 3)}
-		elif r < 0.5 and tier >= 2:
-			it = {"id": uncommons[randi() % uncommons.size()]}
+		if r < 0.1 + 0.1 * tier:
+			it = roll_magic(tier)
+		elif r < 0.25 + 0.1 * tier:
+			var wa := mundane(["weapon", "armor", "shield"])
+			var id: String = wa[randi() % wa.size()]
+			it = {"id": id, "plus": clampi(randi_range(1, tier), 1, 3)}
+		elif r < 0.55:
+			it = {"id": gear[randi() % gear.size()]}
 		else:
 			it = {"id": commons[randi() % commons.size()]}
 		items.append(it)
 	return {"gold": gold, "items": items}
 
 
-## Товары лавки по уровню.
+## Товары лавки по уровню: всё обычное оружие и доспехи SRD, зелья, свитки, а в больших городах — магия.
 static func shop_stock(tier: int) -> Array:
-	var ids := ["potion_heal", "potion_heal", "rope", "torch", "rations", "dagger", "shortsword", "longsword", "rapier",
-		"mace", "battleaxe", "quarterstaff", "shortbow", "longbow", "crossbow", "leather", "studded", "chain_shirt",
-		"scale_mail", "chain_mail", "shield", "helmet", "leather_cap", "fine_clothes", "hunter_cloak", "traveler_clothes",
-		"scroll_missile", "scroll_cure", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask"]
+	var ids := ["potion_heal", "potion_heal", "rope", "torch", "rations", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask",
+		"scroll_missile", "scroll_cure", "helmet", "leather_cap", "fine_clothes", "hunter_cloak", "traveler_clothes"]
+	var gear := mundane(["weapon", "armor", "shield"])
+	gear.shuffle()
+	ids += gear.slice(0, 8)
 	if tier >= 2:
-		ids += ["potion_greater", "breastplate", "greatsword", "greataxe", "splint", "half_plate", "scroll_fire", "ring_luck"]
-	if tier >= 3:
-		ids += ["plate", "elven_cloak", "cloak_protection", "ring_protection", "potion_superior"]
+		ids += ["potion_greater", "scroll_fire"]
 	var out := []
 	ids.shuffle()
 	for id in ids.slice(0, 12):
+		if ITEMS.has(id):
+			out.append({"id": id})
+	var mag := by_rarity("c") + by_rarity("u") + (by_rarity("r") if tier >= 3 else [])
+	mag.shuffle()
+	for id in mag.slice(0, mini(tier, 3)):
 		out.append({"id": id})
 	return out
 
@@ -843,9 +1014,28 @@ static func equipped_defs(h: Dictionary) -> Array:
 
 static func score(h: Dictionary, a: String) -> int:
 	var v := int(h.scores.get(a, 10))
+	var setv := int(h.get("pot_abil", {}).get(a, 0))
 	for d in equipped_defs(h):
 		v += int(d.get("abil", {}).get(a, 0))
-	return mini(v, 22)
+		setv = maxi(setv, int(d.get("abil_set", {}).get(a, 0)))
+	return maxi(mini(v, 22), setv)
+
+
+## Сопротивления героя: вещи и выпитые зелья. Урон этих типов — вдвое меньше.
+static func hero_res(h: Dictionary) -> Array:
+	var out: Array = h.get("res_tmp", []).duplicate()
+	for d in equipped_defs(h):
+		for t in d.get("res", []):
+			if not t in out:
+				out.append(t)
+	return out
+
+
+static func equip_sum(h: Dictionary, key: String) -> int:
+	var v := 0
+	for d in equipped_defs(h):
+		v += int(d.get(key, 0))
+	return v
 
 
 static func amod(h: Dictionary, a: String) -> int:
@@ -894,7 +1084,7 @@ static func skill_bonus(h: Dictionary, skill: String) -> int:
 		var d := item_def(it)
 		if d.type == "misc":
 			b += int(d.get("skill", {}).get(skill, 0))
-	return b + talent_skill(h, skill)
+	return b + talent_skill(h, skill) + equip_sum(h, "skill_all")
 
 
 static func weapon(h: Dictionary) -> Dictionary:
@@ -927,10 +1117,16 @@ static func attack_info(h: Dictionary) -> Dictionary:
 		dmg_bonus += talent_sum(h, "dmg_onehand")
 	if h.get("raging", false) and not w.get("ranged", false):
 		dmg_bonus += 2 if int(h.level) < 9 else 3
-	return {"name": str(w.name), "atk": atk, "dice": str(w.dmg), "bonus": dmg_bonus, "crit": 20 - talent_sum(h, "crit"),
+	if w.get("ranged", false):
+		dmg_bonus += equip_sum(h, "bow_dmg")
+	var crit := mini(20 - talent_sum(h, "crit"), int(w.get("crit", 20)))
+	var n_att := 2 if (int(h.level) >= 5 and (h.cls in EXTRA_ATTACK or str(h.get("sub", "")) in ["blade_pact", "valor_college"])) else 1
+	if h.get("haste", false):
+		n_att += 1
+	return {"name": str(w.name), "atk": atk, "dice": str(w.dmg), "bonus": dmg_bonus, "crit": crit, "crit_bonus": int(w.get("crit_bonus", 0)),
 		"ranged": bool(w.get("ranged", false)), "fin": a == "fin" or bool(w.get("ranged", false)), "dt": weapon_dt(w),
 		"extra": w.get("extra", {}), "drain": str(w.get("drain", "")), "stun": bool(w.get("stun", false)),
-		"attacks": 2 if (int(h.level) >= 5 and (h.cls in EXTRA_ATTACK or str(h.get("sub", "")) in ["blade_pact", "valor_college"])) else 1}
+		"attacks": n_att}
 
 
 const EXTRA_ATTACK := ["Воин", "Следопыт", "Варвар", "Паладин"]
@@ -942,11 +1138,11 @@ static func caster_mod(h: Dictionary) -> int:
 
 
 static func spell_attack(h: Dictionary) -> int:
-	return prof(int(h.level)) + caster_mod(h) + talent_sum(h, "spell_atk")
+	return prof(int(h.level)) + caster_mod(h) + talent_sum(h, "spell_atk") + equip_sum(h, "spell_atk")
 
 
 static func spell_dc(h: Dictionary) -> int:
-	return 8 + prof(int(h.level)) + caster_mod(h) + talent_sum(h, "spell_atk")
+	return 8 + prof(int(h.level)) + caster_mod(h) + talent_sum(h, "spell_atk") + equip_sum(h, "spell_atk")
 
 
 ## Заклинания, доступные герою сейчас (по уровню ячеек).
@@ -991,6 +1187,13 @@ static func long_rest(h: Dictionary) -> void:
 	h.dead = false
 	h.temp_ac = 0
 	h.conds = {}
+	clear_potions(h)
+
+
+## Действие зелий (сопротивления, сила великана, ускорение) заканчивается после боя или отдыха.
+static func clear_potions(h: Dictionary) -> void:
+	for k in ["res_tmp", "pot_abil", "haste", "growth"]:
+		h.erase(k)
 
 
 ## Короткий отдых как в BG3: половина максимума хитов и второе дыхание. Возвращает вылеченное.
@@ -1037,17 +1240,42 @@ static func intify(v):
 
 
 ## Каталог для подсказки нейронке.
-static func catalog_text() -> String:
+static func catalog_text(tier := 2) -> String:
 	var parts := []
+	var magic := []
+	var rars: Array = ["c", "u", "r", "v", "l"].slice(0, clampi(tier + 1, 2, 5))
 	for id in ITEMS:
-		if id != "misc":
-			parts.append("%s=%s" % [id, ITEMS[id].name])
-	return ", ".join(parts)
+		if id == "misc" or str(id).begins_with("scroll_") and int(ITEMS[id].get("charges", 0)) == 0 and not id in ["scroll_fire", "scroll_missile", "scroll_cure"]:
+			continue
+		var d: Dictionary = ITEMS[id]
+		if str(d.get("rar", "")) == "":
+			parts.append("%s=%s" % [id, d.name])
+		elif str(d.rar) in rars:
+			magic.append("%s=%s" % [id, d.name])
+	magic.shuffle()
+	return ", ".join(parts) + ". Магические (официальные D&D, выдавай редко, по сюжету): " + ", ".join(magic.slice(0, 45))
 
 
-static func monsters_text() -> String:
+static func monsters_text(lv := 0, limit := 170) -> String:
+	var lo := 0.0
+	var hi := 30.0
+	if lv > 0:
+		hi = [0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 20.0][clampi(lv, 1, 20) - 1]
+		lo = 0.125 if lv <= 2 else (0.25 if lv <= 4 else float(lv) / 4.0)
 	var parts := []
-	for id in MONSTERS:
+	var ids := MONSTERS.keys()
+	ids.sort_custom(func(a, b): return float(MONSTERS[a].cr) < float(MONSTERS[b].cr))
+	for id in ids:
 		var m: Dictionary = MONSTERS[id]
-		parts.append("%s=%s (%d оп.)" % [id, m.name, m.xp])
+		var cr := float(m.cr)
+		if cr < lo or cr > hi:
+			continue
+		var tags := []
+		for t in [["aoe", "дыхание/волна"], ["caster", "заклинатель"], ["leg", "легендарный"], ["fear", "ужас"], ["regen", "регенерация"],
+				["pack", "стая"], ["healer", "лекарь"], ["fly", "летает"], ["undead", "нежить"]]:
+			if m.has(t[0]) and not (m[t[0]] is bool and not m[t[0]]):
+				tags.append(t[1])
+		parts.append("%s=%s (%s, ПО %s%s)" % [id, m.name, str(m.get("type", "")), cr_text(cr), "" if tags.is_empty() else ", " + ", ".join(tags)])
+		if parts.size() >= limit:
+			break
 	return ", ".join(parts)

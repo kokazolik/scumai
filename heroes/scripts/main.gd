@@ -1306,7 +1306,7 @@ func _update_combat_box() -> void:
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var top := HBoxContainer.new()
 		top.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		top.add_child(UISkin.make_enemy_portrait(Icons.for_monster(str(en.get("base_name", en.name))), 48, bool(en.get("boss", false))))
+		top.add_child(UISkin.make_enemy_portrait(Icons.for_monster(str(en.get("base_name", en.name)), str(en.get("mid", "")), str(en.get("type", ""))), 48, bool(en.get("boss", false))))
 		var nm := _label("%s%s" % [en.name, " 💤" if en.asleep else ""], 18, C_INK)
 		nm.autowrap_mode = TextServer.AUTOWRAP_OFF
 		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -2566,7 +2566,7 @@ func _build_journal(v: VBoxContainer) -> void:
 		for cp in cps:
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 10)
-			row.add_child(_icon_rect(Icons.for_monster(str(R.MONSTERS.get(str(cp.mon), {}).get("name", cp.name))), 40, C_ACCENT))
+			row.add_child(_icon_rect(Icons.for_monster(str(R.MONSTERS.get(str(cp.mon), {}).get("name", cp.name)), str(cp.mon), str(R.MONSTERS.get(str(cp.mon), {}).get("type", ""))), 40, C_ACCENT))
 			var cl := _label("%s — %s · КД %d · %d/%d хитов%s" % [cp.name, cp.kind, int(cp.ac), int(cp.hp), int(cp.max_hp), " · без сил до отдыха" if int(cp.hp) <= 0 else ""], 20, C_INK)
 			cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			row.add_child(cl)

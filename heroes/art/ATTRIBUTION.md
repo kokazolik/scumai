@@ -164,3 +164,13 @@ Source: [github.com/google/fonts](https://github.com/google/fonts) (`ofl/alegrey
 | act_end.png | [sands-of-time](https://game-icons.net/1x1/lorc/sands-of-time.html) | Lorc |
 | act_bonus.png | [lightning-frequency](https://game-icons.net/1x1/lorc/lightning-frequency.html) | Lorc |
 | ui_map_pin.png | [position-marker](https://game-icons.net/1x1/delapouite/position-marker.html) | Delapouite |
+
+## Бестиарий и предметы D&D (data/monsters.json, data/items.json)
+
+This work includes material taken from the System Reference Document 5.1 (“SRD 5.1”) by Wizards of the Coast LLC
+and available at https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed under the
+Creative Commons Attribution 4.0 International License available at https://creativecommons.org/licenses/by/4.0/legalcode.
+
+Статблоки 325 монстров, всё оружие, доспехи и магические предметы взяты из SRD 5.1 (через открытые пакеты npm
+`dnd5-srd` и `@opencharacter/5e-srd-5.1`), переведены на русский и упрощены под правила игры
+(скрипты: tools/srd/convert_monsters.py, tools/srd/convert_items.py).

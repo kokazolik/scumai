@@ -7,6 +7,12 @@ const R = preload("res://scripts/rules.gd")
 var G
 var N
 var fights := [
+	{"name": "SRD: молодой красный дракон", "party": [["Паладин", 9, "devotion"], ["Маг", 9, "evocation"]], "foes": [{"id": "young_red_dragon", "count": 1, "boss": true, "name": "Пеплокрыл"}], "env": ["water", "high"], "gear": [[0, "frost_brand"]]},
+	{"name": "SRD: культ и маг", "party": [["Воин", 6, "battle_master"], ["Жрец", 6, "life_domain"]], "foes": [{"id": "cult_fanatic", "count": 1}, {"id": "acolyte", "count": 1, "role": "лекарь"}, {"id": "cultist", "count": 2, "role": "защитник"}], "env": ["brazier"]},
+	{"name": "SRD: стая и вожак", "party": [["Следопыт", 3, "hunter_sub"], ["Бард", 3]], "foes": [{"id": "gnoll", "count": 1, "role": "вожак", "elite": true, "name": "Клык-Вожак"}, {"id": "jackal", "count": 3}, {"id": "bandit", "count": 1, "role": "вор"}], "env": ["high"]},
+	{"name": "SRD: оборотень и мефиты", "party": [["Воин", 4], ["Плут", 4]], "foes": [{"id": "werewolf", "count": 1, "traits": ["fear"]}, {"id": "magma_mephit", "count": 2}], "env": ["water"]},
+	{"name": "SRD: чёрный дракон против новичков", "party": [["Воин", 3], ["Жрец", 3]], "foes": [{"id": "adult_black_dragon", "count": 1, "boss": true}], "env": ["rocks"]},
+	{"name": "SRD: маг-отступник", "party": [["Плут", 7, "assassin_sub"], ["Колдун", 7, "fiend"]], "foes": [{"id": "mage", "count": 1, "boss": true}, {"id": "thug", "count": 2}], "env": ["chandelier"]},
 	{"name": "Ярость у костра", "party": [["Варвар", 3, "berserker"], ["Колдун", 3, "fiend"]], "foes": [{"id": "orc", "count": 2}, {"id": "goblin", "count": 2}], "env": ["brazier"], "gear": [[0, "flame_tongue"]]},
 	{"name": "Паладин и нежить", "party": [["Паладин", 4, "devotion"], ["Колдун", 4, "blade_pact"]], "foes": [{"id": "ghoul", "count": 2}, {"id": "skeleton", "count": 2}], "env": ["brazier", "rocks"]},
 	{"name": "Мастер боя и чародейка", "party": [["Воин", 5, "battle_master"], ["Маг", 7, "evocation"]], "foes": [{"id": "troll", "count": 1}, {"id": "orc", "count": 2}], "env": ["oil", "cliff"]},
@@ -61,7 +67,7 @@ func _next_fight() -> void:
 	if fi >= 0:
 		_dump()
 	fi += 1
-	if fi >= fights.size():
+	if fi >= fights.size() or (OS.get_environment("SIM_FIRST") != "" and fi >= int(OS.get_environment("SIM_FIRST"))):
 		_summary()
 		quit()
 		return

@@ -13,6 +13,7 @@ const CLASS_ICONS := {
 	"Варвар": "cls_barbarian", "Паладин": "cls_paladin", "Колдун": "cls_warlock",
 }
 
+const _RULES = preload("res://scripts/rules.gd")
 const RACE_ICONS := {
 	"Человек": "race_human", "Эльф": "race_elf", "Дварф": "race_dwarf", "Полурослик": "race_halfling",
 	"Полуорк": "race_halforc", "Тифлинг": "race_tiefling", "Гном": "race_gnome",
@@ -125,8 +126,19 @@ static func monster_key(id_or_name: String) -> String:
 	return "monster_generic"
 
 
-static func for_monster(id_or_name: String) -> Texture2D:
-	return tex(monster_key(id_or_name))
+const TYPE_MON := {"зверь": "wolf", "нежить": "skeleton", "дракон": "young_dragon", "великан": "ogre", "исчадие": "shadow",
+	"гуманоид": "bandit", "чудовище": "minotaur", "слизь": "zombie", "растение": "zombie", "конструкт": "ogre", "элементаль": "shadow",
+	"фея": "harpy", "небожитель": "wight", "аберрация": "giant_spider", "рой": "giant_rat"}
+
+
+## Портрет врага: по id, по имени, а для остальных официальных монстров — по типу существа.
+static func for_monster(id_or_name: String, mid := "", type := "") -> Texture2D:
+	var k := monster_key(mid) if mid != "" else "monster_generic"
+	if k == "monster_generic":
+		k = monster_key(id_or_name)
+	if k == "monster_generic" and TYPE_MON.has(type):
+		k = "mon_" + str(TYPE_MON[type])
+	return tex(k)
 
 
 ## Ключ иконки для предмета вида {"id": "longsword", "name": ..., "type": ...}.
@@ -140,6 +152,8 @@ static func item_key(item: Dictionary) -> String:
 			if low.contains(pair[0]):
 				return pair[1]
 	var t := str(item.get("type", ""))
+	if t == "" and _RULES.ITEMS.has(id):
+		t = str(_RULES.ITEMS[id].get("type", ""))
 	if TYPE_ICONS.has(t):
 		return TYPE_ICONS[t]
 	return "it_misc"

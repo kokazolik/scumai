@@ -550,7 +550,7 @@ func _mock_reply(messages: Array) -> String:
 	if sys.contains("закончился бой"):
 		d.story = "Враги повержены."
 	elif turn == 0:
-		d.combat = [{"id": "goblin", "count": 2}]
+		d.combat = [{"id": "goblin", "count": 2, "name": "Гоблин-разбойник", "role": "боец", "traits": ["pack"]}]
 		d.env = ["barrel", "cliff", "high"]
 		d.story = "Из кустов выскакивают гоблины!"
 	elif turn == 1:
