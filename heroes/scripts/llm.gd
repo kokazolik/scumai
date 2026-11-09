@@ -249,33 +249,35 @@ func gc_diagnose() -> String:
 	for hp in [["ngw.devices.sberbank.ru", 9443], ["gigachat.devices.sberbank.ru", 443], ["api.giga.chat", 443]]:
 		var line: String = "%s:%d —" % hp
 		for mname in modes:
-			line += " %s %s" % [mname, "✔" if await _tls_probe(hp[0], hp[1], modes[mname]) else "✘"]
+			line += " %s %s" % [mname, await _tls_probe(hp[0], hp[1], modes[mname])]
 		lines.append(line)
 	return "\n".join(lines)
 
 
-func _tls_probe(host: String, port: int, opts: TLSOptions) -> bool:
+func _tls_probe(host: String, port: int, opts: TLSOptions) -> String:
 	if opts == null:
-		return false
+		return "—"
 	var tcp := StreamPeerTCP.new()
-	var ip := IP.resolve_hostname(host, IP.TYPE_IPV4)
-	if ip == "" or tcp.connect_to_host(ip, port) != OK:
-		return false
+	var ip := IP.resolve_hostname(host, IP.TYPE_ANY)
+	if ip == "":
+		return "нет DNS"
+	if tcp.connect_to_host(ip, port) != OK:
+		return "нет TCP"
 	var t0 := Time.get_ticks_msec()
 	while tcp.get_status() == StreamPeerTCP.STATUS_CONNECTING and Time.get_ticks_msec() - t0 < 8000:
 		tcp.poll()
 		await get_tree().process_frame
 	if tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED:
-		return false
+		return "нет TCP"
 	var tls := StreamPeerTLS.new()
 	if tls.connect_to_stream(tcp, host, opts) != OK:
-		return false
+		return "✘"
 	while tls.get_status() == StreamPeerTLS.STATUS_HANDSHAKING and Time.get_ticks_msec() - t0 < 12000:
 		tls.poll()
 		await get_tree().process_frame
 	var ok := tls.get_status() == StreamPeerTLS.STATUS_CONNECTED
 	tls.disconnect_from_stream()
-	return ok
+	return "✔" if ok else "✘"
 
 
 func _gc_auth() -> String:
