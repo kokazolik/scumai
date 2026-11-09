@@ -289,7 +289,18 @@ func _play_fx_event(e: Dictionary) -> void:
 	if dice.visible:
 		await dice.finished
 	fx.spell_burst(Icons.tex(str(e.icon)), Color(str(e.col)), str(e.title), str(e.sub), bool(e.get("status", false)))
-	_sfx("heal" if str(e.icon) in ["sp_cure_wounds", "sp_healing_word", "sp_mass_healing_word"] else "enemy_hit", -6.0)
+	var ic := str(e.icon)
+	var tt := str(e.title)
+	var snd := "enemy_hit"
+	if ic in ["sp_cure_wounds", "sp_healing_word", "sp_mass_healing_word", "act_revive"]:
+		snd = "heal"
+	elif ic in ["surf_fire", "env_barrel", "env_brazier", "sp_fire_bolt", "sp_fireball", "sp_burning_hands", "sp_scorching_ray", "act_dip", "it_bomb"] or tt.contains("Огонь"):
+		snd = "fire_whoosh"
+	elif tt.contains("Лёд") or ic == "sp_ray_of_frost":
+		snd = "ice_crack"
+	elif ic == "sp_shocking_grasp" or tt.contains("током"):
+		snd = "zap"
+	_sfx(snd, -6.0 if snd in ["enemy_hit", "heal"] else -2.0)
 
 
 func _loot_fx(title: String, gold: int, icons: Array) -> void:
@@ -1225,6 +1236,9 @@ func _update_combat_box() -> void:
 		var cc: Dictionary = Game.state.heroes[n].get("conc", {})
 		if not cc.is_empty() and R.SPELLS.has(str(cc.sp)):
 			notes.append("🔮 %s держит «%s»" % [Game.state.heroes[n].name, R.SPELLS[str(cc.sp)].name])
+	var hsf: Dictionary = c.get("hsurf", {})
+	if not hsf.is_empty() and R.SURFACES.has(str(hsf.t)):
+		notes.append("[color=#ff8a6a]⚠ Под ногами героев впереди: %s[/color] (%d р.) — отойди в тыл" % [R.SURFACES[str(hsf.t)].name, int(hsf.r)])
 	if Game.insp_pool() > 0:
 		notes.append("✨ Вдохновение группы: %d" % Game.insp_pool())
 	if notes.size() > 0:
@@ -1242,9 +1256,35 @@ func _update_combat_box() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	strip.add_child(row)
-	for i in alive:
+	# кто только что пал — ещё секунду показываем с анимацией
+	var now := Time.get_ticks_msec()
+	var sig := ""
+	for e in c.enemies:
+		sig += str(e.get("base_name", e.name))
+	if sig != _death_sig:
+		_death_sig = sig
+		_alive_prev = {}
+		_died_at = {}
+	for i in c.enemies.size():
+		if c.enemies[i].dead and _alive_prev.get(i, false):
+			_died_at[i] = now
+			_sfx("flee" if c.enemies[i].get("fled", false) else "enemy_die", -3.0)
+		_alive_prev[i] = not c.enemies[i].dead
+	var shown := alive.duplicate()
+	var dying := false
+	for i in _died_at:
+		if now - int(_died_at[i]) < DEATH_MS and not (i in shown):
+			shown.append(i)
+			dying = true
+	shown.sort()
+	if dying:
+		get_tree().create_timer(DEATH_MS / 1000.0 + 0.05).timeout.connect(func():
+			refs.combat_key = ""
+			_update_combat_box())
+	var sfc: Dictionary = c.get("surf", {})
+	for i in shown:
 		var en: Dictionary = c.enemies[i]
-		var sel: bool = i == _target and my_turn
+		var sel: bool = i == _target and my_turn and not en.dead
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
 		b.custom_minimum_size = Vector2(210, 132)
@@ -1297,10 +1337,16 @@ func _update_combat_box() -> void:
 		pb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(pb)
 		b.add_child(v)
-		b.pressed.connect(func():
-			_target = i
-			refs.combat_key = ""
-			_update_combat_box())
+		if not sfc.is_empty() and str(en.get("pos", "front")) == "front" and not en.dead and R.SURFACES.has(str(sfc.t)):
+			_surface_glow(b, Color(str(R.SURFACES[str(sfc.t)].col)))
+		if en.dead:
+			b.disabled = true
+			_death_anim(b, now - int(_died_at.get(i, now)), en.get("fled", false))
+		else:
+			b.pressed.connect(func():
+				_target = i
+				refs.combat_key = ""
+				_update_combat_box())
 		row.add_child(b)
 	card.add_child(strip)
 	var cdesc := []
@@ -1315,6 +1361,63 @@ func _update_combat_box() -> void:
 	if cdesc.size() > 0:
 		card.add_child(_label("\n".join(cdesc), 16, Color("ffcf9a")))
 	box.add_child(card.get_parent())
+
+
+const DEATH_MS := 1400
+var _death_sig := ""
+var _alive_prev := {}
+var _died_at := {}
+
+
+## Враг пал: вспышка, тряска, череп, карточка оседает и тает. elapsed — сколько уже прошло (карточку могли пересобрать).
+func _death_anim(b: Button, elapsed: int, fled: bool) -> void:
+	var k := clampf(elapsed / float(DEATH_MS), 0.0, 1.0)
+	b.pivot_offset = Vector2(105, 66)
+	var skull := _label("🏃 Бежал" if fled else "☠ Пал", 30, Color("ffe0d0"))
+	skull.set_anchors_preset(Control.PRESET_FULL_RECT)
+	skull.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	skull.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	skull.add_theme_color_override("font_outline_color", Color(0.3, 0, 0))
+	skull.add_theme_constant_override("outline_size", 8)
+	skull.pivot_offset = Vector2(105, 66)
+	skull.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(skull)
+	var left := (1.0 - k) * DEATH_MS / 1000.0
+	if k < 0.15:
+		b.modulate = Color(2.2, 0.6, 0.5)
+		skull.scale = Vector2(0.3, 0.3)
+	else:
+		b.modulate = Color(1, 0.55, 0.5, 1.0 - k)
+		skull.scale = Vector2.ONE
+	var tw := b.create_tween().set_parallel(true)
+	tw.tween_property(b, "modulate", Color(1, 0.45, 0.4, 0.0), left).set_ease(Tween.EASE_IN)
+	tw.tween_property(b, "scale", Vector2(0.75, 0.75), left).set_ease(Tween.EASE_IN)
+	tw.tween_property(b, "rotation", -0.18 if fled else 0.12, left)
+	tw.tween_property(skull, "scale", Vector2(1.25, 1.25), minf(left, 0.35)).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if k < 0.2:
+		var sh := b.create_tween()
+		for n in 4:
+			sh.tween_property(b, "position:x", b.position.x + (6 if n % 2 == 0 else -6), 0.04)
+		sh.tween_property(b, "position:x", b.position.x, 0.04)
+
+
+## Поверхность под врагом: мерцающая полоса цвета огня, воды, масла.
+func _surface_glow(b: Button, col: Color) -> void:
+	var r := ColorRect.new()
+	r.color = Color(col, 0.5)
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.anchor_left = 0.0
+	r.anchor_right = 1.0
+	r.anchor_top = 1.0
+	r.anchor_bottom = 1.0
+	r.offset_top = -14
+	r.offset_left = 8
+	r.offset_right = -8
+	r.offset_bottom = -4
+	b.add_child(r)
+	var tw := r.create_tween().set_loops()
+	tw.tween_property(r, "color:a", 0.15, 0.45 + randf() * 0.2)
+	tw.tween_property(r, "color:a", 0.7, 0.45 + randf() * 0.2)
 
 
 ## Хиты и состояния напарников под своей полоской здоровья.
@@ -1783,7 +1886,10 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	var front := Game.hero_pos(me) == "front"
 	var mrow := HBoxContainer.new()
 	mrow.add_theme_constant_override("separation", 8)
-	var hint := _label(("Ты впереди: уйдёшь в тыл без «Отступить» — ударят вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит.") + ("  Ты в тени: враги тебя не видят." if c.get("hidden", {}).get(me, false) else "") + ("  Ты на возвышенности: +2 к стрельбе." if c.get("high", {}).get(me, false) else ""), 16, C_MUTED)
+	var hs_warn := ""
+	if front and not c.get("hsurf", {}).is_empty():
+		hs_warn = "⚠ Под тобой %s! " % str(R.SURFACES[str(c.hsurf.t)].name).to_lower()
+	var hint := _label(hs_warn + ("Ты впереди: уйдёшь в тыл без «Отступить» — ударят вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит.") + ("  Ты в тени: враги тебя не видят." if c.get("hidden", {}).get(me, false) else "") + ("  Ты на возвышенности: +2 к стрельбе." if c.get("high", {}).get(me, false) else ""), 16, C_MUTED)
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mrow.add_child(hint)
 	var mv := _tiny_button("⇄ В тыл" if front else "⇄ Вперёд", C_BLUE, func(): Game.combat_action({"t": "move"}))
@@ -1791,6 +1897,18 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	mv.disabled = moved
 	mrow.add_child(mv)
 	b.add_child(mrow)
+	if Game.has_shield(h) or Game.has_riposte(h) or front:
+		var rx := []
+		if Game.has_shield(h):
+			rx.append("«Щит» (+5 КД, когда по тебе попадают)")
+		if Game.has_riposte(h):
+			rx.append("ответный выпад при промахе врага")
+		rx.append("удар по убегающему")
+		var rb := _tiny_button(("⚡ Реакции: авто — " if not h.get("react_off", false) else "⚡ Реакции: выкл — ") + ", ".join(rx), C_CARD2, func(): Game.combat_action({"t": "react_toggle"}))
+		rb.add_theme_font_size_override("font_size", 15)
+		rb.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		rb.custom_minimum_size = Vector2(0, 42)
+		b.add_child(rb)
 	if not h.get("conds", {}).is_empty():
 		var cf := HFlowContainer.new()
 		cf.add_theme_constant_override("h_separation", 8)

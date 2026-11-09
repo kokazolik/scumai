@@ -25,7 +25,7 @@ const MONSTER_IDS := ["kobold", "giant_rat", "bandit", "cultist", "goblin", "wol
 ## (Лютоволк до Волк, Хобгоблин до Гоблин, Главарь до Бандит, Гигантский паук до паук).
 const MONSTER_NAMES := [
 	["лютоволк", "dire_wolf"], ["волк", "wolf"],
-	["хобгоблин", "hobgoblin"], ["гоблин", "goblin"],
+	["хобгоблин", "hobgoblin"], ["шаман", "goblin"], ["гоблин", "goblin"],
 	["главарь", "bandit_captain"], ["бандит", "bandit"], ["разбойник", "bandit"],
 	["гигантский паук", "giant_spider"], ["паук", "giant_spider_small"],
 	["крыса", "giant_rat"], ["кобольд", "kobold"], ["сектант", "cultist"], ["культист", "cultist"],

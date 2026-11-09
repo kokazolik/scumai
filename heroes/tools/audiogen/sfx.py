@@ -180,16 +180,63 @@ def flee():
     return y
 
 
+def enemy_die():
+    d = 1.1; y = np.zeros(int(d * SR))
+    t = T(0.7)
+    f = 220 * np.exp(-t * 2.2)
+    ph = 2 * np.pi * np.cumsum(f) / SR
+    place(y, 0.0, lp(np.sin(ph) * np.exp(-t / 0.35) + 0.4 * noise(len(t)) * np.exp(-t / 0.2), 900), 0.6)   # стон
+    place(y, 0.35, frame_drum(1.0, 110, 50, 0.25), 0.9)                                                    # падение тела
+    tn = T(0.3)
+    place(y, 0.37, lp(noise(len(tn)), 600) * np.exp(-tn / 0.08), 0.5)
+    return y
+
+
+def fire_whoosh():
+    d = 1.0; y = np.zeros(int(d * SR))
+    place(y, 0, whoosh(0.9, 300, 2500, 0.25, 1.5), 1.0)
+    t = T(1.0)
+    crack = np.zeros(len(t))
+    rng = np.random.default_rng(3)
+    for k in rng.integers(0, len(t) - 400, 40):
+        crack[k:k + 200] += hp(noise(200), 3000) * np.exp(-np.arange(200) / 30)
+    place(y, 0, crack * np.exp(-t / 0.5), 0.5)
+    return y
+
+
+def ice_crack():
+    d = 0.8; y = np.zeros(int(d * SR))
+    for k, tt in enumerate([0, 0.06, 0.15, 0.22]):
+        place(y, tt, metal(2400 + 300 * k, 0.4, dec=0.08), 0.5)
+        tn = T(0.04)
+        place(y, tt, hp(noise(len(tn)), 4000) * np.exp(-tn / 0.006), 0.8)
+    return y
+
+
+def zap():
+    d = 0.7; y = np.zeros(int(d * SR))
+    t = T(0.6)
+    buzz = np.sign(np.sin(2 * np.pi * 120 * t)) * (0.5 + 0.5 * noise(len(t)))
+    place(y, 0, bp(buzz, 300, 5000) * np.exp(-t / 0.25), 0.8)
+    for tt in [0, 0.08, 0.2]:
+        tn = T(0.03)
+        place(y, tt, hp(noise(len(tn)), 2500) * np.exp(-tn / 0.005), 0.9)
+    return y
+
+
 SFX = dict(sword_hit=sword_hit, miss_whoosh=miss_whoosh, crit=crit, enemy_hit=enemy_hit, spell_cast=spell_cast,
            heal=heal, coin=coin, chest_open=chest_open, level_up=level_up, page=page, death_knell=death_knell,
-           flee=flee)
+           flee=flee, enemy_die=enemy_die, fire_whoosh=fire_whoosh, ice_crack=ice_crack, zap=zap)
 
 LEVEL = dict(page=-14, coin=-6, miss_whoosh=-6, spell_cast=-5, heal=-3)
 
 if __name__ == "__main__":
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
+    only = sys.argv[2:]
     for name, fn in SFX.items():
+        if only and name not in only:
+            continue
         x = fn()
         x = hp(x, 40)
         x -= x.mean()

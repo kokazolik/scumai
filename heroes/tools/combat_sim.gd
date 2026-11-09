@@ -7,8 +7,8 @@ const R = preload("res://scripts/rules.gd")
 var G
 var N
 var fights := [
-	{"name": "Гоблины у бочек", "party": [["Воин", 1], ["Маг", 1]], "foes": [{"id": "goblin", "count": 4}], "env": ["oil", "brazier"]},
-	{"name": "Бандиты на обрыве", "party": [["Плут", 2], ["Жрец", 2]], "foes": [{"id": "bandit", "count": 4}], "env": ["cliff", "high"]},
+	{"name": "Гоблины у бочек", "party": [["Воин", 3], ["Маг", 3]], "foes": [{"id": "goblin", "count": 3}, {"id": "goblin_shaman", "count": 1}], "env": ["oil", "brazier"]},
+	{"name": "Бандиты на обрыве", "party": [["Плут", 3], ["Жрец", 3]], "foes": [{"id": "bandit", "count": 2}, {"id": "cultist", "count": 2}, {"id": "kobold", "count": 2}], "env": ["cliff", "high"]},
 	{"name": "Волки в лесу", "party": [["Следопыт", 2], ["Бард", 2]], "foes": [{"id": "wolf", "count": 3}], "env": ["web", "rocks"]},
 	{"name": "Орки у пруда", "party": [["Воин", 3], ["Маг", 3]], "foes": [{"id": "orc", "count": 3}], "env": ["water", "barrel"]},
 	{"name": "Склеп скелетов", "party": [["Жрец", 3], ["Плут", 3]], "foes": [{"id": "skeleton", "count": 4}], "env": ["brazier", "chandelier"]},

@@ -20,7 +20,7 @@ const SECTION := "audio"
 const MOODS := ["town", "wild", "dungeon", "combat", "sea", "mystery", "menu"]
 const DEFAULT_MOOD := "wild"
 const SFX_NAMES := ["sword_hit", "miss_whoosh", "crit", "enemy_hit", "spell_cast", "heal", "coin", "chest_open",
-	"level_up", "page", "death_knell", "flee"]
+	"level_up", "page", "death_knell", "flee", "enemy_die", "fire_whoosh", "ice_crack", "zap"]
 
 const CROSSFADE := 1.5
 const POOL_SIZE := 6
