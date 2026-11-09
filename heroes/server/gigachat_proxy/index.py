@@ -21,7 +21,7 @@ import uuid
 
 OAUTH_URL = os.environ.get("GC_OAUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth")
 CHAT_URLS = [os.environ["GC_CHAT_URL"]] if os.environ.get("GC_CHAT_URL") else [
-    "https://gigachat.devices.sberbank.ru/api/v1/chat/completions", "https://api.giga.chat/v1/chat/completions"]
+    "https://api.giga.chat/v1/chat/completions", "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"]
 _good_url = [0]  # какой адрес чата ответил в прошлый раз
 ALLOWED_MODELS = {"GigaChat-2-Max", "GigaChat-2-Pro", "GigaChat-2", "GigaChat-Max", "GigaChat-Pro", "GigaChat"}
 
@@ -99,7 +99,7 @@ def handler(event, context):
         return _resp(500, {"message": "%s: %s" % (type(e).__name__, e)})
 
 
-def _chat(tok, body, timeout=26):
+def _chat(tok, body, timeout=50):
     """Запрос к чату: сначала адрес, что сработал в прошлый раз, при сбое сети — второй."""
     data = json.dumps(body, ensure_ascii=False).encode()
     hdr = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer " + tok}
