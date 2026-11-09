@@ -41,6 +41,9 @@ var _helps := {}     # кто кому помогает в этом ходу (т
 var _optchk := {}    # выбранная реплика с готовой проверкой
 
 
+var _secret := {}
+
+
 func _ready() -> void:
 	var cf := ConfigFile.new()
 	if cf.load("user://settings.cfg") == OK:
@@ -95,7 +98,19 @@ func _fresh_state() -> Dictionary:
 	return {"phase": "lobby", "campaign": {}, "heroes": {}, "log": [], "options": {},
 		"pending": [], "error": "", "saves": save_infos(), "turn": 0,
 		"map": {"nodes": [], "edges": [], "cur": -1}, "combat": {}, "loot": {}, "shop": {},
-		"rolls": [], "roll_seq": 0, "ask": []}
+		"rolls": [], "roll_seq": 0, "ask": [], "sess": new_sess()}
+
+
+## Итоги вечера: копятся с момента запуска кампании, не сохраняются.
+static func new_sess() -> Dictionary:
+	return {"t0": int(Time.get_unix_time_from_system()), "turn0": -1, "kills": 0, "crits": 0, "fails": 0, "won": 0, "gold": 0, "xp": 0,
+		"dmg": {}, "best": {}, "lvls": [], "places": [], "deaths": 0}
+
+
+func _sess() -> Dictionary:
+	if not state.has("sess"):
+		state.sess = new_sess()
+	return state.sess
 
 
 func hero_of(pname: String) -> Dictionary:
@@ -270,8 +285,8 @@ func submit_hero(hero_name: String, race: String, cls: String, about: String) ->
 	_hero.rpc_id(1, hero_name.strip_edges().left(20), race, cls, about.strip_edges().left(120))
 
 
-func submit_action(text: String, help := "", opt := -1) -> void:
-	_action.rpc_id(1, text.strip_edges().left(300), help, opt)
+func submit_action(text: String, help := "", opt := -1, secret := false) -> void:
+	_action.rpc_id(1, text.strip_edges().left(300), help, opt, secret)
 
 
 func send_chat(text: String) -> void:
@@ -326,7 +341,7 @@ func _hero(hero_name: String, race: String, cls: String, about: String) -> void:
 
 
 @rpc("any_peer", "call_local", "reliable")
-func _action(text: String, help := "", opt := -1) -> void:
+func _action(text: String, help := "", opt := -1, secret := false) -> void:
 	if not Net.is_host() or phase != "play" or not state.get("vote", {}).is_empty():
 		return
 	var pname := _sender_name()
@@ -337,6 +352,10 @@ func _action(text: String, help := "", opt := -1) -> void:
 		if m:
 			text = m.get_string(1)
 	_actions[pname] = text if text != "" else "ждёт и наблюдает"
+	if secret and text != "" and help == "":
+		_secret[pname] = true
+	else:
+		_secret.erase(pname)
 	_helps.erase(pname)
 	_optchk.erase(pname)
 	if help != "" and help != pname and state.heroes.has(help):
@@ -552,6 +571,8 @@ func _do_rest(kind: String, may_ambush: bool) -> void:
 				_log("sys", "", "Еды не хватило (нужно пайков: %d, нашлось %d): ночь впроголодь — вернулась только половина хитов и ячеек. Купите пайки у торговца." % [need, eaten])
 		for cp in state.get("companions", []):
 			cp.hp = cp.max_hp
+		if state.combat.is_empty():
+			call_deferred("_camp_night")
 	else:
 		var left := int(state.campaign.get("short_left", SHORT_RESTS))
 		if left <= 0:
@@ -572,6 +593,16 @@ func _sender_name() -> String:
 	if id == 0:
 		id = 1
 	return str(Net.players.get(id, "?"))
+
+
+## Видна ли запись журнала игроку: тайные — только своему, «!имя» — всем, кроме него.
+static func log_visible(e: Dictionary, pname: String) -> bool:
+	var to := str(e.get("to", ""))
+	if to == "":
+		return true
+	if to.begins_with("!"):
+		return to.substr(1) != pname
+	return to == pname
 
 
 func _all_have_heroes() -> bool:
@@ -868,7 +899,7 @@ static func save_infos() -> Array:
 	return out
 
 
-func _log(kind: String, who: String, text: String) -> void:
+func _log(kind: String, who: String, text: String, to := "") -> void:
 	# сквозной номер записи: журнал обрезается до 200 строк, а телефоны по номеру понимают, что появилось новое
 	if not state.has("log_n"):
 		var mx: int = state.log.size()
@@ -876,8 +907,11 @@ func _log(kind: String, who: String, text: String) -> void:
 			mx = maxi(mx, int(e.get("i", 0)))
 		state.log_n = mx
 	state.log_n = int(state.log_n) + 1
-	state.log.append({"k": kind, "w": who, "t": text, "i": int(state.log_n)})
-	if kind in ["gm", "act", "quest", "lvl", "loot"]:
+	var e := {"k": kind, "w": who, "t": text, "i": int(state.log_n)}
+	if to != "":
+		e.to = to
+	state.log.append(e)
+	if kind in ["gm", "act", "quest", "lvl", "loot"] and to == "":
 		_story_all.append({"k": kind, "w": who, "t": text, "turn": int(state.get("turn", 0))})
 	if state.log.size() > 200:
 		state.log = state.log.slice(-200)
@@ -959,13 +993,20 @@ func _resolve() -> void:
 	var acts := {}
 	var helps := _helps.duplicate()
 	var optchk := _optchk.duplicate()
+	var secret := _secret.duplicate()
 	_helps = {}
 	_optchk = {}
+	_secret = {}
 	for n in _active_names():
 		acts[n] = str(_actions.get(n, "ждёт и наблюдает"))
 		if helps.has(n):
 			acts[n] = "(помогает %s) %s" % [state.heroes[helps[n]].name, acts[n]]
-		_log("act", str(state.heroes[n].name), acts[n])
+		if secret.has(n):
+			_log("act", str(state.heroes[n].name), "🤫 " + acts[n], n)
+			_log("act", str(state.heroes[n].name), "…что-то делает втайне от тебя.", "!" + n)
+			acts[n] = "(ТАЙНО от напарника) " + acts[n]
+		else:
+			_log("act", str(state.heroes[n].name), acts[n])
 	_actions = {}
 	_set_phase("thinking")
 
@@ -1033,9 +1074,83 @@ func _resolve() -> void:
 	_apply_narration(res.data, true)
 
 
+## Ночь в лагере после ночлега: сцена у костра, разговоры, одобрение спутников, личные просьбы.
+func _camp_night() -> void:
+	if not Net.is_host() or _busy or phase != "play" or not state.combat.is_empty():
+		return
+	_busy = true
+	_set_phase("thinking")
+	var res: Dictionary = await LLM.chat_json(_camp_prompt(), 0.95, 1300)
+	_busy = false
+	if not Net.is_host():
+		return
+	if not res.ok or str(res.data.get("story", "")) == "":
+		_set_phase("play")
+		return
+	var d: Dictionary = res.data
+	d.erase("rest")
+	d.erase("combat")
+	_log("sys", "", "🔥 Ночь у костра")
+	_apply_narration(d, false)
+
+
+func _camp_prompt() -> Array:
+	var sys := GM_RULES + """
+Сейчас ночь в лагере: герои отдыхают у костра. Это тихая сцена без боя (combat пустой, rest пустой), как ночи в лагере в больших ролевых играх.
+Опиши 5-8 предложений: о чём говорят герои, с прямой речью; вспомни их недавние решения и поступки.
+Если есть спутники — один из них говорит по душам: рассказывает о себе, спорит или хвалит решения героев (отрази это в approval). Если спутник верный (одобрение 5 и выше) и у него ещё нет личного задания — он открывает свою личную просьбу: добавь её в quests с названием «Личное: <имя спутника> — <суть>».
+Если спутников нет — герои говорят друг с другом о прошлом, страхах и цели, или ночью случается тихое странное событие (знак, сон, гость у костра), без боя.
+Закончи рассветом и тем, что ждёт героев утром. options — реплики или утренние действия.
+""" + NARRATE_FORMAT + _names_rule() + "\nКаталог предметов (id=название): " + R.catalog_text()
+	var user := "%s\nГерои:\n%s\n\nНедавние события:\n%s" % [_campaign_text(), _heroes_text(), _recent_log(20)]
+	return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
+
+
+## Одобрение спутников: как в BG3 — им нравятся или не нравятся решения героев.
+func _apply_approval(arr) -> void:
+	if not (arr is Array):
+		return
+	for a in arr:
+		if not (a is Dictionary):
+			continue
+		var nm := str(a.get("who", "")).strip_edges().to_lower()
+		var dv := clampi(int(a.get("d", 0)), -2, 2)
+		if nm == "" or dv == 0:
+			continue
+		var cps: Array = state.get("companions", [])
+		for i in range(cps.size() - 1, -1, -1):
+			var cp: Dictionary = cps[i]
+			if str(cp.name).to_lower() != nm and not str(cp.name).to_lower().begins_with(nm.left(5)):
+				continue
+			if cp.get("beast", false):
+				break
+			cp.appr = clampi(int(cp.get("appr", 0)) + dv, -10, 10)
+			var why := str(a.get("why", "")).left(80)
+			_log("sys", "", "%s %s%s (%+d, теперь %d)." % [cp.name, "одобряет" if dv > 0 else "не одобряет", (": " + why) if why != "" else "", dv, int(cp.appr)])
+			if int(cp.appr) >= 5 and not cp.get("loyal", false):
+				cp.loyal = true
+				cp.atk = int(cp.atk) + 1
+				cp.max_hp = int(cp.max_hp) + 6
+				cp.hp = int(cp.hp) + 6
+				_log("sys", "", "💛 %s теперь верный друг отряда: бьётся яростнее (+1 к атаке, +6 хитов). У костра может открыть личную просьбу." % cp.name)
+			elif int(cp.appr) <= -5:
+				_log("sys", "", "💔 %s больше не может терпеть ваши решения и уходит из отряда." % cp.name)
+				cps.remove_at(i)
+			break
+
+
 ## Применяет ответ ведущего: рассказ, изменения, место, сундук, лавка, бой, отдых.
 func _apply_narration(d: Dictionary, allow_combat: bool) -> void:
 	_log("gm", "", str(d.story))
+	var sec = d.get("secret", {})
+	if sec is Dictionary:
+		for k in sec:
+			var pn := _player_by_hero(str(k))
+			if pn == "" and state.heroes.has(str(k)):
+				pn = str(k)
+			if pn != "" and str(sec[k]).strip_edges() != "":
+				_log("gm", "", "🤫 " + str(sec[k]).strip_edges(), pn)
+	_apply_approval(d.get("approval", []))
 	_apply_journal(d)
 	if allow_combat:
 		_apply_changes(d.get("changes", []), str(d.story))
@@ -1156,7 +1271,8 @@ func _apply_world(d: Dictionary) -> void:
 			var owner := _player_by_hero(str(cp.get("owner", "")))
 			var hpv := clampi(int(base.hp), 5, 40)
 			state.companions.append({"name": nm, "kind": str(cp.get("kind", "спутник")).left(20), "mon": mid if R.MONSTERS.has(mid) else "bandit",
-				"hp": hpv, "max_hp": hpv, "ac": int(base.ac), "atk": int(base.atk), "dmg": str(base.dmg), "owner": owner})
+				"hp": hpv, "max_hp": hpv, "ac": int(base.ac), "atk": int(base.atk), "dmg": str(base.dmg), "owner": owner,
+				"appr": 0, "about": str(cp.get("about", "")).left(120)})
 			_log("sys", "", "К отряду присоединяется %s (%s): будет сражаться рядом с героями." % [nm, str(cp.get("kind", "спутник"))])
 
 
@@ -1496,7 +1612,9 @@ func _journal_text() -> String:
 			th.append(str(e.t))
 	var cps := []
 	for cp in state.get("companions", []):
-		cps.append("%s (%s, %d/%d хитов)" % [cp.name, cp.kind, int(cp.hp), int(cp.max_hp)])
+		cps.append("%s (%s, %d/%d хитов%s%s)" % [cp.name, cp.kind, int(cp.hp), int(cp.max_hp),
+			"" if cp.get("beast", false) else ", одобрение %d%s" % [int(cp.get("appr", 0)), ", ВЕРНЫЙ" if cp.get("loyal", false) else ""],
+			(", " + str(cp.about)) if str(cp.get("about", "")) != "" else ""])
 	var conds := []
 	for n in state.heroes:
 		for k in state.heroes[n].get("conds", {}):
@@ -1804,9 +1922,11 @@ func _give_xp(pname: String, xp: int) -> void:
 		return
 	var h: Dictionary = state.heroes[pname]
 	h.xp = int(h.xp) + xp
+	_sess().xp = int(_sess().xp) + xp
 	_log("sys", h.name, "%s: +%d опыта" % [h.name, xp])
 	while int(h.level) < 10 and int(h.xp) >= R.xp_next(h):
 		_log("lvl", h.name, R.level_up(h))
+		_sess().lvls.append("%s → %d" % [h.name, int(h.level)])
 
 
 func _damage_hero(pname: String, dmg: int, crit: bool) -> String:
@@ -2015,6 +2135,7 @@ func _split_gold(title: String, gold: int) -> void:
 	var share := gold / names.size()
 	for n in names:
 		state.heroes[n].gold = int(state.heroes[n].gold) + share
+	_sess().gold = int(_sess().gold) + gold
 	_log("loot", "", "%s: %d золота, каждому по %d." % [title, gold, share])
 
 
@@ -2972,6 +3093,7 @@ func _end_combat(result: String) -> void:
 	var summary := ""
 	match result:
 		"won":
+			_sess().won = int(_sess().won) + 1
 			summary = "Победа! Повержены: %s." % ", ".join(foes)
 			_log("cbt", "", summary)
 			var names := []
@@ -3558,6 +3680,12 @@ func _hit_enemy_raw(i: int, dmg: int, src: String, dt := "") -> String:
 			en.burned = true
 			note += "Ожог не даст ранам затянуться. "
 	_last_dmg = dmg
+	var actor := combat_actor()
+	if state.heroes.has(actor):
+		var ss := _sess()
+		ss.dmg[actor] = int(ss.dmg.get(actor, 0)) + mini(dmg, maxi(0, int(en.hp)))
+		if dmg > int(ss.best.get("v", 0)):
+			ss.best = {"v": dmg, "who": str(state.heroes[actor].name), "on": str(en.name)}
 	en.hp = int(en.hp) - dmg
 	en.asleep = false
 	if int(en.hp) <= 0:
@@ -3569,6 +3697,7 @@ func _hit_enemy_raw(i: int, dmg: int, src: String, dt := "") -> String:
 				return note + "%s падает… и снова поднимается (стойкость нежити, %d против %d)!" % [en.name, sv, 5 + dmg]
 		en.hp = 0
 		en.dead = true
+		_sess().kills = int(_sess().kills) + 1
 		var killer := combat_actor()
 		var fnote := ""
 		if state.heroes.has(killer) and str(state.heroes[killer].get("sub", "")) == "fiend" and int(state.heroes[killer].hp) > 0:
@@ -3645,6 +3774,8 @@ func _hero_attack(pname: String, target: int, n_attacks := -1) -> bool:
 					h.erase("coat")
 			dmg = maxi(1, dmg)
 			outcome = "критическое попадание" if crit else "попадание"
+			if crit:
+				_sess().crits = int(_sess().crits) + 1
 			var note := _hit_enemy(ti, dmg, "", str(info.get("dt", "")))
 			dealt = _last_dmg
 			line += "%s%s, %d урона. %s" % [outcome, sneak, dmg, note]
@@ -4566,8 +4697,10 @@ func _recent_log(n := 16) -> String:
 	var lines := []
 	for e in state.log.slice(-n):
 		match str(e.k):
-			"gm": lines.append("Ведущий: " + str(e.t))
-			"act": lines.append("%s делает: %s" % [e.w, e.t])
+			"gm": lines.append(("Ведущий (только для %s): " % str(state.heroes.get(str(e.to), {}).get("name", e.to)) if e.has("to") else "Ведущий: ") + str(e.t))
+			"act":
+				if not str(e.get("to", "")).begins_with("!"):
+					lines.append("%s делает%s: %s" % [e.w, " (тайно)" if e.has("to") else "", e.t])
 			"roll": lines.append("Бросок %s: %s" % [e.w, e.t])
 			_: lines.append("(" + str(e.t) + ")")
 	return "\n".join(lines)
@@ -4581,7 +4714,7 @@ func _acts_text(acts: Dictionary) -> String:
 
 
 const NARRATE_FORMAT := """Ответь строго JSON без markdown:
-{"story": "4-8 предложений", "changes": [{"who": "имя героя", "hp": 0, "gold": 0, "add": [], "remove": [], "xp": 0}], "options": {"Имя героя": ["вариант", "вариант", "вариант"]}, "place": null, "quest": "", "quests": [], "npcs": [], "chest": "", "shop": "", "combat": [], "env": [], "rest": "", "rep": [], "consequences": [], "resolved": [], "companions": [], "vote": null, "goal": "", "inspire": ""}
+{"story": "4-8 предложений", "changes": [{"who": "имя героя", "hp": 0, "gold": 0, "add": [], "remove": [], "xp": 0}], "options": {"Имя героя": ["вариант", "вариант", "вариант"]}, "place": null, "quest": "", "quests": [], "npcs": [], "chest": "", "shop": "", "combat": [], "env": [], "rest": "", "rep": [], "consequences": [], "resolved": [], "companions": [], "vote": null, "goal": "", "inspire": "", "approval": [], "secret": {}}
 Поля:
 - story: последствия действий каждого героя, реакция мира и персонажей (с прямой речью), новая ситуация; закончи тем, что ждёт ответа героев.
 - changes: ОБЯЗАТЕЛЬНО: если в story герой получил вещь (в том числе ту, что выиграл раньше и теперь требует отдать) (выиграл, нашёл, купил у персонажа, ему подарили), добавь её в add этого героя, иначе вещи не будет в инвентаре. Золото-награда делится игрой поровну на всех, укажи общую сумму у любого героя. НИКОГДА не заменяй вещь деньгами: просят шлем — выдай шлем ("helmet"), а gold оставь 0; gold больше нуля только если в story кто-то прямо платит монетами и в story названа та же сумма (за выполненное поручение, продажу, выигрыш). За разговоры, расспросы, торг и знакомства золота НЕ давай — gold 0. Состояния: "cond": "poisoned" (отравлен), "blinded", "frightened", "prone", "stunned" — если с героем такое случилось; "cure": "poisoned" — если вылечили. Алхимические ингредиенты для add: "herb" (травы — собрал в лесу/поле, успех Природы или Выживания), "venom_sac" (ядовитая железа), "ember_dust" (огненная пыль). Не выдавай повторно то, что игра уже выдала (строки «Добыча», «забирает», «получает» в недавних событиях). Только реальные изменения вне боя: урон от ловушек и падений (hp отрицательный, 1-10), лечение (hp положительный), награды золотом, найденные или отданные вещи, опыт xp: за удачные проверки игра уже дала опыт сама, не дублируй; давай xp только за выполненное поручение или решённую загадку (50-200) и тогда КАЖДОМУ герою, который участвовал, одинаково. add — id из каталога, можно с улучшением {"id": "longsword", "plus": 1, "name": "Меч «Рассвет»"}, или сюжетная вещь ПО-РУССКИ с описанием: {"name": "Карта затонувшего рифа", "note": "что это, откуда и зачем может пригодиться, 1 фраза"}, никогда не латинский id. Сюжетные вещи в сумках героев важны: если герой их показывает, отдаёт, использует или выбрасывает — это меняет сюжет, отрази это в story и в remove. Пустой список, если ничего.
@@ -4591,7 +4724,9 @@ const NARRATE_FORMAT := """Ответь строго JSON без markdown:
 - npcs: важные персонажи, которых герои встретили впервые, узнали о них новое или чьё отношение к героям изменилось: [{"name": "Мельник Тарас", "note": "кто он, 1 фраза", "attitude": 1}]. attitude — изменение отношения от -2 до 1. Плюс 1 — только за настоящую услугу, ценный подарок или спасение, НЕ за обычный разговор, расспросы, вежливость или покупку; обычно 0; нагрубили, обманули (и раскрылось), угрожали, обокрали — минус; 0 если не изменилось. Отношение (см. «Знакомые персонажи») влияет на поведение: друзья помогают и дают скидки, враги отказывают, доносят, мстят. Пусто, если никого.
 - rep: репутация у города, деревни, гильдии или фракции, если герои совершили заметный поступок: [{"name": "Деревня Верба", "change": -1, "why": "ограбили лавку"}]. change от -2 до 2. При репутации -3 и ниже стража враждебна, торговцы отказывают; при 3 и выше — почёт, помощь, скидки.
 - consequences: решения, которые должны аукнуться позже (пощадили врага, обманули влиятельного человека, украли реликвию): ["Пощадили гоблина Шныря — может вернуться с подмогой или с благодарностью"]. resolved: начала тех отложенных последствий, которые ты сейчас вернул в сюжет.
-- companions: если к отряду присоединился наёмник или зверь (нанят, приручён, спасён): [{"name": "Серый", "kind": "волк", "monster": "wolf", "owner": "имя героя"}]; monster — id из списка монстров по силе; ушёл: {"name": "Серый", "leave": true}. Не больше двух спутников.
+- companions: если к отряду присоединился наёмник или зверь (нанят, приручён, спасён): [{"name": "Серый", "kind": "волк", "monster": "wolf", "owner": "имя героя"}]; monster — id из списка монстров по силе; ушёл: {"name": "Серый", "leave": true}. Не больше двух спутников. Добавь "about": характер и цель спутника, 1 фраза.
+- approval: как спутники (не звери) отнеслись к поступкам героев сейчас: [{"who": "имя спутника", "d": 1, "why": "коротко"}], d от -2 до 2, только если поступок задел их характер или ценности; обычно пусто. Одобрение 5+ — спутник верный, -5 — уходит.
+- secret: если герой действовал ТАЙНО от напарника — результат этого действия: {"Имя героя": "что он втайне узнал, взял или сделал, 1-3 предложения"}. В story тайное действие НЕ раскрывай: напарник его не видит, в story такой герой может лишь ненадолго отлучиться. Найденные втайне вещи всё равно добавь в changes. Иначе {}.
 - goal: ближайшая цель группы, когда герои решили, куда идут или что делают дальше: {"t": "Доплыть до маяка на Скалистом мысу", "steps": ["Найти лодку", "Пережить бурю", "Подняться на маяк"], "place": {"name": "Маяк на Скалистом мысу", "type": "tower", "dist": 3}}. steps — 2-4 понятных пункта, что нужно сделать; place — только если героям известно, где это место (им показали на карте, объяснили дорогу, видно вдали), dist — сколько событий в пути до него (1-6, по расстоянию: соседняя деревня 1-2, через лес или горы 3-4, другой край земли 5-6); если место неизвестно — без place. Когда пункт выполнен: {"t": та же цель, "done_steps": ["Найти лодку"]}. "done" — цель достигнута; "" если ничего не изменилось. Цель — крупная задача; не подменяй её её же пунктом и не дублируй цель и её пункты в quests. Сделанное сразу отмечай в done_steps. Пока цель не достигнута, каждый ход приближай героев к ней.
 - vote: если перед группой важная развилка, где герои могут не сойтись (кого спасти, чью сторону принять, куда идти), предложи голосование {"q": "Вопрос?", "opts": ["вариант 1", "вариант 2"]}; иначе null. Не чаще раза в 4-5 ходов.
 - chest: короткое название, если герои открыли сундук, тайник или нашли клад (содержимое выдаст игра), иначе "".

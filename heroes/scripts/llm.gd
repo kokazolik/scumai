@@ -536,9 +536,17 @@ func _mock_reply(messages: Array) -> String:
 			"success": "Получилось!", "fail": "Не вышло."})
 	if sys.contains("[CHRONICLE]"):
 		return JSON.stringify({"chronicle": "Герои пришли в Вербу и подрались с гоблинами."})
+	if sys.contains("Сейчас ночь в лагере"):
+		return JSON.stringify({"story": "У костра Серый рассказывает о брате, пропавшем на болотах. На рассвете туман редеет.", "options": opts,
+			"approval": [{"who": "Серый", "d": 2, "why": "вы пощадили пленного"}], "rest": "long", "combat": [{"id": "goblin", "count": 1}],
+			"quests": [{"title": "Личное: Серый — найти брата", "status": "new", "steps": ["Расспросить на болотах"]}]})
 	var turn := randi() % 4
 	var d := {"story": "Мир живёт своей жизнью. Что дальше?", "changes": [], "options": opts,
 		"place": null, "quest": "", "chest": "", "shop": "", "combat": [], "rest": ""}
+	if user.contains("ТАЙНО"):
+		for n in names:
+			d["secret"] = {n: "Втайне ты находишь под половицей записку с печатью."}
+			break
 	if sys.contains("закончился бой"):
 		d.story = "Враги повержены."
 	elif turn == 0:
@@ -551,7 +559,7 @@ func _mock_reply(messages: Array) -> String:
 		d.npcs = [{"name": "Бабка Агафья", "note": "Старушка с козой, знает все слухи", "attitude": 1}, {"name": "Кузнец Михей", "note": "ворчливый кузнец", "attitude": 2}]
 		d.rep = [{"name": "Деревня Верба", "change": 1, "why": "помогли старушке"}]
 		d.consequences = ["Пощадили гоблина Шныря — может вернуться"]
-		d.companions = [{"name": "Серый", "kind": "волк", "monster": "wolf", "owner": names[0] if names.size() > 0 else ""}]
+		d.companions = [{"name": "Серый", "kind": "волк", "monster": "wolf", "owner": names[0] if names.size() > 0 else "", "about": "угрюмый волк, ищет стаю"}]
 		d.chest = "Старый сундук"
 		d.place = {"name": "Тёмный лес", "type": "forest"}
 	elif turn == 2:

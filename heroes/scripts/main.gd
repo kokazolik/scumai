@@ -1019,6 +1019,8 @@ func _update_log() -> void:
 	var fresh := not rebuilt
 	var first_gm: Control = null
 	for i in range(start, lg.size()):
+		if not Game.log_visible(lg[i], Game.my_pname()):
+			continue
 		var en: Control = _log_entry(lg[i])
 		_pass_mouse(en)
 		logv.add_child(en)
@@ -1703,6 +1705,16 @@ func _update_bottom() -> void:
 		hb.custom_minimum_size.y = 56
 		hb.add_theme_font_size_override("font_size", 18)
 		tools.add_child(hb)
+		var sb := _button("🤫" if not _secret_on else "🤫 Тайно", C_PURPLE.darkened(0.2) if _secret_on else C_CARD2, func():
+			_secret_on = not _secret_on
+			if _secret_on:
+				_help_on = false
+				_toast("Тайное действие: напарник увидит только, что ты что-то делаешь втайне")
+			_bottom_key = ""
+			_update_bottom())
+		sb.custom_minimum_size = Vector2(90 if not _secret_on else 150, 56)
+		sb.add_theme_font_size_override("font_size", 18)
+		tools.add_child(sb)
 	var rs := _with_icon(_button("Привал · %d" % Game.short_rests_left(), C_CARD2, func(): Game.vote("start", {"kind": "rest_short"})), Icons.tex("ui_campfire"), 30)
 	rs.custom_minimum_size = Vector2(150, 56)
 	rs.add_theme_font_size_override("font_size", 18)
@@ -1712,6 +1724,8 @@ func _update_bottom() -> void:
 	rl.add_theme_font_size_override("font_size", 18)
 	tools.add_child(rl)
 	b.add_child(tools)
+	if _secret_on:
+		b.add_child(_label("🤫 Тайно: ведущий расскажет результат только тебе, напарник увидит лишь, что ты что-то делаешь втайне.", 16, C_PURPLE.lightened(0.4)))
 	if _help_on and partner != "":
 		b.add_child(_label("Ты помогаешь: у %s будет преимущество на проверку, сам ты не кидаешь." % Game.state.heroes[partner].name, 16, C_MUTED))
 	var row := HBoxContainer.new()
@@ -1721,8 +1735,9 @@ func _update_bottom() -> void:
 		var opt := -1
 		if _opt_pick >= 0 and _opt_pick < opts.size() and opts[_opt_pick] is Dictionary and str(opts[_opt_pick].t) == input.text.strip_edges():
 			opt = _opt_pick
-		Game.submit_action(input.text, partner if _help_on else "", opt)
+		Game.submit_action(input.text, partner if _help_on else "", opt, _secret_on and not _help_on)
 		_help_on = false
+		_secret_on = false
 		_opt_pick = -1
 		DisplayServer.virtual_keyboard_hide())
 	go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1732,6 +1747,7 @@ func _update_bottom() -> void:
 
 
 var _help_on := false
+var _secret_on := false
 var _opt_pick := -1
 
 
@@ -1886,6 +1902,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	pips.add_child(_econ_pip("act_flee", "Шаг", not moved, C_BLUE))
 	top.add_child(pips)
 	b.add_child(top)
+	_tutorial_hint(b, h, c, used)
 	var front := Game.hero_pos(me) == "front"
 	var mrow := HBoxContainer.new()
 	mrow.add_theme_constant_override("separation", 8)
@@ -2455,6 +2472,7 @@ func _build_journal(v: VBoxContainer) -> void:
 	if str(c.get("title", "")) != "":
 		v.add_child(UISkin.make_ribbon_title(str(c.title), 30, 80))
 	v.add_child(_small_wide_button("Летопись: скопировать всю историю", C_CARD2, Game.request_chronicle))
+	v.add_child(_small_wide_button("🌙 Итоги вечера: карточка-картинка", C_PURPLE.darkened(0.25), _show_summary))
 	var main := _card()
 	main.add_child(_section_title("Главная цель"))
 	main.add_child(_label(str(c.get("quest", "пока неизвестна")), 23, C_INK))
@@ -2547,7 +2565,21 @@ func _build_journal(v: VBoxContainer) -> void:
 			cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			row.add_child(cl)
 			cc.add_child(row)
-		cc.add_child(_label("Спутники сами бьются в бою и восстанавливаются после ночлега.", 16, C_MUTED))
+			if str(cp.get("about", "")) != "":
+				cc.add_child(_label(str(cp.about), 16, C_MUTED))
+			if not cp.get("beast", false):
+				var ap := int(cp.get("appr", 0))
+				var bar := ProgressBar.new()
+				bar.min_value = -5
+				bar.max_value = 5
+				bar.value = clampi(ap, -5, 5)
+				bar.show_percentage = false
+				bar.custom_minimum_size = Vector2(0, 10)
+				bar.modulate = C_GREEN if ap > 0 else (C_RED if ap < 0 else C_MUTED)
+				cc.add_child(bar)
+				cc.add_child(_label(("💛 Верный друг — одобрение %d" if cp.get("loyal", false) else "Одобрение %d: при 5 станет верным, при -5 уйдёт") % ap, 16,
+					C_GREEN if ap > 0 else (C_RED if ap < 0 else C_MUTED)))
+		cc.add_child(_label("Спутники сами бьются в бою и восстанавливаются после ночлега. Им нравятся или не нравятся ваши решения — по душам они говорят у костра.", 16, C_MUTED))
 		v.add_child(cc.get_parent())
 	var ths: Array = c.get("threads", [])
 	if ths.size() > 0:
@@ -4135,14 +4167,29 @@ func _autotest_tick() -> void:
 					Game.submit_action(str(opts[1].t), "", 1)
 				elif _auto == "client" and int(Game.state.turn) % 3 == 0:
 					Game.submit_action("Помогаю напарнику", _partner())
+				elif _auto == "client" and int(Game.state.turn) % 3 == 1:
+					Game.submit_action("Тайком обыскиваю стойку трактирщика", "", -1, true)
 				else:
 					Game.submit_action("Осматриваюсь (%s, ход %d)" % [_auto, Game.state.turn])
 			if int(Game.state.turn) >= 12:
+				var vis := []
+				for e in Game.state.log:
+					if e.has("to") and Game.log_visible(e, me):
+						vis.append(str(e.t).left(50))
+				print("[%s] SECRET visible=%s camp=%s comps=%s sess=%s" % [_auto, JSON.stringify(vis), str(Game.state.log.any(func(e): return str(e.t).contains("Ночь у костра"))),
+					JSON.stringify(Game.state.get("companions", [])), JSON.stringify(Game.state.get("sess", {}))])
 				print("[%s] AUTOTEST DONE turn=%d heroes=%s" % [_auto, Game.state.turn, JSON.stringify(Game.state.heroes)])
 				print("[%s] MAP %s" % [_auto, JSON.stringify(Game.state.map)])
 				for e in Game.state.log.slice(-40):
 					print("[%s] LOG %s: %s" % [_auto, e.k, e.t])
 				_auto = ""
+				if shot != "" and not refs.has("auto_sum"):
+					refs.auto_sum = true
+					_show_summary()
+					await get_tree().create_timer(0.6).timeout
+					get_viewport().get_texture().get_image().save_png("%s/summary.png" % shot)
+					await _save_summary(summary_pop.get_child(1).get_child(0).get_child(1))
+					print("[%s] SUMMARY saved=%s" % ["sum", last_summary_path])
 				if Net.is_host():
 					await get_tree().create_timer(4.0).timeout
 				get_tree().quit()
@@ -4208,3 +4255,206 @@ func _autotest_tick() -> void:
 					Game.combat_action({"t": "free", "text": "Пинаю гоблина в костёр"})
 				else:
 					Game.combat_action({"t": "attack", "target": -1})
+
+
+# ---------- подсказки первых боёв ----------
+
+const TUT := {
+	"turn": "Это твой ход. За ход у тебя есть: ⚔ Действие (атака, заклинание, помощь), ⚡ Бонусное действие (зелье, ярость, толчок) и 👣 Шаг (вперёд или в тыл). Плашки сверху гаснут, когда потрачены.",
+	"pos": "Позиция важна: впереди бьют врукопашную, в тылу безопаснее — ближние враги не достанут, пока впереди кто-то стоит. Уйти из-под носа врага — получить удар вдогонку, если не «Отступить».",
+	"env": "На поле есть окружение: бочки, жаровни, масло, обрыв. Его можно использовать — масло + огонь = взрыв, вода + молния = ток по всем.",
+	"bonus": "Действие потрачено, но бонусное ещё есть — им можно выпить зелье, толкнуть врага или помочь себе. Когда всё нужное сделано — «Конец хода».",
+	"down": "Напарник упал! «Поднять» ставит его на ноги с 1 хитом без броска. Лежащего добивают быстро — не тяни.",
+	"spell": "Заговоры бесплатные и бесконечные. Заклинания уровнем выше тратят ячейки — они возвращаются после ночлега (у Колдуна — и на привале).",
+	"react": "Реакции срабатывают сами в чужой ход: «Щит», ответный выпад, удар по убегающему. Кнопкой с ⚡ их можно выключить.",
+}
+
+
+func _tut_cfg() -> ConfigFile:
+	var cf := ConfigFile.new()
+	cf.load("user://settings.cfg")
+	return cf
+
+
+func _tutorial_hint(b: VBoxContainer, h: Dictionary, c: Dictionary, used: Dictionary) -> void:
+	var cf := _tut_cfg()
+	if bool(cf.get_value("tutorial", "off", false)):
+		return
+	var keys := []
+	var me := Game.my_pname()
+	var ph := Game.hero_of(_partner()) if _partner() != "" else {}
+	if not ph.is_empty() and int(ph.get("hp", 1)) <= 0 and not ph.get("dead", false):
+		keys.append("down")
+	keys.append("turn")
+	if used.get("a", false) and not used.get("b", false):
+		keys.append("bonus")
+	if not c.get("env", []).is_empty():
+		keys.append("env")
+	if R.known_spells(h).size() > 0:
+		keys.append("spell")
+	if int(c.get("round", 1)) >= 2:
+		keys.append("pos")
+	if Game.has_shield(h) or Game.has_riposte(h):
+		keys.append("react")
+	for k in keys:
+		if bool(cf.get_value("tutorial", k, false)):
+			continue
+		var card := _card(C_CARD2)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		row.add_child(_icon_rect(Icons.tex("ui_help"), 40, C_ACCENT))
+		var tl := _label(str(TUT[k]), 18, C_INK)
+		tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(tl)
+		card.add_child(row)
+		var br := HBoxContainer.new()
+		br.add_theme_constant_override("separation", 8)
+		var key: String = k
+		var ok := _tiny_button("Понятно", C_ACCENT.darkened(0.3), func():
+			var cf2 := _tut_cfg()
+			cf2.set_value("tutorial", key, true)
+			cf2.save("user://settings.cfg")
+			_bottom_key = ""
+			_update_bottom())
+		ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		br.add_child(ok)
+		var off := _tiny_button("Без подсказок", C_CARD, func():
+			var cf3 := _tut_cfg()
+			cf3.set_value("tutorial", "off", true)
+			cf3.save("user://settings.cfg")
+			_bottom_key = ""
+			_update_bottom())
+		off.custom_minimum_size = Vector2(230, 0)
+		br.add_child(off)
+		card.add_child(br)
+		b.add_child(card.get_parent())
+		return
+
+
+# ---------- итоги вечера ----------
+
+var summary_pop: Control = null
+
+
+func _show_summary() -> void:
+	if summary_pop and is_instance_valid(summary_pop):
+		summary_pop.queue_free()
+	var ss: Dictionary = Game.state.get("sess", {})
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	var dim := ColorRect.new()
+	dim.color = Color(0.05, 0.03, 0.02, 0.85)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(dim)
+	var m := MarginContainer.new()
+	m.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right"]:
+		m.add_theme_constant_override("margin_" + side, 24)
+	m.add_theme_constant_override("margin_top", 90)
+	m.add_theme_constant_override("margin_bottom", 60)
+	layer.add_child(m)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 14)
+	m.add_child(col)
+	col.add_child(_expander())
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UISkin.panel("parchment", 22))
+	col.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	panel.add_child(v)
+	var c: Dictionary = Game.state.campaign
+	var t := _ftitle(str(c.get("title", "Хроники двоих")), 34)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_color_override("font_color", Color("4a2c14"))
+	v.add_child(t)
+	var mins := maxi(1, (int(Time.get_unix_time_from_system()) - int(ss.get("t0", Time.get_unix_time_from_system()))) / 60)
+	var d := Time.get_date_dict_from_system()
+	var sub := _label("Итоги вечера · %02d.%02d.%d · %d мин за игрой" % [int(d.day), int(d.month), int(d.year), mins], 18, Color("6b4a2a"))
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	var ink := Color("2e1c0c")
+	for n in Game.state.heroes:
+		var hh: Dictionary = Game.state.heroes[n]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		row.add_child(UISkin.make_portrait(Icons.for_class(str(hh.cls)), 64))
+		var hv := VBoxContainer.new()
+		hv.add_theme_constant_override("separation", 0)
+		hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var sub_n := str(R.SUBCLASSES.get(str(hh.get("sub", "")), {}).get("name", ""))
+		hv.add_child(_label("%s — %s %s, %d ур.%s" % [hh.name, hh.race, hh.cls, int(hh.level), (" · " + sub_n) if sub_n != "" else ""], 21, ink))
+		hv.add_child(_label("урона врагам: %d · хиты %d/%d · золото %d" % [int(ss.get("dmg", {}).get(n, 0)), int(hh.hp), int(hh.max_hp), int(hh.gold)], 17, Color("5a3a1c")))
+		row.add_child(hv)
+		v.add_child(row)
+	var facts := []
+	facts.append("⚔ Побед в бою: %d · врагов повержено: %d" % [int(ss.get("won", 0)), int(ss.get("kills", 0))])
+	facts.append("🎯 Критических ударов: %d" % int(ss.get("crits", 0)))
+	var best: Dictionary = ss.get("best", {})
+	if not best.is_empty():
+		facts.append("💥 Лучший удар: %s — %d урона по %s" % [best.who, int(best.v), best.on])
+	facts.append("✨ Опыта: %d · 💰 золота: %d" % [int(ss.get("xp", 0)), int(ss.get("gold", 0))])
+	if (ss.get("lvls", []) as Array).size() > 0:
+		facts.append("⬆ Новые уровни: " + ", ".join(ss.lvls))
+	var mvp := ""
+	var mv := -1
+	for n in ss.get("dmg", {}):
+		if int(ss.dmg[n]) > mv and Game.state.heroes.has(n):
+			mv = int(ss.dmg[n])
+			mvp = str(Game.state.heroes[n].name)
+	if mvp != "" and mv > 0:
+		facts.append("🏆 Герой вечера: %s" % mvp)
+	for f in facts:
+		v.add_child(_label(f, 19, ink))
+	var q := str(c.get("goal", ""))
+	if q == "":
+		q = str(c.get("quest", ""))
+	if q != "":
+		v.add_child(_label("Дальше: " + q.left(140), 17, Color("6b4a2a")))
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 10)
+	var save_b := _button("Сохранить картинку", C_ACCENT, func(): _save_summary(panel))
+	save_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	br.add_child(save_b)
+	var close_b := _button("Закрыть", C_CARD2, func():
+		layer.queue_free()
+		summary_pop = null)
+	close_b.custom_minimum_size.x = 200
+	br.add_child(close_b)
+	col.add_child(br)
+	col.add_child(_expander())
+	add_child(layer)   # поверх эффектов и кубиков, чтобы в картинку не попали
+	summary_pop = layer
+
+
+func _save_summary(panel: Control) -> void:
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var xf := get_viewport().get_final_transform()
+	var r: Rect2 = xf * panel.get_global_rect()
+	var ri := Rect2i(r).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+	if ri.size.x <= 0 or ri.size.y <= 0:
+		_toast("Не получилось снять картинку")
+		return
+	var crop := img.get_region(ri)
+	var d := Time.get_datetime_dict_from_system()
+	var fname := "chronicles_%04d%02d%02d_%02d%02d.png" % [int(d.year), int(d.month), int(d.day), int(d.hour), int(d.minute)]
+	var dirs := []
+	var pics := OS.get_system_dir(OS.SYSTEM_DIR_PICTURES)
+	if pics != "":
+		dirs.append(pics)
+	var docs := OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
+	if docs != "":
+		dirs.append(docs)
+	dirs.append(OS.get_user_data_dir())
+	for dir in dirs:
+		var path := str(dir).path_join(fname)
+		if crop.save_png(path) == OK:
+			last_summary_path = path
+			_toast("Сохранено: " + path)
+			return
+	_toast("Не удалось сохранить картинку")
+
+
+var last_summary_path := ""
