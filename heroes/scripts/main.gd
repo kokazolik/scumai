@@ -1705,25 +1705,31 @@ func _update_bottom() -> void:
 		hb.custom_minimum_size.y = 56
 		hb.add_theme_font_size_override("font_size", 18)
 		tools.add_child(hb)
-		var sb := _button("🤫" if not _secret_on else "🤫 Тайно", C_PURPLE.darkened(0.2) if _secret_on else C_CARD2, func():
+		var sb := _button("🤫 Тайно" if not _secret_on else "🤫 Тайно ✓", C_PURPLE.darkened(0.2) if _secret_on else C_CARD2, func():
 			_secret_on = not _secret_on
 			if _secret_on:
 				_help_on = false
 				_toast("Тайное действие: напарник увидит только, что ты что-то делаешь втайне")
 			_bottom_key = ""
 			_update_bottom())
-		sb.custom_minimum_size = Vector2(90 if not _secret_on else 150, 56)
+		sb.custom_minimum_size = Vector2(170, 56)
 		sb.add_theme_font_size_override("font_size", 18)
 		tools.add_child(sb)
 	var rs := _with_icon(_button("Привал · %d" % Game.short_rests_left(), C_CARD2, func(): Game.vote("start", {"kind": "rest_short"})), Icons.tex("ui_campfire"), 30)
-	rs.custom_minimum_size = Vector2(150, 56)
+	rs.custom_minimum_size = Vector2(0, 52)
+	rs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rs.add_theme_font_size_override("font_size", 18)
-	tools.add_child(rs)
+	var rest_row := HBoxContainer.new()
+	rest_row.add_theme_constant_override("separation", 8)
+	rest_row.add_child(rs)
 	var rl := _with_icon(_button("Ночлег · 🍞%d" % Game.rations_total(), C_CARD2, func(): Game.vote("start", {"kind": "rest_long"})), Icons.tex("ui_sleep_rest"), 30)
-	rl.custom_minimum_size = Vector2(150, 56)
+	rl.custom_minimum_size = Vector2(0, 52)
+	rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rl.add_theme_font_size_override("font_size", 18)
-	tools.add_child(rl)
+	rest_row.add_child(rl)
 	b.add_child(tools)
+	b.add_child(rest_row)
+	b.add_child(_label("🌙 Ночлег — всё восстанавливает (паёк на каждого, под крышей бесплатно). 🔥 Привал — половина хитов, до %d за день. Можно и просто написать «ночуем в таверне»." % Game.SHORT_RESTS, 15, C_MUTED))
 	if _secret_on:
 		b.add_child(_label("🤫 Тайно: ведущий расскажет результат только тебе, напарник увидит лишь, что ты что-то делаешь втайне.", 16, C_PURPLE.lightened(0.4)))
 	if _help_on and partner != "":
