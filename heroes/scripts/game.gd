@@ -90,6 +90,15 @@ func combat_actor() -> String:
 
 func _broadcast() -> void:
 	if Net.is_host():
+		# что именно выбрал каждый, кто уже сходил, — чтобы напарник видел
+		var acts := {}
+		for n in state.get("pending", []):
+			if _actions.has(n):
+				var t := str(_actions[n])
+				if _helps.has(n) and state.heroes.has(_helps[n]):
+					t += " (помогает: %s)" % str(state.heroes[_helps[n]].name)
+				acts[n] = t
+		state.acts = acts
 		_sync.rpc(state)
 
 

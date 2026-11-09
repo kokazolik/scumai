@@ -1379,13 +1379,21 @@ func _update_pending_banner() -> void:
 	var wl = refs.get("pending_label")
 	if wl == null or not is_instance_valid(wl):
 		return
+	var lines := _partner_acts()
+	wl.text = ("\n".join(lines) + "\nВсе ждут тебя") if lines.size() > 0 else ""
+	refs.pending_card.visible = lines.size() > 0
+
+
+## «✋ Имя: действие» для каждого напарника, который уже выбрал ход.
+func _partner_acts() -> PackedStringArray:
 	var me := Game.my_pname()
-	var others := []
+	var acts: Dictionary = Game.state.get("acts", {})
+	var out := PackedStringArray()
 	for n in Game.state.pending:
 		if str(n) != me and Game.state.heroes.has(n):
-			others.append(str(Game.state.heroes[n].name))
-	wl.text = "✋ %s %s действие — все ждут тебя" % [", ".join(others), "уже выбрали" if others.size() > 1 else "уже выбрал(а)"] if others.size() > 0 else ""
-	refs.pending_card.visible = others.size() > 0
+			var t := str(acts.get(n, ""))
+			out.append("✋ %s: %s" % [str(Game.state.heroes[n].name), "«%s»" % t.left(220) if t != "" else "действие выбрано"])
+	return out
 
 
 func _update_bottom() -> void:
@@ -1601,7 +1609,11 @@ func _wait_text() -> String:
 		var pn := str(Net.players[id])
 		if Game.state.heroes.has(pn) and not (pn in Game.state.pending):
 			missing.append(str(Game.state.heroes[pn].name))
-	return "Ждём: " + ", ".join(missing) if missing.size() > 0 else "Ведущий думает…"
+	var txt := "Ждём: " + ", ".join(missing) if missing.size() > 0 else "Ведущий думает…"
+	var lines := _partner_acts()
+	if lines.size() > 0:
+		txt += "\n\n" + "\n".join(lines)
+	return txt
 
 
 func _build_turn_menu(b: VBoxContainer) -> void:
@@ -3007,7 +3019,8 @@ func _check_notices() -> void:
 				var hn := str(Game.state.heroes[n].name)
 				if tab == "story" and _panel_open:
 					continue   # на экране истории это уже видно плашкой над вариантами
-				_show_notice("ui_hero", "%s сделал(а) ход" % hn, "Действие выбрано. Ждём тебя, чтобы ведущий продолжил.", Callable())
+				var at := str(Game.state.get("acts", {}).get(n, ""))
+				_show_notice("ui_hero", "%s сделал(а) ход" % hn, ("«%s»" % at) if at != "" else "Действие выбрано. Ждём тебя, чтобы ведущий продолжил.", Callable())
 	_seen_pending = pend.duplicate()
 	var v: Dictionary = Game.state.get("vote", {})
 	var vk := str(v.get("q", ""))
@@ -3592,6 +3605,11 @@ func _autotest_tick() -> void:
 				Game.inv("craft", {"r": "potion_heal"})
 			if Game.my_hero().items.size() > 0 and _auto_n % 5 == 0:
 				Game.inv("equip", {"idx": 0})
+			if _auto == "client" and int(Game.state.turn) == 1 and Game.state.get("acts", {}).size() > 0 and int(refs.get("auto_wait", 0)) < 4:
+				refs.auto_wait = int(refs.get("auto_wait", 0)) + 1   # дать снять плашку с действием напарника
+				if shot != "" and refs.auto_wait == 3:
+					get_viewport().get_texture().get_image().save_png("%s/partner_act.png" % shot)
+				return
 			if not (me in Game.state.pending):
 				var opts: Array = Game.state.options.get(me, [])
 				if _auto == "host" and opts.size() > 1 and opts[1] is Dictionary:
