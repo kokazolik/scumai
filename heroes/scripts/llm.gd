@@ -36,6 +36,7 @@ var gc_key := ""
 var _gc_token := ""
 var _gc_exp := 0
 var _gc_url := 0
+var _gc_tls_mode := -1   # какой способ проверки сертификата сработал в прошлый раз
 var _ru_tls: TLSOptions = null   # null — пробуем обычную проверку сертификатов
 var model := MODEL
 var _broke := false   # на балансе OpenRouter кончились деньги — до перезапуска идём в бесплатную модель
@@ -160,15 +161,25 @@ func _fetch_ru_ca() -> bool:
 ## Один HTTP-запрос с учётом сертификата Минцифры. Возвращает массив request_completed.
 func _gc_http(url: String, headers: PackedStringArray, body: String) -> Array:
 	# сначала обычная проверка (или уже скачанный сертификат Минцифры), при ошибке TLS — другой вариант
-	var order := [_ru_tls != null, _ru_tls == null]
+	# 0 — обычная проверка, 1 — сертификат Минцифры, 2 — без проверки сертификата (крайний случай,
+	# выбран автором: на некоторых телефонах цепочка Сбера не проходит проверку движка)
+	var order: Array = [1, 0, 2] if _ru_tls != null else [0, 1, 2]
+	if _gc_tls_mode >= 0:
+		order.erase(_gc_tls_mode)
+		order.push_front(_gc_tls_mode)
 	var r: Array = [HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR, 0, PackedStringArray(), PackedByteArray()]
-	for use_ru in order:
-		if use_ru and _ru_tls == null and not await _fetch_ru_ca():
+	for mode in order:
+		if mode == 1 and _ru_tls == null and not await _fetch_ru_ca():
 			continue
 		var http := HTTPRequest.new()
 		http.timeout = 60.0
-		if use_ru:
+		if mode == 1:
 			http.set_tls_options(_ru_tls)
+		elif mode == 2:
+			# в Godot 4.3 проверка отключается, только если передать какую-нибудь цепочку
+			var any_ca := X509Certificate.new()
+			any_ca.load_from_string(RU_CA_PEM)
+			http.set_tls_options(TLSOptions.client_unsafe(any_ca))
 		add_child(http)
 		if http.request(url, headers, HTTPClient.METHOD_POST, body) != OK:
 			http.queue_free()
@@ -176,6 +187,7 @@ func _gc_http(url: String, headers: PackedStringArray, body: String) -> Array:
 		r = await http.request_completed
 		http.queue_free()
 		if r[0] != HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR:
+			_gc_tls_mode = mode
 			return r
 	return r
 
