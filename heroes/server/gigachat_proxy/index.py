@@ -33,13 +33,21 @@ def _resp(code, obj):
             "body": json.dumps(obj, ensure_ascii=False)}
 
 
-def _http(url, data, headers):
+class ProxyError(Exception):
+    pass
+
+
+def _http(url, data, headers, timeout=25):
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, context=_ctx, timeout=55) as r:
+        with urllib.request.urlopen(req, context=_ctx, timeout=timeout) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
+    except Exception as e:  # сеть, сертификат, таймаут — отдаём игре понятную причину
+        host = url.split("/")[2]
+        reason = getattr(e, "reason", e)
+        raise ProxyError("%s: %s: %s" % (host, type(reason).__name__, reason))
 
 
 def _token(key, scope, force=False):
@@ -62,9 +70,33 @@ def _token(key, scope, force=False):
 
 
 def handler(event, context):
+    try:
+        return _handle(event)
+    except ProxyError as e:
+        print("proxy error:", e)
+        return _resp(502, {"message": str(e)})
+    except Exception as e:
+        print("crash:", repr(e))
+        return _resp(500, {"message": "%s: %s" % (type(e).__name__, e)})
+
+
+def _handle(event):
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     if event.get("httpMethod", "POST") == "GET":
-        return _resp(200, {"ok": True, "service": "chronicles-gigachat-proxy"})
+        if "check" not in (event.get("queryStringParameters") or {}):
+            return _resp(200, {"ok": True, "service": "chronicles-gigachat-proxy"})
+        # ?check — проверить вход в Сбер ключом из настроек функции (ключ не показывается)
+        key = os.environ.get("GIGACHAT_AUTH_KEY", "").strip()
+        if not key:
+            return _resp(200, {"ok": False, "step": "env", "message": "GIGACHAT_AUTH_KEY не задан"})
+        t0 = time.time()
+        try:
+            tok, err = _token(key, os.environ.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"), force=True)
+        except ProxyError as e:
+            return _resp(200, {"ok": False, "step": "oauth", "message": str(e), "sec": round(time.time() - t0, 1)})
+        if err:
+            return _resp(200, {"ok": False, "step": "oauth", "http": err[0], "message": err[1].get("message", ""), "sec": round(time.time() - t0, 1)})
+        return _resp(200, {"ok": True, "step": "oauth", "sec": round(time.time() - t0, 1)})
     app_token = os.environ.get("APP_TOKEN", "")
     if app_token and headers.get("x-app-token", "") != app_token:
         return _resp(403, {"message": "wrong app token"})
@@ -92,7 +124,7 @@ def handler(event, context):
                          {"message": "oauth %s: %s" % (err[0], err[1].get("message", ""))})
         code, out = _http(CHAT_URL, json.dumps(body, ensure_ascii=False).encode(), {
             "Content-Type": "application/json", "Accept": "application/json",
-            "Authorization": "Bearer " + tok})
+            "Authorization": "Bearer " + tok}, timeout=50)
         if code == 401 and attempt == 0:
             continue
         return {"statusCode": code, "headers": {"Content-Type": "application/json; charset=utf-8"},
