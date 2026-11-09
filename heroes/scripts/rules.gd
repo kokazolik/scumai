@@ -40,7 +40,7 @@ const CLASSES := {
 	"Маг": {"armor": [], "hd": 6, "saves": ["ИНТ", "МДР"], "main": "ИНТ", "caster": "ИНТ",
 		"scores": {"ИНТ": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ХАР": 10, "СИЛ": 8},
 		"skills": ["Магия", "История", "Анализ"],
-		"spells": ["fire_bolt", "ray_of_frost", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball"],
+		"spells": ["fire_bolt", "ray_of_frost", "shocking_grasp", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball"],
 		"start": [["quarterstaff", true], ["mage_robe", true], ["spellbook", false], ["potion_heal", false]],
 		"features": "Заклинания на Интеллекте: огонь, лёд, усыпление",
 		"desc": "Огонь, лёд и тайные знания"},
@@ -53,7 +53,7 @@ const CLASSES := {
 	"Жрец": {"armor": ["лёгкий", "средний", "тяжёлый", "shield"], "hd": 8, "saves": ["МДР", "ХАР"], "main": "МДР", "caster": "МДР",
 		"scores": {"МДР": 15, "ТЕЛ": 14, "СИЛ": 13, "ХАР": 12, "ИНТ": 10, "ЛОВ": 8},
 		"skills": ["Медицина", "Религия", "Проницательность"],
-		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "shield_of_faith", "spiritual_weapon", "mass_healing_word"],
+		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "bless", "shield_of_faith", "spiritual_weapon", "hold_person", "mass_healing_word"],
 		"start": [["mace", true], ["scale_mail", true], ["shield", true], ["holy_symbol", true]],
 		"features": "Заклинания на Мудрости: лечение, свет, защита",
 		"desc": "Лечит друзей и жжёт нежить"},
@@ -66,7 +66,7 @@ const CLASSES := {
 	"Бард": {"armor": ["лёгкий"], "hd": 8, "saves": ["ЛОВ", "ХАР"], "main": "ХАР", "caster": "ХАР",
 		"scores": {"ХАР": 15, "ЛОВ": 14, "ТЕЛ": 13, "ИНТ": 12, "МДР": 10, "СИЛ": 8},
 		"skills": ["Выступление", "Убеждение", "Обман", "Проницательность"],
-		"spells": ["vicious_mockery", "healing_word", "thunderwave", "sleep", "shatter"],
+		"spells": ["vicious_mockery", "healing_word", "thunderwave", "sleep", "shatter", "hold_person"],
 		"start": [["rapier", true], ["leather", true], ["fine_clothes", true], ["lute", false]],
 		"features": "Вдохновение барда (союзник добавляет 1к6 к броску), заклинания на Харизме",
 		"desc": "Песни, обаяние и вдохновение"},
@@ -271,6 +271,8 @@ const CONDS := {
 	"frightened": {"name": "Испуган", "icon": "cond_frightened", "desc": "помеха на атаки и проверки"},
 	"prone": {"name": "Сбит с ног", "icon": "cond_prone", "desc": "помеха на атаки, вблизи по нему бьют с преимуществом; встать — потратить перемещение"},
 	"stunned": {"name": "Оглушён", "icon": "cond_stunned", "desc": "пропускает ход, по нему бьют с преимуществом"},
+	"held": {"name": "Скован", "icon": "cond_held", "desc": "не может действовать; удары вблизи — критические; каждый ход пытается вырваться"},
+	"wet": {"name": "Мокрый", "icon": "cond_wet", "desc": "огонь ранит вполовину, холод и молния — вдвое"},
 }
 
 
@@ -296,7 +298,7 @@ static func cond_adv(att: Dictionary, def: Dictionary, melee: bool) -> int:
 	var dc: Dictionary = def.get("conds", {})
 	if ac.has("poisoned") or ac.has("blinded") or ac.has("frightened") or ac.has("prone"):
 		a -= 1
-	if dc.has("blinded") or dc.has("stunned") or (dc.has("prone") and melee):
+	if dc.has("blinded") or dc.has("stunned") or dc.has("held") or (dc.has("prone") and melee):
 		a += 1
 	if dc.has("prone") and not melee:
 		a -= 1
@@ -310,6 +312,7 @@ static func check_adv(h: Dictionary) -> int:
 ## Заклинания. kind: attack (бросок атаки), save (спасбросок цели), auto (без промаха), heal, buff, sleep.
 const SPELLS := {
 	"fire_bolt": {"dt": "огонь", "col": "ff7a3d", "name": "Огненный снаряд", "lvl": 0, "kind": "attack", "dmg": "1d10", "desc": "сгусток огня, 1к10"},
+	"shocking_grasp": {"dt": "молния", "col": "9fe8ff", "name": "Электрошок", "lvl": 0, "kind": "attack", "dmg": "1d8", "desc": "разряд молнии, 1к8; по воде — бьёт током всех впереди"},
 	"ray_of_frost": {"dt": "холод", "col": "7fd4ff", "name": "Луч холода", "lvl": 0, "kind": "attack", "dmg": "1d8", "desc": "ледяной луч, 1к8"},
 	"sacred_flame": {"dt": "излучение", "col": "ffd75e", "name": "Священное пламя", "lvl": 0, "kind": "save", "save": "ЛОВ", "dmg": "1d8", "desc": "свет с небес, 1к8"},
 	"vicious_mockery": {"dt": "психический", "col": "ff8fd0", "name": "Злая насмешка", "lvl": 0, "kind": "save", "save": "МДР", "dmg": "1d4", "cond": "frightened", "desc": "обидная шутка, 1к4, пугает"},
@@ -320,7 +323,9 @@ const SPELLS := {
 	"sleep": {"col": "a9a0ff", "name": "Усыпление", "lvl": 1, "kind": "sleep", "dmg": "5d8", "desc": "усыпляет слабых врагов"},
 	"cure_wounds": {"col": "6fe3a0", "name": "Лечение ран", "lvl": 1, "kind": "heal", "dmg": "1d8", "desc": "лечит 1к8 + мод."},
 	"healing_word": {"bonus": true, "col": "6fe3a0", "name": "Лечащее слово", "lvl": 1, "kind": "heal", "dmg": "1d4", "desc": "лечит 1к4 + мод. издалека"},
-	"shield_of_faith": {"bonus": true, "col": "ffe08a", "name": "Щит веры", "lvl": 1, "kind": "buff", "ac": 2, "desc": "+2 КД союзнику до конца боя"},
+	"shield_of_faith": {"bonus": true, "col": "ffe08a", "name": "Щит веры", "lvl": 1, "kind": "buff", "ac": 2, "conc": true, "desc": "+2 КД союзнику, пока держишь концентрацию"},
+	"bless": {"col": "ffe08a", "name": "Благословение", "lvl": 1, "kind": "bless", "conc": true, "desc": "все союзники +1к4 к атакам и спасброскам, пока держишь концентрацию"},
+	"hold_person": {"col": "c9b8ff", "name": "Удержание", "lvl": 2, "kind": "hold", "save": "МДР", "conc": true, "desc": "сковывает врага: удары вблизи по нему — критические"},
 	"scorching_ray": {"dt": "огонь", "col": "ff7a3d", "name": "Палящий луч", "lvl": 2, "kind": "attack", "dmg": "2d6", "rays": 3, "desc": "три луча по 2к6"},
 	"shatter": {"dt": "звук", "col": "8fb4ff", "name": "Дребезги", "lvl": 2, "kind": "save", "save": "ТЕЛ", "dmg": "3d8", "aoe": true, "desc": "звон по всем, 3к8"},
 	"spiritual_weapon": {"bonus": true, "dt": "силовой", "col": "ffe08a", "name": "Духовное оружие", "lvl": 2, "kind": "attack", "dmg": "2d8", "desc": "призрачный молот, 2к8"},
@@ -358,24 +363,38 @@ const MONSTERS := {
 
 ## Типы урона. Враги бывают уязвимы (×2) или стойки (½) к некоторым.
 const DT_GEN := {"рубящий": "рубящему", "колющий": "колющему", "дробящий": "дробящему", "огонь": "огню", "холод": "холоду",
-	"излучение": "излучению", "психический": "психическому", "силовой": "силовому", "звук": "звуку", "яд": "яду"}
+	"излучение": "излучению", "психический": "психическому", "силовой": "силовому", "звук": "звуку", "яд": "яду", "молния": "молнии"}
 
 ## Предметы окружения в бою (как в тактических RPG: бочки, люстры, обрывы).
 ## kind: aoe — по всем врагам впереди, one — по выбранному врагу, edge — сталкивать с обрыва, high — возвышенность.
 const ENV := {
-	"barrel": {"name": "Бочка с маслом", "icon": "env_barrel", "kind": "aoe", "dmg": "3d6", "dt": "огонь", "save": "ЛОВ", "dc": 13, "desc": "поджечь: взрыв по врагам впереди, 3к6 огнём"},
+	"barrel": {"name": "Бочка с маслом", "icon": "env_barrel", "kind": "aoe", "dmg": "3d6", "dt": "огонь", "save": "ЛОВ", "dc": 13, "surf": "fire", "desc": "поджечь: взрыв по врагам впереди, 3к6 огнём, земля горит"},
 	"chandelier": {"name": "Люстра", "icon": "env_chandelier", "kind": "one", "dmg": "2d8", "dt": "дробящий", "save": "ЛОВ", "dc": 12, "cond": "prone", "desc": "обрушить на врага: 2к8 и сбивает с ног"},
-	"brazier": {"name": "Жаровня", "icon": "env_brazier", "kind": "one", "dmg": "2d6", "dt": "огонь", "save": "ЛОВ", "dc": 12, "desc": "опрокинуть угли на врага: 2к6 огнём"},
+	"brazier": {"name": "Жаровня", "icon": "env_brazier", "kind": "one", "dmg": "2d6", "dt": "огонь", "save": "ЛОВ", "dc": 12, "surf": "fire", "desc": "опрокинуть угли на врагов: 2к6 огнём, земля горит"},
 	"rocks": {"name": "Шаткие камни", "icon": "env_rocks", "kind": "one", "dmg": "2d10", "dt": "дробящий", "save": "ЛОВ", "dc": 13, "desc": "обрушить камнепад: 2к10"},
-	"oil": {"name": "Скользкая жижа", "icon": "env_oil", "kind": "aoe", "dmg": "", "dt": "", "save": "ЛОВ", "dc": 12, "cond": "prone", "desc": "разлить под ноги врагам: падают"},
-	"web": {"name": "Старая паутина", "icon": "env_web", "kind": "one", "dmg": "", "dt": "", "save": "СИЛ", "dc": 12, "cond": "stunned", "desc": "сбросить на врага: запутывает на раунд"},
+	"oil": {"name": "Бочонок масла", "icon": "env_oil", "kind": "aoe", "dmg": "", "dt": "", "save": "ЛОВ", "dc": 12, "cond": "prone", "surf": "oil", "desc": "разлить под ноги врагам: скользко, а огонь подожжёт лужу"},
+	"web": {"name": "Старая паутина", "icon": "env_web", "kind": "one", "dmg": "", "dt": "", "save": "СИЛ", "dc": 12, "cond": "stunned", "surf": "web", "desc": "обрушить на врагов: липнут, а огонь её сожжёт"},
+	"water": {"name": "Бочка воды", "icon": "env_oil", "kind": "aoe", "dmg": "", "dt": "", "save": "ЛОВ", "dc": 0, "surf": "water", "desc": "окатить врагов: мокрые — холод и молния вдвое"},
 	"cliff": {"name": "Обрыв", "icon": "env_cliff", "kind": "edge", "dmg": "3d6", "dt": "дробящий", "desc": "толкнуть врага вниз: 3к6 от падения", "keep": true},
 	"high": {"name": "Возвышенность", "icon": "env_high", "kind": "high", "desc": "занять (тратит перемещение): +2 к стрельбе и заклинаниям-атакам", "keep": true},
 }
 const ENV_BY_PLACE := {
-	"tavern": ["chandelier", "barrel", "brazier"], "village": ["barrel", "high", "oil"], "city": ["barrel", "chandelier", "high"],
-	"forest": ["high", "rocks", "web"], "road": ["high", "rocks", "barrel"], "cave": ["rocks", "cliff", "web"],
+	"tavern": ["chandelier", "barrel", "brazier", "water"], "village": ["barrel", "high", "oil", "water"], "city": ["barrel", "chandelier", "high"],
+	"forest": ["high", "rocks", "web"], "road": ["high", "rocks", "barrel"], "cave": ["rocks", "cliff", "web", "water"],
 	"dungeon": ["brazier", "chandelier", "oil", "web"], "castle": ["chandelier", "brazier", "high"], "ruins": ["rocks", "high", "cliff"],
+	"swamp": ["water", "web", "rocks"], "lake": ["water", "high", "rocks"], "port": ["barrel", "oil", "water"], "sea": ["water", "barrel", "oil"],
+	"camp": ["brazier", "barrel", "oil"], "temple": ["brazier", "chandelier", "water"], "tower": ["brazier", "high", "chandelier"],
+	"mountain": ["cliff", "rocks", "high"], "field": ["high", "rocks", "oil"],
+}
+
+## Поверхности под ногами врагов (как в BG3). Огонь поджигает масло и паутину, холод морозит воду, молния бьёт по ней током.
+const SURFACES := {
+	"oil": {"name": "Масло", "col": "8a7a3a", "desc": "скользко: можно упасть; огонь подожжёт"},
+	"fire": {"name": "Огонь", "col": "ff7a3d", "desc": "горит: 1к6 огнём в начале хода"},
+	"water": {"name": "Вода", "col": "5aa9ff", "desc": "мокрые: холод и молния вдвое, огонь вполовину"},
+	"ice": {"name": "Лёд", "col": "bfe9ff", "desc": "скользко: легко упасть"},
+	"web": {"name": "Паутина", "col": "c8c8c8", "desc": "липко: можно застрять на ход; огонь сожжёт"},
+	"shock": {"name": "Вода под током", "col": "9fe8ff", "desc": "бьёт током: можно оцепенеть"},
 }
 
 
@@ -638,6 +657,8 @@ static func new_hero(hero_name: String, race: String, cls: String, about: String
 			h.equip[item_slot(it)] = it
 		else:
 			h.items.append(it)
+	for k in ["rations", "rations", "torch"]:
+		h.items.append({"id": k})
 	h.max_hp = int(c.hd) + mod(int(scores["ТЕЛ"])) + int(r.get("hp_per_level", 0))
 	h.hp = h.max_hp
 	_update_slots(h)
@@ -834,18 +855,26 @@ static func long_rest(h: Dictionary) -> void:
 	h.conds = {}
 
 
-## Короткий отдых: тратит кости хитов, пока не вылечится. Возвращает вылеченное.
+## Короткий отдых как в BG3: половина максимума хитов и второе дыхание. Возвращает вылеченное.
 static func short_rest(h: Dictionary) -> int:
-	var healed := 0
-	var hd := int(CLASSES[h.cls].hd)
-	while int(h.hd_left) > 0 and int(h.hp) < int(h.max_hp):
-		var v := maxi(1, randi_range(1, hd) + amod(h, "ТЕЛ"))
-		h.hp = mini(int(h.max_hp), int(h.hp) + v)
-		h.hd_left = int(h.hd_left) - 1
-		healed += v
+	var before := int(h.hp)
+	h.hp = mini(int(h.max_hp), int(h.hp) + ceili(int(h.max_hp) / 2.0))
 	if h.cls == "Воин":
 		h.second_wind = true
-	return healed
+	return int(h.hp) - before
+
+
+## Ночлег без еды (как в BG3 «частичный отдых»): половина хитов и половина ячеек.
+static func partial_rest(h: Dictionary) -> void:
+	h.hp = mini(int(h.max_hp), int(h.hp) + ceili(int(h.max_hp) / 2.0))
+	for i in (h.slots_max as Array).size():
+		h.slots[i] = mini(int(h.slots_max[i]), int(h.slots[i]) + ceili(int(h.slots_max[i]) / 2.0))
+	h.death_s = 0
+	h.death_f = 0
+	h.stable = false
+	h.dead = false
+	h.temp_ac = 0
+	h.conds = {}
 
 
 ## Числа из JSON приходят дробными; превращаем целые обратно в int.

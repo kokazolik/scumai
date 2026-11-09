@@ -388,6 +388,11 @@ func _build_menu() -> void:
 			error_text = rep + "\n(скопировано — пришли это разработчику)"
 			_update())
 		content.add_child(diag_btn)
+	content.add_child(_wrap_button("Кармические кости: %s\n%s" % ["вкл" if Game.karmic else "выкл",
+		"после двух неудач подряд следующий бросок чуть удачливее (как в BG3)" if Game.karmic else "чистый случай, как за настоящим столом"], C_CARD2, func():
+		Game.set_karmic(not Game.karmic)
+		screen = ""
+		_refresh(), 20, 92))
 	var mi := LLM.model_info()
 	var note := str(mi.note)
 	if LLM.provider() == "gc":
@@ -1211,6 +1216,19 @@ func _update_combat_box() -> void:
 			s = "[color=#777777]%s[/color]" % s
 		order.append(s)
 	card.add_child(_rich("Раунд %d: %s" % [int(c.round), " · ".join(order)], 19))
+	var sf: Dictionary = c.get("surf", {})
+	var notes := []
+	if not sf.is_empty() and R.SURFACES.has(str(sf.t)):
+		var sd: Dictionary = R.SURFACES[str(sf.t)]
+		notes.append("[color=#%s]Под ногами врагов: %s[/color] (%d р.) — %s" % [str(sd.col), sd.name, int(sf.r), sd.desc])
+	for n in Game.state.heroes:
+		var cc: Dictionary = Game.state.heroes[n].get("conc", {})
+		if not cc.is_empty() and R.SPELLS.has(str(cc.sp)):
+			notes.append("🔮 %s держит «%s»" % [Game.state.heroes[n].name, R.SPELLS[str(cc.sp)].name])
+	if Game.insp_pool() > 0:
+		notes.append("✨ Вдохновение группы: %d" % Game.insp_pool())
+	if notes.size() > 0:
+		card.add_child(_rich(" · ".join(notes), 17))
 	var alive := []
 	for i in c.enemies.size():
 		if not c.enemies[i].dead:
@@ -1415,8 +1433,8 @@ func _bottom_mode() -> String:
 	if asks.size() > 0:
 		var sig := "ask"
 		for a in asks:
-			sig += "%s%s" % [a.who, a.done]
-		return sig
+			sig += "%s%s%s" % [a.who, a.done, a.adv]
+		return sig + str(Game.insp_pool())
 	match Game.phase:
 		"thinking", "roll":
 			return "thinking"
@@ -1424,7 +1442,7 @@ func _bottom_mode() -> String:
 			if Game.state.combat.get("wait", false):
 				return "thinking"
 			if Game.combat_actor() == me and not h.is_empty() and int(h.hp) > 0:
-				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)] + JSON.stringify([Game.state.combat.get("used", {}).get(me, {}), Game.state.combat.get("hidden", {}), Game.state.combat.get("env", []), Game.state.combat.get("high", {}), h.get("second_wind", false), int(h.get("inspire", 0)), _target])
+				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)] + JSON.stringify([Game.state.combat.get("used", {}).get(me, {}), Game.state.combat.get("hidden", {}), Game.state.combat.get("env", []), Game.state.combat.get("high", {}), h.get("second_wind", false), int(h.get("inspire", 0)), _target, Game.state.combat.get("surf", {}), Game.state.combat.get("dip", {}), Game.state.combat.get("diseng", {}), h.get("conc", {}), Game.hero_of(_partner()).get("hp", 0) if _partner() != "" else 0])
 			return "cwait" + Game.combat_actor()
 		"play":
 			if h.is_empty():
@@ -1434,7 +1452,7 @@ func _bottom_mode() -> String:
 			if not Game.state.get("vote", {}).is_empty():
 				return "vote" + JSON.stringify(Game.state.vote)
 			# без state.pending: ход напарника не должен пересоздавать поле ввода и сбрасывать набранный текст
-			return "input" + JSON.stringify(Game.state.options.get(me, [])) + str(Game.merchants_here()) + str(_help_on)
+			return "input" + JSON.stringify(Game.state.options.get(me, [])) + str(Game.merchants_here()) + str(_help_on) + "%d_%d" % [Game.short_rests_left(), Game.rations_total()]
 	return "other"
 
 
@@ -1579,11 +1597,11 @@ func _update_bottom() -> void:
 		hb.custom_minimum_size.y = 56
 		hb.add_theme_font_size_override("font_size", 18)
 		tools.add_child(hb)
-	var rs := _with_icon(_button("Привал", C_CARD2, func(): Game.vote("start", {"kind": "rest_short"})), Icons.tex("ui_campfire"), 30)
+	var rs := _with_icon(_button("Привал · %d" % Game.short_rests_left(), C_CARD2, func(): Game.vote("start", {"kind": "rest_short"})), Icons.tex("ui_campfire"), 30)
 	rs.custom_minimum_size = Vector2(150, 56)
 	rs.add_theme_font_size_override("font_size", 18)
 	tools.add_child(rs)
-	var rl := _with_icon(_button("Ночлег", C_CARD2, func(): Game.vote("start", {"kind": "rest_long"})), Icons.tex("ui_sleep_rest"), 30)
+	var rl := _with_icon(_button("Ночлег · 🍞%d" % Game.rations_total(), C_CARD2, func(): Game.vote("start", {"kind": "rest_long"})), Icons.tex("ui_sleep_rest"), 30)
 	rl.custom_minimum_size = Vector2(150, 56)
 	rl.add_theme_font_size_override("font_size", 18)
 	tools.add_child(rl)
@@ -1664,6 +1682,9 @@ func _build_ask(b: VBoxContainer) -> void:
 			var rb := _button("🎲 Бросить к20", C_ACCENT, func():
 				Game.roll_now())
 			c.add_child(rb)
+			if Game.insp_pool() > 0 and int(a.adv) < 1:
+				c.add_child(_button("✨ С вдохновением (%d): %s" % [Game.insp_pool(), "преимущество" if int(a.adv) == 0 else "снять помеху"], C_PURPLE, func():
+					Game.roll_now(true)))
 		else:
 			c.add_child(_label("Ждём, когда %s бросит кубик" % a.hero, 22, C_MUTED))
 		b.add_child(c.get_parent())
@@ -1702,13 +1723,29 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 				bt.disabled = _spent(icost)
 				b.add_child(_with_icon(bt, Icons.for_item(h.items[i]), 34))
 				var partner := _partner()
-				if d.type == "potion" and partner != "" and not _spent(icost):
-					b.add_child(_menu_button("   › напоить %s" % Game.hero_of(partner).get("name", ""), C_GREEN.darkened(0.45), func():
+				if d.type == "potion" and partner != "" and not _spent("a"):
+					b.add_child(_menu_button("   › бросить %s (действие, лечит издалека)" % Game.hero_of(partner).get("name", ""), C_GREEN.darkened(0.45), func():
 						_combat_menu = ""
-						Game.combat_action({"t": "item", "idx": idx, "target": partner})))
+						Game.combat_action({"t": "throw", "idx": idx, "target": partner})))
+		var throws := 0
+		for i in h.items.size():
+			var ti: Dictionary = Game.throw_info(h.items[i])
+			if ti.is_empty() or ti.kind != "hit" or throws >= 5:
+				continue
+			if throws == 0:
+				b.add_child(_label("Метнуть во врага (действие)", 19, C_ACCENT))
+			throws += 1
+			var tidx: int = i
+			var tb := _menu_button("➶ %s — %s %s" % [R.item_name(h.items[i]), R.dice_ru(str(ti.dmg)), "огнём" if ti.dt == "огонь" else "урона"], C_RED.darkened(0.45), func():
+				_combat_menu = ""
+				Game.combat_action({"t": "throw", "idx": tidx, "target": _target}))
+			tb.disabled = _spent("a")
+			b.add_child(_with_icon(tb, Icons.for_item(h.items[i]), 34))
+		if throws > 0:
+			any = true
 		if not any:
 			b.add_child(_label("Нет зелий, свитков и бомб", 22, C_MUTED))
-		b.add_child(_label("⚡ — бонусное действие: зелье можно выпить и всё равно атаковать в этот ход.", 16, C_MUTED))
+		b.add_child(_label("⚡ — бонусное действие: зелье можно выпить и всё равно атаковать в этот ход. Брошенное после боя подберёте.", 16, C_MUTED))
 		b.add_child(_small_wide_button("Назад", C_CARD2, func():
 			_combat_menu = ""
 			_bottom_key = ""
@@ -1734,7 +1771,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	var front := Game.hero_pos(me) == "front"
 	var mrow := HBoxContainer.new()
 	mrow.add_theme_constant_override("separation", 8)
-	var hint := _label(("Ты впереди: прикрываешь тыл. Отход — враг ударит вдогонку." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит.") + ("  Ты в тени: враги тебя не видят." if c.get("hidden", {}).get(me, false) else "") + ("  Ты на возвышенности: +2 к стрельбе." if c.get("high", {}).get(me, false) else ""), 16, C_MUTED)
+	var hint := _label(("Ты впереди: прикрываешь тыл. Отход — враг ударит вдогонку, если не «Отступить»." if front else "Ты в тылу: ближние враги не достанут, пока впереди кто-то стоит.") + ("  Ты в тени: враги тебя не видят." if c.get("hidden", {}).get(me, false) else "") + ("  Ты на возвышенности: +2 к стрельбе." if c.get("high", {}).get(me, false) else ""), 16, C_MUTED)
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mrow.add_child(hint)
 	var mv := _tiny_button("⇄ В тыл" if front else "⇄ Вперёд", C_BLUE, func(): Game.combat_action({"t": "move"}))
@@ -1764,7 +1801,12 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		_combat_menu = "item"
 		_bottom_key = ""
 		_update_bottom(), "act_item", "menu"])
-	acts.append(["Толкнуть", C_RED.darkened(0.35), func(): Game.combat_action({"t": "shove", "target": _target}), "act_shove", "a"])
+	acts.append(["⚡ Толкнуть", C_RED.darkened(0.35), func(): Game.combat_action({"t": "shove", "target": _target}), "act_shove", "b"])
+	if Game.can_dip(me):
+		acts.append(["⚡ Оружие в огонь", Color("6a3a1a"), func(): Game.combat_action({"t": "dip"}), "act_dip", "b"])
+	if front:
+		var dcost := Game.action_cost(me, {"t": "disengage"})
+		acts.append([("⚡ " if dcost == "b" else "") + "Отступить", C_BLUE.darkened(0.25), func(): Game.combat_action({"t": "disengage"}), "act_disengage", dcost])
 	var hide_cost := Game.action_cost(me, {"t": "hide"})
 	if not c.get("hidden", {}).get(me, false):
 		acts.append([("⚡ " if hide_cost == "b" else "") + "Спрятаться", Color("3a4256"), func(): Game.combat_action({"t": "hide"}), "act_hide", hide_cost])
@@ -1774,8 +1816,8 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		acts.append(["Отвлечь врага", C_GREEN.darkened(0.45), func(): Game.combat_action({"t": "help", "target": hp_partner}), "act_help", "a"])
 	if hp_partner != "":
 		var ph := Game.hero_of(hp_partner)
-		if int(ph.get("hp", 1)) <= 0 and not ph.get("dead", false) and not ph.get("stable", false):
-			acts.append(["Перевязать %s" % ph.get("name", ""), C_GREEN.darkened(0.2), func(): Game.combat_action({"t": "stabilize", "target": hp_partner}), "act_stabilize", "a"])
+		if int(ph.get("hp", 1)) <= 0 and not ph.get("dead", false):
+			acts.append(["Поднять %s" % ph.get("name", ""), C_GREEN.darkened(0.2), func(): Game.combat_action({"t": "stabilize", "target": hp_partner}), "act_revive", "a"])
 	if h.get("second_wind", false):
 		acts.append(["⚡ Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"}), "act_second_wind", "b"])
 	if int(h.get("inspire", 0)) > 0:
@@ -1833,6 +1875,72 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	b.add_child(end)
 
 
+## Самопроверка механик BG3 в автотесте: поверхности, концентрация, отдых.
+func _bg3_selftest() -> void:
+	var c: Dictionary = Game.state.combat
+	var fe: Array = Game._front_enemies()
+	if fe.is_empty():
+		return
+	var i: int = fe[0]
+	var hp0 := int(c.enemies[i].hp)
+	c.surf = {"t": "oil", "r": 3}
+	print("[host] BG3 oil+fire: ", Game._hit_enemy(i, 1, "", "огонь"), " surf=", JSON.stringify(c.surf), " hp ", hp0, "->", c.enemies[i].hp)
+	c.surf = {}
+	print("[host] BG3 water env: ", Game._add_surface("water"), " wet=", c.enemies[fe[0]].get("conds", {}).has("wet"))
+	print("[host] BG3 water+cold: ", Game._surface_react("холод"), " surf=", JSON.stringify(c.surf))
+	c.surf = {"t": "water", "r": 3}
+	print("[host] BG3 water+lightning: ", Game._surface_react("молния"), " surf=", JSON.stringify(c.surf))
+	print("[host] BG3 web+fire: ", Game._add_surface("web"), " / ", Game._add_surface("fire"), " surf=", JSON.stringify(c.surf))
+	print("[host] BG3 tick: ", Game._surface_tick(fe[0]))
+	c.surf = {}
+	var me := Game.my_pname()
+	var h := Game.my_hero()
+	Game._start_conc(me, "shield_of_faith", me)
+	h.temp_ac = 2
+	var res := ""
+	for k in 6:
+		res = Game._damage_hero(me, 30, false)
+		if h.get("conc", {}).is_empty():
+			break
+		h.hp = int(h.max_hp)
+	print("[host] BG3 conc: ", res, " temp_ac=", h.temp_ac)
+	h.hp = int(h.max_hp)
+	for e in c.enemies:
+		e.get("conds", {}).erase("stunned")
+	var throw_i := -1
+	for k in h.items.size():
+		if str(h.items[k].get("id", "")) == "torch":
+			throw_i = k
+	c.surf = {"t": "oil", "r": 3}
+	if throw_i >= 0:
+		print("[host] BG3 throw torch: ", Game._hero_throw(me, throw_i, i), " surf=", JSON.stringify(c.surf), " thrown=", c.get("thrown", []).size())
+	c.surf = {}
+	for e in c.enemies:
+		e.hp = e.max_hp
+		e.dead = false
+	print("[host] BG3 bless: ", Game._hero_spell(me, "bless", -1, true), " blessed=", h.get("blessed", false), " conc=", JSON.stringify(h.get("conc", {})))
+	for k in 5:
+		if Game._hero_spell(me, "hold_person", i, true) and c.enemies[i].get("conds", {}).has("held"):
+			break
+	print("[host] BG3 hold: held=", c.enemies[i].get("conds", {}).has("held"), " conc=", JSON.stringify(h.get("conc", {})), " blessed_after=", h.get("blessed", false))
+	print("[host] BG3 held tick: ", Game._held_tick(i))
+	Game._end_conc(me, "тест")
+	c.dip = {me: int(c.round) + 1}
+	Game._hero_attack(me, i)
+	for e in c.enemies:
+		e.hp = e.max_hp
+		e.dead = false
+	Game._gain_insp("тест")
+	for k in 3:
+		Game._do_rest("short", false)
+	print("[host] BG3 short_left=", Game.short_rests_left())
+	Game.state.campaign.short_left = 2
+	c.surf = {"t": "oil", "r": 2}
+	Game._start_conc(me, "bless", "")
+	print("[host] BG3 insp=", Game.insp_pool(), " short_left=", Game.short_rests_left(), " rations=", Game.rations_total())
+	Game._broadcast()
+
+
 ## Потрачено ли действие ("a") или бонусное действие ("b") в этом ходу.
 func _spent(cost: String) -> bool:
 	var u: Dictionary = Game.state.combat.get("used", {}).get(Game.my_pname(), {})
@@ -1868,6 +1976,7 @@ const SPELL_TINT := {
 	"vicious_mockery": Color("ff8fd0"), "magic_missile": Color("b98cff"), "thunderwave": Color("8fb4ff"), "shatter": Color("8fb4ff"),
 	"sleep": Color("a9a0ff"), "cure_wounds": Color("6fe3a0"), "healing_word": Color("6fe3a0"), "mass_healing_word": Color("6fe3a0"),
 	"shield_of_faith": Color("ffe08a"), "spiritual_weapon": Color("ffe08a"),
+	"shocking_grasp": Color("9fe8ff"), "bless": Color("ffe08a"), "hold_person": Color("c9b8ff"),
 }
 
 
@@ -1902,9 +2011,16 @@ func _spell_facts(h: Dictionary, sid: String) -> Dictionary:
 			how = "без броска"
 			who = "все союзники" if sp.get("all", false) else "самый раненый союзник"
 		"buff":
-			amount = "+%d к КД до конца боя" % int(sp.get("ac", 2))
-			how = "без броска"
+			amount = "+%d к КД" % int(sp.get("ac", 2))
+			how = "без броска, держится на концентрации"
 			who = "самый раненый союзник"
+		"bless":
+			amount = "+1к4 к атакам и спасброскам"
+			how = "без броска, держится на концентрации"
+			who = "все союзники"
+		"hold":
+			amount = "сковывает: удары вблизи — критические"
+			how = "враг кидает спасбросок МДР против СЛ %d каждый ход; звери и нежить не поддаются" % R.spell_dc(h)
 		"sleep":
 			amount = "усыпляет врагов с суммой хитов до %s" % R.dice_ru(dice)
 			how = "начиная со слабых; нежить не спит"
@@ -2015,6 +2131,9 @@ func _build_spellbook(b: VBoxContainer, h: Dictionary) -> void:
 		d.add_child(_label("💥 %s · 🎯 %s" % [f.amount, f.who], 19, C_INK))
 		d.add_child(_label("🎲 " + str(f.how), 17, C_MUTED))
 		d.add_child(_label("✦ " + str(f.cost), 17, C_ACCENT if int(f.slot) >= 0 else C_RED))
+		if sp.get("conc", false):
+			var held: Dictionary = h.get("conc", {})
+			d.add_child(_label("🔮 Концентрация: одно такое заклинание за раз. Если по тебе попадут — бросок ТЕЛ, при провале чары спадут." + ((" Сейчас держишь «%s» — оно спадёт." % R.SPELLS[str(held.sp)].name) if not held.is_empty() and R.SPELLS.has(str(held.sp)) else ""), 16, C_PURPLE.lightened(0.3)))
 		var scost := "b" if sp.get("bonus", false) else "a"
 		d.add_child(_label("⚡ Бонусное действие: после него ещё можно атаковать." if scost == "b" else "⚔ Основное действие хода.", 16, C_ACCENT if scost == "b" else C_MUTED))
 		if int(f.slot) >= 0 and Game.phase == "combat" and _spent(scost):
@@ -3736,9 +3855,28 @@ func _autotest_tick() -> void:
 				Game.continue_campaign(Game.slot)
 				print("[host] SAVETEST reloaded phase=%s round=%s" % [Game.phase, str(Game.state.combat.get("round", -1))])
 				return
+			if OS.get_environment("ALIBI_BG3TEST") != "" and _auto == "host" and not refs.has("auto_bg3"):
+				refs.auto_bg3 = true
+				_bg3_selftest()
 			if Game.combat_actor() == me:
 				var h := Game.my_hero()
 				var u: Dictionary = Game.state.combat.get("used", {}).get(me, {})
+				if OS.get_environment("ALIBI_BG3TEST") != "" and shot != "" and int(refs.get("auto_menu_shot", 0)) < 3:
+					refs.auto_menu_shot = int(refs.get("auto_menu_shot", 0)) + 1
+					if refs.auto_menu_shot == 3:
+						get_viewport().get_texture().get_image().save_png("%s/turn_menu.png" % shot)
+					return
+				if OS.get_environment("ALIBI_BG3TEST") != "" and not u.get("b", false) and Game.can_dip(me) and h.cls == "Воин":
+					Game.combat_action({"t": "dip"})
+					return
+				if OS.get_environment("ALIBI_BG3TEST") != "" and not u.get("a", false) and int(Game.state.combat.round) == 2:
+					for ti in h.items.size():
+						if str(h.items[ti].get("id", "")) == "torch":
+							Game.combat_action({"t": "throw", "idx": ti, "target": -1})
+							return
+				if OS.get_environment("ALIBI_BG3TEST") != "" and not u.get("a", false) and int(Game.state.combat.round) == 3 and Game.hero_pos(me) == "front":
+					Game.combat_action({"t": "disengage"})
+					return
 				if u.get("a", false):
 					if not u.get("b", false) and h.get("second_wind", false) and int(h.hp) < int(h.max_hp):
 						Game.combat_action({"t": "second_wind"})
