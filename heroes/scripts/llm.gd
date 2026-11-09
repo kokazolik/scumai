@@ -26,6 +26,9 @@ const GC_OAUTH := "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 const GC_URLS := ["https://api.giga.chat/v1/chat/completions", "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"]
 ## Корневой сертификат Минцифры: серверы Сбера подписаны им, а в общем наборе его нет. Берём с Госуслуг и храним у себя.
 const RU_CA_URLS := ["https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt", "https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt"]
+## Свой сервер-посредник (Yandex Cloud Functions, код в server/gigachat_proxy): телефон ходит на него,
+## а он — в Сбер с правильной проверкой сертификата. Пусто — пока не задан; адрес можно вставить в игре.
+const DEFAULT_GC_PROXY := ""
 const GC_DOWNGRADE := {"GigaChat-2-Max": "GigaChat-2-Pro", "GigaChat-2-Pro": "GigaChat-2"}
 const FREE_FALLBACK := "google/gemma-4-26b-a4b-it:free"
 
@@ -33,6 +36,7 @@ signal note(text: String)
 
 var api_key := ""
 var gc_key := ""
+var gc_proxy := DEFAULT_GC_PROXY   # адрес посредника; "#пароль" в конце — X-App-Token
 var _gc_token := ""
 var _gc_exp := 0
 var _gc_url := 0
@@ -53,6 +57,7 @@ func _ready() -> void:
 	var cfg2 := ConfigFile.new()
 	if cfg2.load("user://secrets.cfg") == OK:
 		gc_key = str(cfg2.get_value("gigachat", "auth_key", ""))
+		gc_proxy = str(cfg2.get_value("gigachat", "proxy", gc_proxy))
 	if OS.get_environment("GIGACHAT_AUTH_KEY") != "":
 		gc_key = OS.get_environment("GIGACHAT_AUTH_KEY")
 	_load_ru_ca()
@@ -86,12 +91,14 @@ func provider() -> String:
 func has_key() -> bool:
 	if mock:
 		return true
-	return not gc_key.is_empty() if provider() == "gc" else not api_key.is_empty()
+	return not (gc_key.is_empty() and gc_proxy.is_empty()) if provider() == "gc" else not api_key.is_empty()
 
 
 ## Что лежит в буфере: "or" — ключ OpenRouter, "gc" — ключ авторизации GigaChat, "" — не ключ.
 static func key_kind(k: String) -> String:
 	k = k.strip_edges()
+	if k.begins_with("https://") and not k.contains(" "):
+		return "proxy"
 	if k.begins_with("sk-or-"):
 		return "or"
 	if k.length() >= 40 and RegEx.create_from_string("^[A-Za-z0-9+/=]+$").search(k) != null:
@@ -107,6 +114,16 @@ func save_gc_key(key: String) -> void:
 	var cfg := ConfigFile.new()
 	cfg.load("user://secrets.cfg")
 	cfg.set_value("gigachat", "auth_key", gc_key)
+	cfg.save("user://secrets.cfg")
+	if provider() != "gc":
+		set_model("GigaChat-2-Max")
+
+
+func save_gc_proxy(url: String) -> void:
+	gc_proxy = url.strip_edges()
+	var cfg := ConfigFile.new()
+	cfg.load("user://secrets.cfg")
+	cfg.set_value("gigachat", "proxy", gc_proxy)
 	cfg.save("user://secrets.cfg")
 	if provider() != "gc":
 		set_model("GigaChat-2-Max")
@@ -216,18 +233,36 @@ func _gc_auth() -> String:
 
 
 func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int) -> Dictionary:
-	if gc_key.is_empty():
+	if gc_key.is_empty() and gc_proxy.is_empty():
 		return {"ok": false, "text": "", "error": "Нет ключа GigaChat"}
 	var use := model
+	var via_proxy := not gc_proxy.is_empty()
 	for attempt in range(retries + 2):
-		var ae: String = await _gc_auth()
-		if ae != "":
-			return {"ok": false, "text": "", "error": ae}
 		var body := JSON.stringify({"model": use, "messages": messages, "temperature": clampf(temperature, 0.05, 1.5), "max_tokens": max_tokens})
-		var headers := PackedStringArray(["Authorization: Bearer " + _gc_token, "Content-Type: application/json",
-			"Accept: application/json", "User-Agent: Chronicles"])
-		var url: String = GC_URLS[_gc_url] if OS.get_environment("ALIBI_GC_BASE") == "" else OS.get_environment("ALIBI_GC_BASE") + "/chat"
-		var r: Array = await _gc_http(url, headers, body)
+		var r: Array
+		if via_proxy:
+			var parts := gc_proxy.split("#", true, 1)
+			var ph := PackedStringArray(["Content-Type: application/json", "Accept: application/json", "User-Agent: Chronicles"])
+			if not gc_key.is_empty():
+				ph.append("X-Gigachat-Key: " + gc_key)
+			if parts.size() > 1 and parts[1] != "":
+				ph.append("X-App-Token: " + parts[1])
+			var http := HTTPRequest.new()
+			http.timeout = 90.0
+			add_child(http)
+			if http.request(parts[0], ph, HTTPClient.METHOD_POST, body) != OK:
+				http.queue_free()
+				return {"ok": false, "text": "", "error": "неверный адрес сервера GigaChat"}
+			r = await http.request_completed
+			http.queue_free()
+		else:
+			var ae: String = await _gc_auth()
+			if ae != "":
+				return {"ok": false, "text": "", "error": ae}
+			var headers := PackedStringArray(["Authorization: Bearer " + _gc_token, "Content-Type: application/json",
+				"Accept: application/json", "User-Agent: Chronicles"])
+			var url: String = GC_URLS[_gc_url] if OS.get_environment("ALIBI_GC_BASE") == "" else OS.get_environment("ALIBI_GC_BASE") + "/chat"
+			r = await _gc_http(url, headers, body)
 		var code: int = r[1]
 		var data = JSON.parse_string((r[3] as PackedByteArray).get_string_from_utf8())
 		if r[0] == HTTPRequest.RESULT_SUCCESS and code == 200 and data is Dictionary and data.get("choices") is Array and (data.choices as Array).size() > 0:
@@ -236,6 +271,8 @@ func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int
 			if text.strip_edges() != "":
 				return {"ok": true, "text": text, "error": ""}
 			continue
+		if code == 401 and via_proxy:
+			return {"ok": false, "text": "", "error": "сервер GigaChat не принял ключ"}
 		if code == 401:
 			_gc_token = ""   # токен истёк раньше срока
 			continue
@@ -247,7 +284,7 @@ func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int
 			continue
 		if code == 402:
 			return {"ok": false, "text": "", "error": "бесплатные токены GigaChat кончились"}
-		if (r[0] != HTTPRequest.RESULT_SUCCESS or code == 404) and _gc_url == 0:
+		if not via_proxy and (r[0] != HTTPRequest.RESULT_SUCCESS or code == 404) and _gc_url == 0:
 			_gc_url = 1   # новый адрес недоступен — старый
 			continue
 		if attempt < retries + 1 and (r[0] != HTTPRequest.RESULT_SUCCESS or code in RETRY_CODES):

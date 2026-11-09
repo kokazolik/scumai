@@ -2933,6 +2933,13 @@ func _paste_key() -> void:
 			LLM.save_key(k)
 			DisplayServer.clipboard_set("")
 			_toast("Ключ OpenRouter сохранён на этом телефоне")
+		"proxy":
+			LLM.save_gc_proxy(k)
+			DisplayServer.clipboard_set("")
+			_toast("Адрес сервера GigaChat сохранён, ведущий — GigaChat 2 Max")
+			screen = ""
+			_refresh()
+			return
 		"gc":
 			LLM.save_gc_key(k)
 			DisplayServer.clipboard_set("")
