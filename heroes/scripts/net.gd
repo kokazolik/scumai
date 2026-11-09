@@ -14,7 +14,11 @@ const PEER_TIMEOUT_MIN := 120000
 const PEER_TIMEOUT_MAX := 600000
 const RECONNECT_FOR := 180.0
 
+const MqttPeer = preload("res://scripts/mqtt_peer.gd")
+
 var last_ip := ""
+var online := false      # комната через интернет (код), а не по Wi-Fi
+var room_code := ""
 var _reconnect_left := 0.0
 var _reconnect_t := 0.0
 
@@ -49,6 +53,9 @@ func is_reconnecting() -> bool:
 
 ## Хост пропал посреди игры (свернул приложение, моргнул Wi-Fi): не выкидываем в меню, а переподключаемся.
 func _on_server_lost() -> void:
+	if online:
+		_drop("Хост не вернулся")   # интернет-связь сама переподключается; сюда попадаем, только если хост пропал надолго
+		return
 	if Game.phase == "lobby" or last_ip == "":
 		_drop("Хост закрыл комнату")
 		return
@@ -77,6 +84,45 @@ func my_id() -> int:
 	return multiplayer.get_unique_id() if is_online() else 0
 
 
+## Комната через интернет: хост получает код, который диктует напарнику.
+func host_online() -> String:
+	stop()
+	var p := MqttPeer.new()
+	var e: String = await p.start_host(OS.get_environment("ALIBI_ROOMCODE"))
+	if e != "":
+		p.close()
+		return e
+	multiplayer.multiplayer_peer = p
+	online = true
+	room_code = p.code
+	p.relinked.connect(func():
+		if is_host():
+			Game._broadcast())   # пока не было связи, клиенты могли что-то пропустить
+	players = {1: my_name}
+	players_changed.emit()
+	return ""
+
+
+func join_online(code: String) -> String:
+	stop_search()
+	if multiplayer.multiplayer_peer and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
+		multiplayer.multiplayer_peer.close()
+	var p := MqttPeer.new()
+	var e: String = p.start_client(code)
+	if e != "":
+		return e
+	p.host_seen.connect(func():
+		reconnecting.emit(false)
+		_register.rpc_id(1, my_name))   # хост мог нас забыть, пока телефон спал — представляемся снова
+	p.host_lost.connect(func(): reconnecting.emit(true))
+	multiplayer.multiplayer_peer = p
+	online = true
+	room_code = p.code
+	last_ip = ""
+	players = {}
+	return ""
+
+
 func host_room() -> String:
 	stop()
 	var p := ENetMultiplayerPeer.new()
@@ -94,6 +140,7 @@ func host_room() -> String:
 
 func join_room(ip: String) -> String:
 	stop_search()
+	online = false
 	if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
 		multiplayer.multiplayer_peer.close()
 	var p := ENetMultiplayerPeer.new()
@@ -109,8 +156,10 @@ func join_room(ip: String) -> String:
 
 func stop() -> void:
 	_reconnect_left = 0.0
-	if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
+	if multiplayer.multiplayer_peer is ENetMultiplayerPeer or multiplayer.multiplayer_peer is MqttPeer:
 		multiplayer.multiplayer_peer.close()
+	online = false
+	room_code = ""
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	if _beacon:
 		_beacon.close()
@@ -221,6 +270,12 @@ func _register(pname: String) -> void:
 		return
 	var id := multiplayer.get_remote_sender_id()
 	pname = pname.strip_edges().left(16)
+	if players.has(id):
+		# тот же телефон после обрыва связи: просто шлём свежее состояние
+		_sync_players.rpc(players)
+		_welcome.rpc_id(id)
+		Game.send_state_to(id)
+		return
 	var rejoin := Game.phase != "lobby" and Game.can_rejoin(pname)
 	if (Game.phase != "lobby" and not rejoin) or players.size() >= MAX_PLAYERS:
 		_rejected.rpc_id(id, "Игра уже идёт: войти можно только под кличкой своего героя" if Game.phase != "lobby" else "Комната заполнена")

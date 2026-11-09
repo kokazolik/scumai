@@ -14,15 +14,29 @@ const MODEL := "google/gemma-4-26b-a4b-it"
 const RETRY_CODES := [429, 500, 502, 503, 504]
 ## Выбор нейронки (кнопка в меню). Цена — примерно за один ход двоих игроков.
 const MODELS := [
-	{"id": "google/gemma-4-26b-a4b-it", "name": "Gemma 4", "note": "дёшево: ~0,1 коп. за ход, при пустом балансе сама переходит на бесплатную"},
-	{"id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "note": "~0,1 коп. за ход, живее пишет по-русски"},
-	{"id": "google/gemma-4-26b-a4b-it:free", "name": "Gemma 4 бесплатно", "note": "0 ₽, но OpenRouter ограничивает число запросов в день"},
+	{"id": "GigaChat-2-Max", "prov": "gc", "name": "GigaChat 2 Max (Сбер)", "note": "бесплатно 25 млн токенов в год (~2500 ходов), лучший русский; потом сама перейдёт на Pro и Lite"},
+	{"id": "GigaChat-2-Pro", "prov": "gc", "name": "GigaChat 2 Pro (Сбер)", "note": "бесплатно 40 млн токенов в год"},
+	{"id": "GigaChat-2", "prov": "gc", "name": "GigaChat 2 Lite (Сбер)", "note": "бесплатно 250 млн токенов в год, попроще"},
+	{"id": "google/gemma-4-26b-a4b-it", "prov": "or", "name": "Gemma 4 (OpenRouter)", "note": "~0,1 коп. за ход, при пустом балансе сама переходит на бесплатную"},
+	{"id": "deepseek/deepseek-v4-flash", "prov": "or", "name": "DeepSeek V4 Flash (OpenRouter)", "note": "~0,1 коп. за ход"},
+	{"id": "google/gemma-4-26b-a4b-it:free", "prov": "or", "name": "Gemma 4 бесплатно (OpenRouter)", "note": "0 ₽, но мало запросов в день"},
 ]
+## GigaChat (Сбер): ключ авторизации -> токен на 30 минут -> запросы. Доступен из России без VPN.
+const GC_OAUTH := "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+const GC_URLS := ["https://api.giga.chat/v1/chat/completions", "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"]
+## Корневой сертификат Минцифры: серверы Сбера подписаны им, а в общем наборе его нет. Берём с Госуслуг и храним у себя.
+const RU_CA_URLS := ["https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt", "https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt"]
+const GC_DOWNGRADE := {"GigaChat-2-Max": "GigaChat-2-Pro", "GigaChat-2-Pro": "GigaChat-2"}
 const FREE_FALLBACK := "google/gemma-4-26b-a4b-it:free"
 
 signal note(text: String)
 
 var api_key := ""
+var gc_key := ""
+var _gc_token := ""
+var _gc_exp := 0
+var _gc_url := 0
+var _ru_tls: TLSOptions = null   # null — пробуем обычную проверку сертификатов
 var model := MODEL
 var _broke := false   # на балансе OpenRouter кончились деньги — до перезапуска идём в бесплатную модель
 var mock := false
@@ -35,6 +49,12 @@ func _ready() -> void:
 		var cfg := ConfigFile.new()
 		if cfg.load("user://secrets.cfg") == OK:
 			api_key = str(cfg.get_value("openrouter", "api_key", ""))
+	var cfg2 := ConfigFile.new()
+	if cfg2.load("user://secrets.cfg") == OK:
+		gc_key = str(cfg2.get_value("gigachat", "auth_key", ""))
+	if OS.get_environment("GIGACHAT_AUTH_KEY") != "":
+		gc_key = OS.get_environment("GIGACHAT_AUTH_KEY")
+	_load_ru_ca()
 	var sc := ConfigFile.new()
 	if sc.load("user://settings.cfg") == OK:
 		model = str(sc.get_value("ai", "model", MODEL))
@@ -55,7 +75,44 @@ func cycle_model() -> void:
 	for k in MODELS.size():
 		if MODELS[k].id == model:
 			i = k
-	model = MODELS[(i + 1) % MODELS.size()].id
+	set_model(MODELS[(i + 1) % MODELS.size()].id)
+
+
+func provider() -> String:
+	return str(model_info().get("prov", "or"))
+
+
+func has_key() -> bool:
+	if mock:
+		return true
+	return not gc_key.is_empty() if provider() == "gc" else not api_key.is_empty()
+
+
+## Что лежит в буфере: "or" — ключ OpenRouter, "gc" — ключ авторизации GigaChat, "" — не ключ.
+static func key_kind(k: String) -> String:
+	k = k.strip_edges()
+	if k.begins_with("sk-or-"):
+		return "or"
+	if k.length() >= 40 and RegEx.create_from_string("^[A-Za-z0-9+/=]+$").search(k) != null:
+		var dec := Marshalls.base64_to_raw(k).get_string_from_utf8()
+		if dec.contains(":"):
+			return "gc"
+	return ""
+
+
+func save_gc_key(key: String) -> void:
+	gc_key = key.strip_edges()
+	_gc_token = ""
+	var cfg := ConfigFile.new()
+	cfg.load("user://secrets.cfg")
+	cfg.set_value("gigachat", "auth_key", gc_key)
+	cfg.save("user://secrets.cfg")
+	if provider() != "gc":
+		set_model("GigaChat-2-Max")
+
+
+func set_model(id: String) -> void:
+	model = id
 	_broke = false
 	var sc := ConfigFile.new()
 	sc.load("user://settings.cfg")
@@ -63,8 +120,129 @@ func cycle_model() -> void:
 	sc.save("user://settings.cfg")
 
 
-func has_key() -> bool:
-	return mock or not api_key.is_empty()
+func _load_ru_ca() -> void:
+	if not FileAccess.file_exists("user://ru_ca.pem"):
+		return
+	var cert := X509Certificate.new()
+	if cert.load("user://ru_ca.pem") == OK:
+		_ru_tls = TLSOptions.client(cert)
+
+
+## Скачать сертификат Минцифры (один раз), чтобы доверять серверам Сбера.
+func _fetch_ru_ca() -> bool:
+	var pem := ""
+	for u in RU_CA_URLS:
+		var http := HTTPRequest.new()
+		http.timeout = 20.0
+		add_child(http)
+		if http.request(u) != OK:
+			http.queue_free()
+			continue
+		var r: Array = await http.request_completed
+		http.queue_free()
+		var txt := (r[3] as PackedByteArray).get_string_from_utf8()
+		if r[0] == HTTPRequest.RESULT_SUCCESS and int(r[1]) == 200 and txt.contains("BEGIN CERTIFICATE"):
+			pem += txt.strip_edges() + "\n"
+	if pem == "":
+		return false
+	var f := FileAccess.open("user://ru_ca.pem", FileAccess.WRITE)
+	if f == null:
+		return false
+	f.store_string(pem)
+	f.close()
+	_load_ru_ca()
+	return _ru_tls != null
+
+
+## Один HTTP-запрос с учётом сертификата Минцифры. Возвращает массив request_completed.
+func _gc_http(url: String, headers: PackedStringArray, body: String) -> Array:
+	# сначала обычная проверка (или уже скачанный сертификат Минцифры), при ошибке TLS — другой вариант
+	var order := [_ru_tls != null, _ru_tls == null]
+	var r: Array = [HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR, 0, PackedStringArray(), PackedByteArray()]
+	for use_ru in order:
+		if use_ru and _ru_tls == null and not await _fetch_ru_ca():
+			continue
+		var http := HTTPRequest.new()
+		http.timeout = 60.0
+		if use_ru:
+			http.set_tls_options(_ru_tls)
+		add_child(http)
+		if http.request(url, headers, HTTPClient.METHOD_POST, body) != OK:
+			http.queue_free()
+			return [HTTPRequest.RESULT_CANT_CONNECT, 0, PackedStringArray(), PackedByteArray()]
+		r = await http.request_completed
+		http.queue_free()
+		if r[0] != HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR:
+			return r
+	return r
+
+
+func _gc_auth() -> String:
+	if _gc_token != "" and Time.get_unix_time_from_system() < _gc_exp - 60:
+		return ""
+	var rq := "%08x-%04x-4%03x-%04x-%012x" % [randi(), randi() & 0xFFFF, randi() & 0xFFF, (randi() & 0x3FFF) | 0x8000, (randi() << 16) ^ randi()]
+	var headers := PackedStringArray(["Content-Type: application/x-www-form-urlencoded", "Accept: application/json",
+		"RqUID: " + rq.left(36), "Authorization: Basic " + gc_key, "User-Agent: Chronicles"])
+	var oauth := GC_OAUTH if OS.get_environment("ALIBI_GC_BASE") == "" else OS.get_environment("ALIBI_GC_BASE") + "/oauth"
+	var r: Array = await _gc_http(oauth, headers, "scope=GIGACHAT_API_PERS")
+	var data = JSON.parse_string((r[3] as PackedByteArray).get_string_from_utf8())
+	if r[0] == HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR:
+		return "не удалось проверить сертификат Сбера (нужен сертификат Минцифры, скачать его не вышло)"
+	if r[0] != HTTPRequest.RESULT_SUCCESS:
+		return "нет связи с GigaChat (код %d)" % r[0]
+	if int(r[1]) != 200 or not (data is Dictionary) or str(data.get("access_token", "")) == "":
+		return "ключ GigaChat не подошёл (HTTP %d)" % int(r[1])
+	_gc_token = str(data.access_token)
+	var exp := float(data.get("expires_at", 0))
+	_gc_exp = int(exp / 1000.0) if exp > 1e11 else int(exp)
+	if _gc_exp <= 0:
+		_gc_exp = int(Time.get_unix_time_from_system()) + 1700
+	return ""
+
+
+func _gc_chat(messages: Array, temperature: float, max_tokens: int, retries: int) -> Dictionary:
+	if gc_key.is_empty():
+		return {"ok": false, "text": "", "error": "Нет ключа GigaChat"}
+	var use := model
+	for attempt in range(retries + 2):
+		var ae: String = await _gc_auth()
+		if ae != "":
+			return {"ok": false, "text": "", "error": ae}
+		var body := JSON.stringify({"model": use, "messages": messages, "temperature": clampf(temperature, 0.05, 1.5), "max_tokens": max_tokens})
+		var headers := PackedStringArray(["Authorization: Bearer " + _gc_token, "Content-Type: application/json",
+			"Accept: application/json", "User-Agent: Chronicles"])
+		var url: String = GC_URLS[_gc_url] if OS.get_environment("ALIBI_GC_BASE") == "" else OS.get_environment("ALIBI_GC_BASE") + "/chat"
+		var r: Array = await _gc_http(url, headers, body)
+		var code: int = r[1]
+		var data = JSON.parse_string((r[3] as PackedByteArray).get_string_from_utf8())
+		if r[0] == HTTPRequest.RESULT_SUCCESS and code == 200 and data is Dictionary and data.get("choices") is Array and (data.choices as Array).size() > 0:
+			var c = data.choices[0].get("message", {}).get("content")
+			var text := "" if c == null else str(c)
+			if text.strip_edges() != "":
+				return {"ok": true, "text": text, "error": ""}
+			continue
+		if code == 401:
+			_gc_token = ""   # токен истёк раньше срока
+			continue
+		if code == 402 and GC_DOWNGRADE.has(use):
+			var nxt: String = GC_DOWNGRADE[use]
+			note.emit("Бесплатные токены %s на этот год кончились — ведущий перешёл на %s" % [use, nxt])
+			set_model(nxt)
+			use = nxt
+			continue
+		if code == 402:
+			return {"ok": false, "text": "", "error": "бесплатные токены GigaChat кончились"}
+		if (r[0] != HTTPRequest.RESULT_SUCCESS or code == 404) and _gc_url == 0:
+			_gc_url = 1   # новый адрес недоступен — старый
+			continue
+		if attempt < retries + 1 and (r[0] != HTTPRequest.RESULT_SUCCESS or code in RETRY_CODES):
+			await get_tree().create_timer(pow(2.0, attempt)).timeout
+			continue
+		var msg := "GigaChat: HTTP %d" % code if code != 0 else "GigaChat: нет сети (код %d)" % r[0]
+		if data is Dictionary and data.has("message"):
+			msg += ": " + str(data.message)
+		return {"ok": false, "text": "", "error": msg}
+	return {"ok": false, "text": "", "error": "GigaChat не ответил"}
 
 
 func save_key(key: String) -> void:
@@ -80,6 +258,8 @@ func chat(messages: Array, temperature := 0.9, max_tokens := 600, retries := 3) 
 	if mock:
 		await get_tree().create_timer(0.3).timeout
 		return {"ok": true, "text": _mock_reply(messages), "error": ""}
+	if provider() == "gc":
+		return await _gc_chat(messages, temperature, max_tokens, retries)
 	if api_key.is_empty():
 		return {"ok": false, "text": "", "error": "Нет API-ключа OpenRouter"}
 

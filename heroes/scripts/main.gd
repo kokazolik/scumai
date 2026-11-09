@@ -303,6 +303,8 @@ func _build() -> void:
 	match screen:
 		"menu": _build_menu()
 		"search": _build_search()
+		"online": _build_online()
+		"hosting": _build_wait("Открываем комнату в интернете")
 		"connecting": _build_wait("Подключаемся")
 		"lobby": _build_lobby()
 		"create": _build_create()
@@ -345,12 +347,23 @@ func _build_menu() -> void:
 		_save_name())
 	card.add_child(name_edit)
 	content.add_child(card.get_parent())
-	content.add_child(_button("Создать комнату", C_ACCENT, _on_host))
-	content.add_child(_button("Найти комнату", C_BLUE, func():
+	content.add_child(_button("Играть через интернет", C_ACCENT, func():
+		error_text = ""
+		local_screen = "online"
+		_refresh()))
+	var lan := HBoxContainer.new()
+	lan.add_theme_constant_override("separation", 10)
+	var hb := _button("Комната по Wi-Fi", C_BLUE, _on_host)
+	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lan.add_child(hb)
+	var fb := _button("Найти по Wi-Fi", C_BLUE, func():
 		error_text = ""
 		local_screen = "search"
 		Net.start_search()
-		_refresh()))
+		_refresh())
+	fb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lan.add_child(fb)
+	content.add_child(lan)
 	var key_btn := _button("", C_CARD2, _paste_key)
 	refs.key_btn = key_btn
 	content.add_child(key_btn)
@@ -363,9 +376,70 @@ func _build_menu() -> void:
 	var err := _label("", 24, C_RED)
 	refs.err = err
 	content.add_child(err)
-	content.add_child(_label("Один из вас создаёт комнату, второй находит её. Телефоны должны быть в одной Wi-Fi сети "
-		+ "(или второй подключён к точке доступа первого). Ключ ИИ нужен только тому, кто создаёт комнату: "
-		+ "на его телефоне хранится и вся кампания.", 22, C_MUTED))
+	content.add_child(_label("Через интернет можно играть из разных городов: один создаёт комнату и диктует код, второй его вводит. "
+		+ "По Wi-Fi — когда телефоны рядом. Ключ ИИ нужен только тому, кто создаёт комнату: на его телефоне хранится и вся кампания.", 20, C_MUTED))
+
+
+func _build_online() -> void:
+	content.add_child(_title("Игра через интернет"))
+	var c1 := _card()
+	c1.add_child(_label("Создать комнату: получишь код из 6 знаков, продиктуй его напарнику.", 21, C_MUTED))
+	c1.add_child(_button("Создать комнату", C_ACCENT, _on_host_online))
+	content.add_child(c1.get_parent())
+	var c2 := _card()
+	c2.add_child(_label("Войти по коду от напарника:", 21, C_MUTED))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var ce := LineEdit.new()
+	ce.placeholder_text = "K7QM42"
+	ce.max_length = 8
+	ce.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ce.add_theme_font_size_override("font_size", 34)
+	ce.text_changed.connect(func(t: String):
+		var up := t.to_upper()
+		if up != t:
+			var cp := ce.caret_column
+			ce.text = up
+			ce.caret_column = cp)
+	row.add_child(ce)
+	row.add_child(_small_button("Войти", C_BLUE, func(): _join_online(ce.text)))
+	c2.add_child(row)
+	content.add_child(c2.get_parent())
+	var err := _label("", 24, C_RED)
+	refs.err = err
+	content.add_child(err)
+	content.add_child(_label("Связь идёт через бесплатный сервер-посредник. Всё, что уходит в сеть, зашифровано кодом комнаты. "
+		+ "Можно сворачивать приложение: телефоны сами найдут друг друга снова.", 19, C_MUTED))
+	content.add_child(_expander())
+	content.add_child(_button("Назад", C_CARD2, func():
+		local_screen = "menu"
+		_refresh()))
+
+
+func _on_host_online() -> void:
+	error_text = ""
+	if not LLM.has_key():
+		error_text = "Сначала вставь ключ ИИ: он нужен тому, кто создаёт комнату"
+		_update()
+		return
+	local_screen = "hosting"
+	_refresh()
+	var e: String = await Net.host_online()
+	if e != "":
+		error_text = e
+		local_screen = "online"
+	_refresh()
+
+
+func _join_online(code: String) -> void:
+	if code.strip_edges() == "":
+		return
+	error_text = ""
+	var e := Net.join_online(code)
+	if e != "":
+		error_text = e
+		local_screen = "online"
+	_refresh()
 
 
 func _build_search() -> void:
@@ -413,7 +487,17 @@ func _build_wait(text: String) -> void:
 
 func _build_lobby() -> void:
 	content.add_child(_title("Комната"))
-	if Net.is_host():
+	if Net.is_host() and Net.online:
+		var cc := _card(C_CARD2)
+		cc.add_child(_label("Код комнаты — продиктуй напарнику:", 21, C_MUTED))
+		var cl := _label(Net.room_code, 64, C_ACCENT)
+		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cc.add_child(cl)
+		cc.add_child(_small_wide_button("Скопировать код", C_CARD, func():
+			DisplayServer.clipboard_set(Net.room_code)
+			_toast("Код скопирован")))
+		content.add_child(cc.get_parent())
+	elif Net.is_host():
 		var ips := Net.local_ips()
 		content.add_child(_label("IP для ручного входа: " + (", ".join(ips) if ips.size() > 0 else "не найден (нет Wi-Fi?)"), 22, C_MUTED))
 	var card := _card()
@@ -757,7 +841,7 @@ func _apply_panel() -> void:
 
 func _update() -> void:
 	if refs.has("key_btn"):
-		refs.key_btn.text = "Ключ ИИ: есть ✔" if LLM.has_key() else "Ключ ИИ: вставить из буфера"
+		refs.key_btn.text = ("Ключ ИИ: есть ✔" if LLM.has_key() else "Ключ ИИ: вставить из буфера") + ("  ·  " + ("Сбер" if LLM.provider() == "gc" else "OpenRouter"))
 	if refs.has("err"):
 		var e := error_text
 		if Net.is_online() and str(Game.state.get("error", "")) != "":
@@ -2844,12 +2928,20 @@ func _join(ip: String) -> void:
 
 func _paste_key() -> void:
 	var k := DisplayServer.clipboard_get().strip_edges()
-	if k.begins_with("sk-or-"):
-		LLM.save_key(k)
-		DisplayServer.clipboard_set("")
-		_toast("Ключ сохранён на этом телефоне")
-	else:
-		_toast("Скопируй ключ OpenRouter (sk-or-…) и нажми ещё раз")
+	match LLM.key_kind(k):
+		"or":
+			LLM.save_key(k)
+			DisplayServer.clipboard_set("")
+			_toast("Ключ OpenRouter сохранён на этом телефоне")
+		"gc":
+			LLM.save_gc_key(k)
+			DisplayServer.clipboard_set("")
+			_toast("Ключ GigaChat сохранён, ведущий — GigaChat 2 Max")
+			screen = ""
+			_refresh()
+			return
+		_:
+			_toast("Скопируй «Ключ авторизации» GigaChat (developers.sber.ru/studio) или ключ OpenRouter (sk-or-…) и нажми ещё раз")
 	_update()
 
 
@@ -3355,11 +3447,20 @@ func _autotest_setup() -> void:
 	if _auto == "":
 		return
 	Net.my_name = "Хост" if _auto == "host" else "Гость"
+	var via_net := OS.get_environment("ALIBI_ROOMCODE") != ""
 	if _auto == "host":
-		Net.host_room()
+		if via_net:
+			var e: String = await Net.host_online()
+			print("[host] online room: ", Net.room_code, " ", e)
+		else:
+			Net.host_room()
 	else:
 		await get_tree().create_timer(1.0).timeout
-		_join("127.0.0.1")
+		if via_net:
+			await get_tree().create_timer(3.0).timeout
+			_join_online(OS.get_environment("ALIBI_ROOMCODE"))
+		else:
+			_join("127.0.0.1")
 	var t := Timer.new()
 	t.wait_time = 0.7
 	t.autostart = true
