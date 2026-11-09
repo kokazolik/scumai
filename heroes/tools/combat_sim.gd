@@ -231,6 +231,8 @@ func _decide(me: String) -> Dictionary:
 	# ---------- основное действие ----------
 	if int(ph.hp) <= 0 and not ph.get("dead", false):
 		return {"t": "stabilize", "target": p}
+	if int(ph.hp) > 0 and float(ph.hp) / float(ph.max_hp) < 0.3 and hpf > 0.7 and randf() < 0.35:
+		return {"t": "protect", "target": p} if randf() < 0.5 else {"t": "help", "target": p}
 	if int(h.get("lay", 0)) >= 8 and (float(ph.hp) / float(ph.max_hp) < 0.3 or hpf < 0.3):
 		return {"t": "lay_hands", "target": p if float(ph.hp) / float(ph.max_hp) < hpf else me}
 	if h.cls == "Паладин" and (h.slots_max as Array).size() > 0:

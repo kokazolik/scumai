@@ -616,6 +616,8 @@ func _build_lobby() -> void:
 		sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sb)
 	nc.add_child(srow)
+	nc.add_child(_label("Сложность", 22, C_MUTED))
+	nc.add_child(_diff_row(func(d): _diff = d))
 	nc.add_child(_label("Пожелания ведущему (необязательно)", 22, C_MUTED))
 	var wish := LineEdit.new()
 	wish.placeholder_text = "побольше юмора, загадки, дракон…"
@@ -630,7 +632,7 @@ func _build_lobby() -> void:
 			_toast("Новая кампания сотрёт ячейку %d. Нажми ещё раз" % (_new_slot + 1))
 			return
 		_confirm_new = false
-		Game.new_campaign(Game.SETTINGS[_setting], wish.text, _new_slot)
+		Game.new_campaign(Game.SETTINGS[_setting], wish.text, _new_slot, _diff)
 		_new_slot = -1)
 	refs.start = start
 	nc.add_child(start)
@@ -972,11 +974,12 @@ func _update_game() -> void:
 		_update_combat_box()
 		_update_bottom()
 	_check_notices()
+	_check_chapter()
 	_update_chat()
 	if refs.has("journal"):
 		var jk := JSON.stringify([Game.state.campaign.get("quests", []), Game.state.campaign.get("npcs", []), Game.state.campaign.get("chronicle", ""), Game.state.campaign.get("quest", ""),
 			Game.state.campaign.get("rep", {}), Game.state.campaign.get("threads", []), Game.state.get("companions", []),
-			Game.state.campaign.get("goal", ""), Game.state.campaign.get("goal_steps", []), Game.state.map.get("targets", [])])
+			Game.state.campaign.get("goal", ""), Game.state.campaign.get("goal_steps", []), Game.state.map.get("targets", []), Game.state.campaign.get("diff", 1)])
 		if jk != refs.journal_key:
 			refs.journal_key = jk
 			_build_journal(refs.journal)
@@ -1200,6 +1203,7 @@ func _update_combat_box() -> void:
 	refs.combat_key = key
 	var box: VBoxContainer = refs.combat_box
 	for ch in box.get_children():
+		box.remove_child(ch)   # сразу убрать из дерева: иначе на кадр видны две карточки боя
 		ch.queue_free()
 	if c.is_empty() or Game.phase != "combat":
 		return
@@ -1728,6 +1732,27 @@ func _update_bottom() -> void:
 	rl.add_theme_font_size_override("font_size", 18)
 	rest_row.add_child(rl)
 	b.add_child(tools)
+	var mh := Game.my_hero()
+	var uts: Array = R.utility_for(mh) if not mh.is_empty() else []
+	if uts.size() > 0:
+		var uf := HFlowContainer.new()
+		uf.add_theme_constant_override("h_separation", 8)
+		uf.add_theme_constant_override("v_separation", 8)
+		for uid in uts:
+			var u: Dictionary = R.UTILITY[uid]
+			var can := R.util_slot(mh, int(u.lvl)) > 0
+			var on: bool = _util_pick == uid
+			var ub := _with_icon(_button(("✓ " if on else "") + "%s · %d ур." % [u.name, int(u.lvl)], C_PURPLE.darkened(0.15) if on else C_CARD2, func():
+				_util_pick = "" if _util_pick == uid else str(uid)
+				_bottom_key = ""
+				_update_bottom()), Icons.tex(str(u.icon)), 28)
+			ub.disabled = not can
+			ub.custom_minimum_size = Vector2(318, 50)
+			ub.add_theme_font_size_override("font_size", 17)
+			uf.add_child(ub)
+		b.add_child(uf)
+		if _util_pick != "" and R.UTILITY.has(_util_pick):
+			b.add_child(_label("🔮 «%s»: %s — без броска, тратит ячейку. Напиши, на кого или зачем, и жми «Действовать»." % [R.UTILITY[_util_pick].name, R.UTILITY[_util_pick].desc], 16, C_PURPLE.lightened(0.4)))
 	b.add_child(rest_row)
 	b.add_child(_label("🌙 Ночлег — всё восстанавливает (паёк на каждого, под крышей бесплатно). 🔥 Привал — половина хитов, до %d за день. Можно и просто написать «ночуем в таверне»." % Game.SHORT_RESTS, 15, C_MUTED))
 	if _secret_on:
@@ -1741,9 +1766,10 @@ func _update_bottom() -> void:
 		var opt := -1
 		if _opt_pick >= 0 and _opt_pick < opts.size() and opts[_opt_pick] is Dictionary and str(opts[_opt_pick].t) == input.text.strip_edges():
 			opt = _opt_pick
-		Game.submit_action(input.text, partner if _help_on else "", opt, _secret_on and not _help_on)
+		Game.submit_action(input.text, partner if _help_on else "", opt, _secret_on and not _help_on, _util_pick)
 		_help_on = false
 		_secret_on = false
+		_util_pick = ""
 		_opt_pick = -1
 		DisplayServer.virtual_keyboard_hide())
 	go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1754,6 +1780,30 @@ func _update_bottom() -> void:
 
 var _help_on := false
 var _secret_on := false
+var _diff := 1
+const DIFF_HINT := ["меньше боёв, враги слабее, проверки легче", "как задумано правилами", "враги сильнее и злее, проверки строже"]
+
+
+## Три кнопки сложности. cb(d) — что делать при выборе.
+func _diff_row(cb: Callable, cur := -1) -> Control:
+	if cur < 0:
+		cur = _diff
+	var v := VBoxContainer.new()
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	for i in 3:
+		var d: int = i
+		var b := _small_wide_button(Game.DIFF_NAMES[i], C_PURPLE if i == cur else C_CARD2, func():
+			cb.call(d)
+			screen = ""
+			_bottom_key = ""
+			_refresh())
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(b)
+	v.add_child(row)
+	v.add_child(_label(DIFF_HINT[cur], 17, C_MUTED))
+	return v
+var _util_pick := ""
 var _opt_pick := -1
 
 
@@ -1806,6 +1856,20 @@ func _build_ask(b: VBoxContainer) -> void:
 		c.add_child(_label("Сложность %d · бонус %+d%s%s" % [int(a.dc), int(a.bonus), adv, (" · " + str(a.why)) if str(a.why) != "" else ""], 22, C_INK))
 		var ch := _check_chance(int(a.dc), int(a.bonus), int(a.adv))
 		c.add_child(_label("Шанс успеха ≈ %d%%" % ch, 20, C_GREEN if ch >= 60 else (C_ACCENT if ch >= 35 else C_RED)))
+		if not a.done and a.has("alts") and str(a.who) == Game.my_pname():
+			c.add_child(_label("⚠ Ловушка! Выбери, как с ней справиться:", 20, C_RED.lightened(0.3)))
+			var af := HFlowContainer.new()
+			af.add_theme_constant_override("h_separation", 8)
+			af.add_theme_constant_override("v_separation", 8)
+			for k in (a.alts as Array).size():
+				var w: Dictionary = a.alts[k]
+				var kk: int = k
+				var on := int(a.get("alt", -1)) == k
+				var wb := _wrap_button("%s%s\n%s %+d · СЛ %d · ≈%d%%" % ["✓ " if on else "", w.t, w.label, int(w.bonus), int(w.dc), _check_chance(int(w.dc), int(w.bonus), int(w.adv))],
+					C_PURPLE.darkened(0.2) if on else C_CARD2, func(): Game.pick_trap_way(kk), 17, 64)
+				wb.custom_minimum_size.x = 250
+				af.add_child(wb)
+			c.add_child(af)
 		if a.done:
 			c.add_child(_label("Брошено", 22, C_GREEN))
 		elif str(a.who) == Game.my_pname():
@@ -1959,7 +2023,10 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	var acts := []      # основное действие
 	var bonus := []     # бонусное
 	# [текст, цвет, обработчик, иконка, цена, подсказка]
-	acts.append(["Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"}), "act_dodge", "a", "враги с помехой"])
+	if not ph.is_empty() and int(ph.get("hp", 0)) > 0:
+		acts.append(["Защитить %s" % ph.get("name", ""), C_BLUE, func(): Game.combat_action({"t": "protect", "target": hp_partner}), "act_dodge", "a", "ему +2 КД"])
+	else:
+		acts.append(["Уклонение", C_BLUE, func(): Game.combat_action({"t": "dodge"}), "act_dodge", "a", "враги с помехой"])
 	var hide_cost := Game.action_cost(me, {"t": "hide"})
 	if not c.get("hidden", {}).get(me, false):
 		(bonus if hide_cost == "b" else acts).append(["Спрятаться", Color("3a4256"), func(): Game.combat_action({"t": "hide"}), "act_hide", hide_cost, "удар из тени"])
@@ -1967,7 +2034,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		var dcost := Game.action_cost(me, {"t": "disengage"})
 		(bonus if dcost == "b" else acts).append(["Отступить", C_BLUE.darkened(0.25), func(): Game.combat_action({"t": "disengage"}), "act_disengage", dcost, "в тыл без удара"])
 	if not ph.is_empty() and int(ph.get("hp", 0)) > 0:
-		acts.append(["Отвлечь врага", C_GREEN.darkened(0.45), func(): Game.combat_action({"t": "help", "target": hp_partner}), "act_help", "a", "напарнику преим."])
+		acts.append(["Отвлечь врага", C_GREEN.darkened(0.45), func(): Game.combat_action({"t": "help", "target": hp_partner}), "act_help", "a", "ему преим., удары — в тебя"])
 	if not ph.is_empty() and int(ph.get("hp", 1)) <= 0 and not ph.get("dead", false):
 		acts.push_front(["Поднять %s" % ph.get("name", ""), C_GREEN.darkened(0.2), func(): Game.combat_action({"t": "stabilize", "target": hp_partner}), "act_revive", "a", "1 хит, оттащить в тыл"])
 	acts.append(["Бежать", C_CARD2, func(): Game.combat_action({"t": "flee"}), "act_flee", "a", "Акробатика"])
@@ -1983,7 +2050,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		bonus.append(["Толкнуть", C_RED.darkened(0.35), func(): Game.combat_action({"t": "shove", "target": _target}), "act_shove", "b",
 			("с обрыва" if cliff else ("в огонь" if sft == "fire" else ("в паутину" if sft == "web" else "сбить"))) + " · %d%%" % Game.shove_chance(me, st)])
 	if Game.can_dip(me) and h.cls != "Маг":
-		bonus.append(["Клинок в огонь", Color("6a3a1a"), func(): Game.combat_action({"t": "dip"}), "act_dip", "b", "+1к4 огнём"])
+		bonus.append(["Клинок в огонь", Color("6a3a1a"), func(): Game.combat_action({"t": "dip"}), "act_dip", "b", "+1к4 огнём" if Game.near_fire(me) else "факел · раз за бой"])
 	if h.cls == "Варвар" and not h.get("raging", false) and int(h.get("rages", 0)) > 0:
 		bonus.push_front(["Ярость", Color("8a2a1a"), func(): Game.combat_action({"t": "rage"}), "act_rage", "b", "+урон, ½ ран · ещё %d" % int(h.rages)])
 	if Game.can_extra_attack(me):
@@ -2479,9 +2546,27 @@ func _build_journal(v: VBoxContainer) -> void:
 		v.add_child(UISkin.make_ribbon_title(str(c.title), 30, 80))
 	v.add_child(_small_wide_button("Летопись: скопировать всю историю", C_CARD2, Game.request_chronicle))
 	v.add_child(_small_wide_button("🌙 Итоги вечера: карточка-картинка", C_PURPLE.darkened(0.25), _show_summary))
+	if not Game.state.get("chapter_done", {}).is_empty():
+		var chd: Dictionary = Game.state.chapter_done
+		v.add_child(_small_wide_button("📜 Итоги главы %d" % int(chd.get("n", 1)), C_PURPLE.darkened(0.35), func(): _show_summary(chd)))
+	if Net.is_host():
+		var dc := _card()
+		dc.add_child(_section_title("Сложность кампании"))
+		dc.add_child(_diff_row(func(d): Game.set_diff(d), Game.diff()))
+		v.add_child(dc.get_parent())
 	var main := _card()
 	main.add_child(_section_title("Главная цель"))
 	main.add_child(_label(str(c.get("quest", "пока неизвестна")), 23, C_INK))
+	# задание, повторяющее главную цель, показываем здесь же, а не вторым экземпляром в «Заданиях»
+	var main_q: Dictionary = {}
+	for q in c.get("quests", []):
+		if str(q.s) == "active" and Game._same_quest(str(q.t), str(c.get("quest", ""))):
+			main_q = q
+			break
+	if not main_q.is_empty():
+		if str(main_q.get("d", "")) != "":
+			main.add_child(_label(str(main_q.d), 19, C_MUTED))
+		_add_steps(main, main_q.get("st", []))
 	v.add_child(main.get_parent())
 	if str(c.get("goal", "")) != "":
 		var gc := _card()
@@ -2501,7 +2586,7 @@ func _build_journal(v: VBoxContainer) -> void:
 	act.add_child(_section_title("Задания"))
 	var any := false
 	for q in qs:
-		if str(q.s) != "active":
+		if str(q.s) != "active" or q == main_q:
 			continue
 		any = true
 		act.add_child(_quest_row(q, "it_scroll", C_ACCENT))
@@ -3262,10 +3347,18 @@ func _show_item(it: Dictionary, idx: int, slot: String) -> void:
 			_close_item()
 			cb.call()
 	if slot != "":
-		if can_manage:
+		if can_manage and it.get("bound", false):
+			acts.add_child(_label("☠ Проклятие держит: не снять, пока его не снимет жрец или паладин 5+ уровня, или жрец при лавке (%d зол.)." % (100 * Game._tier()), 19, C_PURPLE.lightened(0.4)))
+			var way := Game.uncurse_way(Game.my_pname())
+			if way != "":
+				acts.add_child(_small_wide_button("Снять проклятие" + (" (ячейка 3 ур.)" if way == "spell" else " · %d зол." % (100 * Game._tier())), C_PURPLE.darkened(0.2), close_then.call(func(): Game.inv("uncurse", {"slot": slot}))))
+		elif can_manage:
 			acts.add_child(_small_wide_button("Снять", C_CARD2, close_then.call(func(): Game.inv("unequip", {"slot": slot}))))
 	else:
-		if R.item_slot(it) != "" and can_manage:
+		if R.item_slot(it) != "" and can_manage and d.get("cursed", false):
+			acts.add_child(_label("☠ От вещи веет тёмной силой. Наденешь — получишь её мощь, но снять уже не выйдет без снятия проклятия (−2 к спасброскам).", 19, C_PURPLE.lightened(0.4)))
+			acts.add_child(_small_wide_button("Надеть, несмотря на проклятие", C_PURPLE.darkened(0.25), close_then.call(func(): Game.inv("equip", {"idx": idx}))))
+		elif R.item_slot(it) != "" and can_manage:
 			acts.add_child(_small_wide_button("Надеть", C_BLUE, close_then.call(func(): Game.inv("equip", {"idx": idx}))))
 		if d.type == "coat" and not in_combat:
 			acts.add_child(_small_wide_button("Нанести на оружие", C_GREEN.darkened(0.25), close_then.call(func(): Game.inv("use", {"idx": idx}))))
@@ -3315,7 +3408,7 @@ func _update_overlay() -> void:
 	var shop: Dictionary = Game.my_shop() if Net.is_online() else {}
 	var show_any := screen == "game" and (not loot.is_empty() or not shop.is_empty())
 	var h := Game.my_hero()
-	var key := JSON.stringify([loot, shop, h.get("gold", 0), show_any])
+	var key := JSON.stringify([loot, shop, h.get("gold", 0), show_any, h.get("equip", {})])
 	if key == _overlay_key:
 		return
 	_overlay_key = key
@@ -3367,6 +3460,28 @@ func _update_overlay() -> void:
 	var att := int(shop.get("att", 0))
 	if att != 0:
 		panel.add_child(_label("%s относится к вам: %s — цены %s на %d%%." % [shop.title, Game.att_name(att), "ниже" if att > 0 else "выше", absi(att) * 8], 19, C_GREEN if att > 0 else C_RED))
+	# кузнец: перековать надетое оружие и доспехи
+	var smith := []
+	for sl in ["weapon", "armor", "offhand"]:
+		var eq = h.get("equip", {}).get(sl)
+		if eq is Dictionary and not eq.is_empty():
+			var cost := R.smith_cost(eq, Game._tier())
+			if cost > 0:
+				var sl2: String = sl
+				var sb := _small_wide_button("⚒ %s → +%d · %d зол." % [R.item_name(eq), int(eq.get("plus", 0)) + 1, cost], Color("5a4a2a"), func(): Game.inv("smith", {"slot": sl2}))
+				sb.disabled = int(h.get("gold", 0)) < cost
+				smith.append(sb)
+			if eq.get("bound", false):
+				var sl3: String = sl
+				var ub := _small_wide_button("✨ Снять проклятие: %s · %d зол." % [R.item_name(eq), 100 * Game._tier()], C_PURPLE.darkened(0.2), func(): Game.inv("uncurse", {"slot": sl3}))
+				ub.disabled = int(h.get("gold", 0)) < 100 * Game._tier() and Game.uncurse_way(Game.my_pname()) != "spell"
+				smith.append(ub)
+	if smith.size() > 0:
+		var sc := _card(Color("3a2f1f"))
+		sc.add_child(_label("Кузнец при лавке: перекуёт оружие или доспех (до +%d на вашем уровне)." % mini(3, Game._tier()), 19, C_MUTED))
+		for x in smith:
+			sc.add_child(x)
+		inner.add_child(sc.get_parent())
 	for i in shop.items.size():
 		var it: Dictionary = shop.items[i]
 		var idx: int = i
@@ -4342,10 +4457,26 @@ func _tutorial_hint(b: VBoxContainer, h: Dictionary, c: Dictionary, used: Dictio
 var summary_pop: Control = null
 
 
-func _show_summary() -> void:
+var _chap_seen := -1
+
+
+## Глава закончилась (цель достигнута) — показываем итоги главы.
+func _check_chapter() -> void:
+	var seq := int(Game.state.get("chapter_seq", 0))
+	if _chap_seen < 0:
+		_chap_seen = seq
+		return
+	if seq > _chap_seen:
+		_chap_seen = seq
+		var ch: Dictionary = Game.state.get("chapter_done", {})
+		if not ch.is_empty() and screen == "game":
+			_show_summary(ch)
+
+
+func _show_summary(chapter: Dictionary = {}) -> void:
 	if summary_pop and is_instance_valid(summary_pop):
 		summary_pop.queue_free()
-	var ss: Dictionary = Game.state.get("sess", {})
+	var ss: Dictionary = Game.state.get("sess", {}) if chapter.is_empty() else chapter
 	var layer := Control.new()
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -4378,6 +4509,8 @@ func _show_summary() -> void:
 	var mins := maxi(1, (int(Time.get_unix_time_from_system()) - int(ss.get("t0", Time.get_unix_time_from_system()))) / 60)
 	var d := Time.get_date_dict_from_system()
 	var sub := _label("Итоги вечера · %02d.%02d.%d · %d мин за игрой" % [int(d.day), int(d.month), int(d.year), mins], 18, Color("6b4a2a"))
+	if not chapter.is_empty():
+		sub.text = "Итоги главы %d: %s" % [int(chapter.get("n", 1)), str(chapter.get("title", "")).left(80)]
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
 	var ink := Color("2e1c0c")
@@ -4410,7 +4543,7 @@ func _show_summary() -> void:
 			mv = int(ss.dmg[n])
 			mvp = str(Game.state.heroes[n].name)
 	if mvp != "" and mv > 0:
-		facts.append("🏆 Герой вечера: %s" % mvp)
+		facts.append(("🏆 Герой главы: %s" if not chapter.is_empty() else "🏆 Герой вечера: %s") % mvp)
 	for f in facts:
 		v.add_child(_label(f, 19, ink))
 	var q := str(c.get("goal", ""))

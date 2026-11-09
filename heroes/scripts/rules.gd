@@ -338,6 +338,9 @@ const ITEMS_BASE := {
 	"ember_dust": {"name": "Огненная пыль", "type": "reagent", "price": 15},
 	"antidote": {"name": "Противоядие", "type": "potion", "heal": "1d4", "cure": ["poisoned"], "price": 50},
 	"poison_vial": {"name": "Флакон яда", "type": "coat", "dice": "1d6", "hits": 3, "price": 100},
+	"oil_fire": {"name": "Огненное масло", "type": "coat", "dice": "1d6", "hits": 3, "dt": "огонь", "price": 40, "desc": "клинок горит 3 удара, тролли не регенерируют"},
+	"oil_frost": {"name": "Морозное масло", "type": "coat", "dice": "1d6", "hits": 3, "dt": "холод", "price": 40, "desc": "иней на клинке: может свалить врага"},
+	"frost_salt": {"name": "Морозная соль", "type": "reagent", "price": 15},
 	"fire_flask": {"name": "Алхимический огонь", "type": "bomb", "dmg": "2d6", "save": "ЛОВ", "dc": 12, "price": 50},
 }
 
@@ -347,6 +350,8 @@ const RECIPES := {
 	"antidote": {"need": {"herb": 1, "venom_sac": 1}, "skill": "Медицина"},
 	"poison_vial": {"need": {"venom_sac": 2}, "skill": "Природа"},
 	"fire_flask": {"need": {"ember_dust": 1, "herb": 1}, "skill": "Магия"},
+	"oil_fire": {"need": {"ember_dust": 2}, "skill": "Магия"},
+	"oil_frost": {"need": {"frost_salt": 1, "herb": 1}, "skill": "Природа"},
 	"potion_greater": {"need": {"potion_heal": 2, "ember_dust": 1}, "skill": "Магия"},
 }
 
@@ -533,6 +538,8 @@ static func load_items() -> void:
 					if k != "base":
 						b[k] = it[k]
 				it = b
+			if it.get("cursed", false) and str(it.get("type", "")) != "potion":
+				it.save = int(it.get("save", 0)) - 2
 			for k in ["price", "ac", "attack", "damage", "save", "charges", "hits", "dc", "spell_atk", "crit", "crit_bonus", "bow_dmg", "dex_max", "skill_all"]:
 				if it.has(k):
 					it[k] = int(it[k])
@@ -759,7 +766,14 @@ static func item_desc(it: Dictionary) -> String:
 	if str(d.get("rar", "")) != "":
 		parts.append(str(RARITY.get(str(d.rar), "")))
 	if d.get("cursed", false):
-		parts.append("☠ проклятый")
+		parts.append("☠ проклятый: −2 к спасброскам, снять можно только сняв проклятие")
+	var sid := set_of(str(it.get("id", "")))
+	if sid != "":
+		var st: Dictionary = SETS[sid]
+		var names := []
+		for x in st.items:
+			names.append(str(ITEMS.get(x, {}).get("name", x)))
+		parts.append("комплект «%s»: %s (надеть %s) — %s" % [st.name, " + ".join(names), "все" if int(st.need) >= (st.items as Array).size() else "любые %d" % int(st.need), st.desc])
 	for s in d.get("skill", {}):
 		parts.append("%s +%d" % [s, int(d.skill[s])])
 	if str(d.get("desc", "")) != "":
@@ -864,7 +878,7 @@ static func roll_loot(tier: int) -> Dictionary:
 	var items := []
 	var n := randi_range(1, 2 + (1 if tier >= 2 else 0))
 	var commons := ["potion_heal", "potion_heal", "rope", "torch", "rations", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask",
-		"scroll_missile", "scroll_cure", "leather_cap", "helmet", "fine_clothes", "hunter_cloak"]
+		"scroll_missile", "scroll_cure", "leather_cap", "helmet", "fine_clothes", "hunter_cloak", "frost_salt", "oil_fire", "oil_frost"]
 	var gear := mundane(["weapon", "armor", "shield"])
 	for i in n:
 		var r := randf()
@@ -886,7 +900,7 @@ static func roll_loot(tier: int) -> Dictionary:
 ## Товары лавки по уровню: всё обычное оружие и доспехи SRD, зелья, свитки, а в больших городах — магия.
 static func shop_stock(tier: int) -> Array:
 	var ids := ["potion_heal", "potion_heal", "rope", "torch", "rations", "herb", "herb", "ember_dust", "antidote", "thieves_tools", "fire_flask",
-		"scroll_missile", "scroll_cure", "helmet", "leather_cap", "fine_clothes", "hunter_cloak", "traveler_clothes"]
+		"scroll_missile", "scroll_cure", "helmet", "leather_cap", "fine_clothes", "hunter_cloak", "traveler_clothes", "oil_fire", "oil_frost", "frost_salt"]
 	var gear := mundane(["weapon", "armor", "shield"])
 	gear.shuffle()
 	ids += gear.slice(0, 8)
@@ -1009,7 +1023,63 @@ static func equipped_defs(h: Dictionary) -> Array:
 	for s in h.equip:
 		if h.equip[s] is Dictionary and not h.equip[s].is_empty():
 			out.append(item_def(h.equip[s]))
+	return out + active_sets(h)
+
+
+## Комплекты: надень вещи одного набора — получи бонус (как в BG3/Diablo).
+const SETS := {
+	"guard": {"name": "Городской страж", "items": ["chain_mail", "shield", "helmet"], "need": 3, "bonus": {"ac": 1, "save": 1}, "desc": "+1 КД и +1 к спасброскам"},
+	"hunter": {"name": "Лесной охотник", "items": ["hunter_cloak", "leather", "longbow"], "need": 3, "bonus": {"skill": {"Скрытность": 2, "Выживание": 2}, "bow_dmg": 1}, "desc": "Скрытность и Выживание +2, лук +1 урона"},
+	"rogue": {"name": "Ночной ловкач", "items": ["studded", "rapier", "fine_clothes"], "need": 3, "bonus": {"skill": {"Ловкость рук": 2, "Обман": 2}, "ac": 1}, "desc": "Ловкость рук и Обман +2, +1 КД"},
+	"scholar": {"name": "Странствующий маг", "items": ["mage_robe", "quarterstaff", "circlet_wisdom"], "need": 2, "bonus": {"spell_atk": 1}, "desc": "+1 к атакам и СЛ заклинаний"},
+	"knight": {"name": "Святой рыцарь", "items": ["plate", "shield", "holy_symbol"], "need": 3, "bonus": {"save": 1, "skill": {"Убеждение": 2}}, "desc": "+1 к спасброскам, Убеждение +2"},
+	"elf": {"name": "Эльфийское наследие", "items": ["elven_cloak", "elven_chain", "longbow"], "need": 2, "bonus": {"skill": {"Скрытность": 2, "Восприятие": 2}, "ac": 1}, "desc": "Скрытность и Восприятие +2, +1 КД"},
+	"dwarf": {"name": "Наследие дварфов", "items": ["dwarven_plate", "dwarven_thrower", "belt_of_dwarvenkind"], "need": 2, "bonus": {"ac": 1, "res": ["яд"]}, "desc": "+1 КД, сопротивление яду"},
+	"archmage": {"name": "Регалии архимага", "items": ["robe_of_the_archmagi", "staff_of_the_magi"], "need": 2, "bonus": {"spell_atk": 1, "save": 1}, "desc": "+1 к заклинаниям и спасброскам"},
+	"giant": {"name": "Сила великанов", "items": ["giant_slayer", "belt_of_hill_giant_strength", "gauntlets_power"], "need": 2, "bonus": {"attack": 1, "skill": {"Атлетика": 3}}, "desc": "+1 к атаке, Атлетика +3"},
+}
+
+
+static func set_count(h: Dictionary, sid: String) -> int:
+	var n := 0
+	var ids := []
+	for sl in h.get("equip", {}):
+		if h.equip[sl] is Dictionary and not h.equip[sl].is_empty():
+			ids.append(str(h.equip[sl].get("id", "")))
+	for id in SETS[sid].items:
+		if id in ids:
+			n += 1
+	return n
+
+
+static func active_sets(h: Dictionary) -> Array:
+	var out := []
+	for sid in SETS:
+		var st: Dictionary = SETS[sid]
+		if set_count(h, sid) >= int(st.need):
+			var d: Dictionary = st.bonus.duplicate(true)
+			d.name = "Комплект «%s»" % st.name
+			d.type = "set"
+			out.append(d)
 	return out
+
+
+static func set_of(id: String) -> String:
+	for sid in SETS:
+		if id in SETS[sid].items:
+			return sid
+	return ""
+
+
+## Кузнец: перековать оружие или доспех на +1 выше. -1 — нельзя (уже +3 или не та вещь).
+static func smith_cost(it: Dictionary, tier: int) -> int:
+	var d := item_def(it)
+	if not (str(d.get("type", "")) in ["weapon", "armor", "shield"]) or it.is_empty():
+		return -1
+	var p := int(it.get("plus", 0))
+	if p >= 3 or p + 1 > tier:
+		return -1
+	return [250, 1000, 3000][p]
 
 
 static func score(h: Dictionary, a: String) -> int:
@@ -1059,6 +1129,8 @@ static func ac(h: Dictionary) -> int:
 			continue
 		total += int(item_def(h.equip[s]).get("ac", 0))
 	total += talent_sum(h, "ac")
+	for sd in active_sets(h):
+		total += int(sd.get("ac", 0))
 	if armor is Dictionary and not armor.is_empty():
 		total += talent_sum(h, "ac_armor")
 	return total + int(h.get("temp_ac", 0))
@@ -1105,6 +1177,8 @@ static func attack_info(h: Dictionary) -> Dictionary:
 	if str(h.get("sub", "")) == "blade_pact" and not w.get("ranged", false):
 		m = maxi(m, amod(h, "ХАР"))
 	var atk := m + prof(int(h.level)) + int(w.get("attack", 0)) + talent_sum(h, "atk_weapon")
+	for sd in active_sets(h):
+		atk += int(sd.get("attack", 0))
 	if h.cls == "Следопыт" and w.get("ranged", false):
 		atk += 2
 	var dmg_bonus := m + int(w.get("damage", 0)) + talent_sum(h, "dmg_weapon")
@@ -1161,6 +1235,42 @@ static func slot_for(h: Dictionary, spell_id: String) -> int:
 	var lvl := int(SPELLS[spell_id].lvl)
 	if lvl == 0:
 		return 0
+	for i in range(lvl - 1, (h.slots as Array).size()):
+		if int(h.slots[i]) > 0:
+			return i + 1
+	return -1
+
+
+## Чары вне боя: срабатывают без проверки, ведущий описывает эффект. lvl — уровень ячейки.
+const UTILITY := {
+	"detect_magic": {"name": "Обнаружение магии", "cls": ["Маг", "Жрец", "Бард", "Паладин"], "lvl": 1, "icon": "sp_magic_missile",
+		"desc": "чувствуешь всю магию рядом", "gm": "герой видит ауры всей магии рядом: волшебные вещи, наложенные чары, магические ловушки и иллюзии, и понимает их школу. Опиши, что именно светится и где"},
+	"invisibility": {"name": "Невидимость", "cls": ["Маг", "Бард", "Колдун"], "lvl": 2, "icon": "act_hide",
+		"desc": "невидим до первой атаки", "gm": "герой (или тот, на кого он указал) становится невидимым до первой атаки или заклинания: стража и прохожие его не видят, можно пройти мимо, подслушать, стащить"},
+	"knock": {"name": "Открыть замок", "cls": ["Маг"], "lvl": 2, "icon": "act_help",
+		"desc": "любой замок открывается (громко)", "gm": "любой замок, засов, цепь или магическая печать открывается с громким стуком, слышным далеко вокруг"},
+	"speak_dead": {"name": "Разговор с мёртвыми", "cls": ["Жрец"], "lvl": 3, "icon": "sp_sacred_flame",
+		"desc": "труп ответит на 5 вопросов", "gm": "мертвец ненадолго оживает и отвечает на вопросы героев тем, что знал при жизни: кратко, загадочно, без новых знаний после смерти"},
+	"disguise": {"name": "Маскировка", "cls": ["Бард", "Маг", "Плут"], "lvl": 1, "icon": "act_hide",
+		"desc": "чужой облик на час", "gm": "облик героя меняется на любой человеческий (одежда, лицо, голос) на час; разоблачить можно только тщательным осмотром"},
+	"suggestion": {"name": "Внушение", "cls": ["Колдун", "Бард", "Маг"], "lvl": 2, "icon": "sp_hex",
+		"desc": "существо выполнит разумную просьбу", "gm": "существо, к которому обратился герой, выполняет его разумную просьбу (не самоубийственную и не против своей природы), считая это своей идеей"},
+	"speak_animals": {"name": "Разговор с животными", "cls": ["Следопыт", "Друид", "Бард"], "lvl": 1, "icon": "class_ranger",
+		"desc": "звери понимают и отвечают", "gm": "звери понимают героя и отвечают ему: рассказывают, что видели, куда ушли люди, где опасность — со звериным взглядом на мир"},
+}
+
+
+static func utility_for(h: Dictionary) -> Array:
+	var out := []
+	var mx: int = (h.get("slots_max", []) as Array).size()
+	for id in UTILITY:
+		var u: Dictionary = UTILITY[id]
+		if h.cls in u.cls and int(u.lvl) <= mx:
+			out.append(id)
+	return out
+
+
+static func util_slot(h: Dictionary, lvl: int) -> int:
 	for i in range(lvl - 1, (h.slots as Array).size()):
 		if int(h.slots[i]) > 0:
 			return i + 1
