@@ -62,6 +62,7 @@ var _cls := "Воин"
 # лобби
 var _setting := 0
 var _confirm_new := false
+var _respec_tap := 0
 var _confirm_del := -1
 var _new_slot := -1
 
@@ -1188,9 +1189,11 @@ func _log_entry(e: Dictionary) -> Control:
 
 
 func _update_combat_box() -> void:
+	if not refs.has("combat_box") or not is_instance_valid(refs.combat_box):
+		return
 	var c: Dictionary = Game.state.combat
 	var key := JSON.stringify(c)
-	if key == refs.combat_key:
+	if key == refs.get("combat_key", ""):
 		return
 	refs.combat_key = key
 	var box: VBoxContainer = refs.combat_box
@@ -1545,7 +1548,7 @@ func _bottom_mode() -> String:
 			if Game.state.combat.get("wait", false):
 				return "thinking"
 			if Game.combat_actor() == me and not h.is_empty() and int(h.hp) > 0:
-				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)] + JSON.stringify([Game.state.combat.get("used", {}).get(me, {}), Game.state.combat.get("hidden", {}), Game.state.combat.get("env", []), Game.state.combat.get("high", {}), h.get("second_wind", false), int(h.get("inspire", 0)), _target, Game.state.combat.get("surf", {}), Game.state.combat.get("dip", {}), Game.state.combat.get("diseng", {}), h.get("conc", {}), Game.hero_of(_partner()).get("hp", 0) if _partner() != "" else 0])
+				return "myturn%d_%d_%s_%d_%d_%s_%s_%d" % [int(Game.state.combat.round), int(Game.state.combat.turn), _combat_menu, (h.slots as Array).hash(), h.items.size(), Game.hero_pos(me), str(Game.state.combat.get("moved", {}).get(me, false)), int(h.hp)] + JSON.stringify([Game.state.combat.get("used", {}).get(me, {}), Game.state.combat.get("hidden", {}), Game.state.combat.get("env", []), Game.state.combat.get("high", {}), h.get("second_wind", false), int(h.get("inspire", 0)), _target, Game.state.combat.get("surf", {}), Game.state.combat.get("dip", {}), Game.state.combat.get("diseng", {}), h.get("conc", {}), Game.hero_of(_partner()).get("hp", 0) if _partner() != "" else 0, h.get("raging", false), h.get("rages", 0), h.get("smite_on", false), h.get("lay", 0), h.get("war_left", 0), h.get("brand", 0), Game.state.combat.get("hex", {})])
 			return "cwait" + Game.combat_actor()
 		"play":
 			if h.is_empty():
@@ -1909,6 +1912,16 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 		rb.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		rb.custom_minimum_size = Vector2(0, 42)
 		b.add_child(rb)
+	if h.cls == "Паладин" and (h.slots_max as Array).size() > 0:
+		var free_sl := 0
+		for x in h.slots:
+			free_sl += int(x)
+		var smb := _tiny_button(("⚡ Божественная кара: ВКЛ — каждый удар вблизи тратит ячейку (+2к8)" if h.get("smite_on", false) else "⚡ Божественная кара: выкл — нажми, чтобы карать") + " · ячеек %d" % free_sl,
+			C_ACCENT.darkened(0.35) if h.get("smite_on", false) else C_CARD2, func(): Game.combat_action({"t": "smite_toggle"}))
+		smb.add_theme_font_size_override("font_size", 15)
+		smb.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		smb.custom_minimum_size = Vector2(0, 42)
+		b.add_child(smb)
 	if not h.get("conds", {}).is_empty():
 		var cf := HFlowContainer.new()
 		cf.add_theme_constant_override("h_separation", 8)
@@ -1927,7 +1940,7 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 	var hide_cost := Game.action_cost(me, {"t": "hide"})
 	if not c.get("hidden", {}).get(me, false):
 		(bonus if hide_cost == "b" else acts).append(["Спрятаться", Color("3a4256"), func(): Game.combat_action({"t": "hide"}), "act_hide", hide_cost, "удар из тени"])
-	if front and _front_alive(c) and (int(h.hp) * 2 < int(h.max_hp) or h.cls in ["Маг", "Бард", "Плут", "Следопыт"]):
+	if front and _front_alive(c) and (int(h.hp) * 2 < int(h.max_hp) or h.cls in ["Маг", "Бард", "Плут", "Следопыт", "Колдун"]):
 		var dcost := Game.action_cost(me, {"t": "disengage"})
 		(bonus if dcost == "b" else acts).append(["Отступить", C_BLUE.darkened(0.25), func(): Game.combat_action({"t": "disengage"}), "act_disengage", dcost, "в тыл без удара"])
 	if not ph.is_empty() and int(ph.get("hp", 0)) > 0:
@@ -1948,6 +1961,18 @@ func _build_turn_menu(b: VBoxContainer) -> void:
 			("с обрыва" if cliff else ("в огонь" if sft == "fire" else ("в паутину" if sft == "web" else "сбить"))) + " · %d%%" % Game.shove_chance(me, st)])
 	if Game.can_dip(me) and h.cls != "Маг":
 		bonus.append(["Клинок в огонь", Color("6a3a1a"), func(): Game.combat_action({"t": "dip"}), "act_dip", "b", "+1к4 огнём"])
+	if h.cls == "Варвар" and not h.get("raging", false) and int(h.get("rages", 0)) > 0:
+		bonus.push_front(["Ярость", Color("8a2a1a"), func(): Game.combat_action({"t": "rage"}), "act_rage", "b", "+урон, ½ ран · ещё %d" % int(h.rages)])
+	if Game.can_extra_attack(me):
+		bonus.push_front(["Лишний удар", C_RED.darkened(0.2), func(): Game.combat_action({"t": "extra_attack", "target": _target}), "act_attack", "b",
+			"бешенство" if h.cls == "Варвар" else "ещё %d" % int(h.get("war_left", 0))])
+	if int(h.get("lay", 0)) > 0:
+		var lt := me
+		if not ph.is_empty() and not ph.get("dead", false) and int(ph.hp) * 2 < int(ph.max_hp) and int(ph.hp) < int(h.hp) * 2:
+			lt = hp_partner
+		if int(Game.hero_of(lt).hp) < int(Game.hero_of(lt).max_hp):
+			acts.push_front(["Наложение рук", C_GREEN.darkened(0.25), func(): Game.combat_action({"t": "lay_hands", "target": lt}), "act_lay_hands", "a",
+				"%s · запас %d" % ["себе" if lt == me else str(ph.name), int(h.lay)]])
 	if h.get("second_wind", false):
 		bonus.append(["Второе дыхание", C_GREEN.darkened(0.3), func(): Game.combat_action({"t": "second_wind"}), "act_second_wind", "b", "1к10+%d хитов" % int(h.level)])
 	if int(h.get("inspire", 0)) > 0 and hp_partner != "":
@@ -2201,6 +2226,9 @@ const SPELL_TINT := {
 	"sleep": Color("a9a0ff"), "cure_wounds": Color("6fe3a0"), "healing_word": Color("6fe3a0"), "mass_healing_word": Color("6fe3a0"),
 	"shield_of_faith": Color("ffe08a"), "spiritual_weapon": Color("ffe08a"),
 	"shocking_grasp": Color("9fe8ff"), "bless": Color("ffe08a"), "hold_person": Color("c9b8ff"),
+	"eldritch_blast": Color("c86bff"), "hex": Color("a35bff"), "branding_smite": Color("ffe08a"), "crusaders_mantle": Color("ffd75e"),
+	"blight": Color("8fae5a"), "banishing_flame": Color("ff5a2a"), "ice_storm": Color("a8e4ff"), "cone_of_cold": Color("7fd4ff"),
+	"confusion": Color("ff8fd0"), "guardian_faith": Color("ffd75e"), "flame_strike": Color("ffb35e"), "mass_cure_wounds": Color("6fe3a0"),
 }
 
 
@@ -2210,17 +2238,18 @@ func _spell_facts(h: Dictionary, sid: String) -> Dictionary:
 	var slot := R.slot_for(h, sid)
 	var dice := str(sp.get("dmg", ""))
 	var p := R.parse_dice(dice) if dice != "" else {}
-	if int(sp.lvl) == 0 and int(h.level) >= 5 and dice != "":
+	if int(sp.lvl) == 0 and int(h.level) >= 5 and dice != "" and sid != "eldritch_blast":
 		dice = "%dd%d" % [int(p.n) * 2, int(p.sides)]
-	var plus := R.talent_sum(h, "spell_dmg")
+	var plus := R.talent_sum(h, "spell_dmg") + (R.caster_mod(h) if sp.get("add_mod", false) and int(h.level) >= 2 else 0)
 	var amount := ""
 	var how := ""
 	var who := "одна цель"
 	match str(sp.kind):
 		"attack":
 			amount = R.dice_ru(dice) + (" +%d" % plus if plus > 0 else "") + " урона"
-			if int(sp.get("rays", 1)) > 1:
-				amount = "%d луча по %s" % [int(sp.rays), R.dice_ru(dice)]
+			var nr := 2 if sid == "eldritch_blast" and int(h.level) >= 5 else int(sp.get("rays", 1))
+			if nr > 1:
+				amount = "%d луча по %s" % [nr, R.dice_ru(dice) + (" +%d" % plus if plus > 0 else "")]
 			how = "бросок атаки %+d против КД врага" % R.spell_attack(h)
 		"auto":
 			amount = R.dice_ru(dice) + (" +%d" % plus if plus > 0 else "") + " урона"
@@ -2245,6 +2274,17 @@ func _spell_facts(h: Dictionary, sid: String) -> Dictionary:
 		"hold":
 			amount = "сковывает: удары вблизи — критические"
 			how = "враг кидает спасбросок МДР против СЛ %d каждый ход; звери и нежить не поддаются" % R.spell_dc(h)
+		"hex":
+			amount = "+1к6 некротикой к каждому твоему попаданию по цели"
+			how = "без броска, держится на концентрации"
+		"smite_buff":
+			amount = "следующий удар оружием +2к6 излучением"
+			how = "без броска"
+			who = "твоё оружие"
+		"mantle":
+			amount = "+1к4 излучением к каждому удару оружием"
+			how = "без броска, держится на концентрации"
+			who = "все союзники"
 		"sleep":
 			amount = "усыпляет врагов с суммой хитов до %s" % R.dice_ru(dice)
 			how = "начиная со слабых; нежить не спит"
@@ -2632,7 +2672,7 @@ func _check_choice() -> void:
 	var t := _ftitle("%d уровень!" % int(ch.level), 40)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
-	var sub := _label("Выбери +2 к одной характеристике" if ch.kind == "asi" else "Выбери новый талант", 22, C_MUTED)
+	var sub := _label("Выбери +2 к одной характеристике" if ch.kind == "asi" else ("Выбери свой путь — это навсегда (или до переобучения)" if ch.kind == "sub" else "Выбери новый талант"), 22, C_MUTED)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
 	for opt in ch.options:
@@ -2642,6 +2682,9 @@ func _check_choice() -> void:
 		if ch.kind == "asi":
 			title = "%s +2" % R.AB_NAME.get(o, o)
 			desc = "сейчас %d (мод %+d), станет %d (мод %+d)" % [int(h.scores[o]), R.mod(int(h.scores[o])), mini(20, int(h.scores[o]) + 2), R.mod(mini(20, int(h.scores[o]) + 2))]
+		elif ch.kind == "sub":
+			title = str(R.SUBCLASSES[o].name)
+			desc = str(R.SUBCLASSES[o].desc)
 		else:
 			title = str(R.TALENTS[o].name)
 			desc = str(R.TALENTS[o].desc)
@@ -2954,6 +2997,22 @@ func _sheet_magic(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
 		feats = str(feats).split(";" if ";" in str(feats) else ". ", false)
 	for f in feats:
 		fc.add_child(_label("✦ " + str(f).strip_edges().trim_suffix("."), 20, C_INK))
+	if R.SUBCLASSES.has(str(h.get("sub", ""))):
+		var sd: Dictionary = R.SUBCLASSES[str(h.sub)]
+		var sr := VBoxContainer.new()
+		sr.add_theme_constant_override("separation", 0)
+		sr.add_child(_label("◆ Путь: " + str(sd.name), 22, C_PURPLE.lightened(0.45)))
+		sr.add_child(_label(str(sd.desc), 17, C_MUTED))
+		fc.add_child(sr)
+	var res := []
+	if h.cls == "Варвар":
+		res.append("ярость: %d/%d" % [int(h.get("rages", 0)), R.rages_max(h)])
+	if h.cls == "Паладин":
+		res.append("наложение рук: %d/%d" % [int(h.get("lay", 0)), 5 * int(h.level)])
+	if str(h.get("sub", "")) == "war_domain":
+		res.append("удары жреца войны: %d" % int(h.get("war_left", 0)))
+	if res.size() > 0:
+		fc.add_child(_label("Запасы до отдыха: " + ", ".join(res), 18, C_ACCENT))
 	for td in R.talent_names(h):
 		var tr := VBoxContainer.new()
 		tr.add_theme_constant_override("separation", 0)
@@ -2962,6 +3021,22 @@ func _sheet_magic(v: VBoxContainer, h: Dictionary, in_combat: bool) -> void:
 		fc.add_child(tr)
 	if h.get("second_wind", false) and not in_combat:
 		fc.add_child(_small_wide_button("Второе дыхание (1к10+%d)" % int(h.level), C_GREEN.darkened(0.3), func(): Game.inv("second_wind", {})))
+	if int(h.get("lay", 0)) > 0 and not in_combat:
+		for n in Game.state.heroes:
+			var tn: String = n
+			var th: Dictionary = Game.state.heroes[tn]
+			if int(th.hp) < int(th.max_hp) and not th.get("dead", false):
+				fc.add_child(_small_wide_button("Наложение рук: %s (%d/%d)" % ["себе" if th == h else str(th.name), int(th.hp), int(th.max_hp)], C_GREEN.darkened(0.3), func(): Game.inv("lay_hands", {"target": tn})))
+	if not in_combat and int(h.level) >= 2 and h == Game.my_hero():
+		var rsb := _small_wide_button("Переобучение — %d зм: заново выбрать таланты, +2 и путь" % Game.RESPEC_COST, C_CARD2, func():
+			if Time.get_ticks_msec() - _respec_tap > 4000:
+				_respec_tap = Time.get_ticks_msec()
+				_toast("Характеристики вернутся к стартовым, таланты, +2 и путь выберешь заново. Нажми ещё раз")
+				return
+			_respec_tap = 0
+			Game.inv("respec", {}))
+		rsb.disabled = int(h.gold) < Game.RESPEC_COST
+		fc.add_child(rsb)
 	v.add_child(fc.get_parent())
 
 	var spells := R.known_spells(h)

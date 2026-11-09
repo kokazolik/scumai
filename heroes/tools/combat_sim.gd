@@ -7,6 +7,12 @@ const R = preload("res://scripts/rules.gd")
 var G
 var N
 var fights := [
+	{"name": "Ярость у костра", "party": [["Варвар", 3, "berserker"], ["Колдун", 3, "fiend"]], "foes": [{"id": "orc", "count": 2}, {"id": "goblin", "count": 2}], "env": ["brazier"], "gear": [[0, "flame_tongue"]]},
+	{"name": "Паладин и нежить", "party": [["Паладин", 4, "devotion"], ["Колдун", 4, "blade_pact"]], "foes": [{"id": "ghoul", "count": 2}, {"id": "skeleton", "count": 2}], "env": ["brazier", "rocks"]},
+	{"name": "Мастер боя и чародейка", "party": [["Воин", 5, "battle_master"], ["Маг", 7, "evocation"]], "foes": [{"id": "troll", "count": 1}, {"id": "orc", "count": 2}], "env": ["oil", "cliff"]},
+	{"name": "Медведь и жрец войны", "party": [["Варвар", 5, "bear_totem"], ["Жрец", 9, "war_domain"]], "foes": [{"id": "ogre", "count": 2}, {"id": "wight", "count": 1}], "env": ["water"], "gear": [[0, "thunder_hammer"], [1, "sun_mace"]]},
+	{"name": "Звери и ассасин", "party": [["Следопыт", 3, "beast_master"], ["Плут", 3, "assassin_sub"]], "foes": [{"id": "bandit", "count": 3}, {"id": "bandit_captain", "count": 1}], "env": ["high", "barrel"], "gear": [[1, "vampire_blade"]]},
+	{"name": "Мстец и охотник", "party": [["Паладин", 5, "vengeance"], ["Следопыт", 5, "hunter_sub"]], "foes": [{"id": "minotaur", "count": 1}, {"id": "hobgoblin", "count": 2}], "env": ["cliff"], "gear": [[0, "frost_brand"], [1, "storm_bow"]]},
 	{"name": "Гоблины у бочек", "party": [["Воин", 3], ["Маг", 3]], "foes": [{"id": "goblin", "count": 3}, {"id": "goblin_shaman", "count": 1}], "env": ["oil", "brazier"]},
 	{"name": "Бандиты на обрыве", "party": [["Плут", 3], ["Жрец", 3]], "foes": [{"id": "bandit", "count": 2}, {"id": "cultist", "count": 2}, {"id": "kobold", "count": 2}], "env": ["cliff", "high"]},
 	{"name": "Волки в лесу", "party": [["Следопыт", 2], ["Бард", 2]], "foes": [{"id": "wolf", "count": 3}], "env": ["web", "rocks"]},
@@ -36,12 +42,17 @@ func _initialize() -> void:
 var started := false
 
 
-func _hero(cls: String, lvl: int, nm: String) -> Dictionary:
-	var race: String = {"Воин": "Дварф", "Маг": "Эльф", "Плут": "Полурослик", "Жрец": "Человек", "Следопыт": "Эльф", "Бард": "Человек"}[cls]
+func _hero(cls: String, lvl: int, nm: String, sub := "") -> Dictionary:
+	var race: String = {"Воин": "Дварф", "Маг": "Эльф", "Плут": "Полурослик", "Жрец": "Человек", "Следопыт": "Эльф", "Бард": "Человек",
+		"Варвар": "Полуорк", "Паладин": "Человек", "Колдун": "Тифлинг"}[cls]
 	var h: Dictionary = R.new_hero(nm, race, cls, "")
 	while int(h.level) < lvl:
 		R.level_up(h)
 	h.erase("choices")
+	if sub != "":
+		h.choices = [{"level": 3, "kind": "sub", "options": [sub]}]
+		print(R.apply_choice(h, sub))
+	R.long_rest(h)
 	h.items.append({"id": "potion_heal"})
 	return h
 
@@ -60,7 +71,13 @@ func _next_fight() -> void:
 	G.state.heroes = {}
 	var names := ["Аня", "Боря"]
 	for k in 2:
-		G.state.heroes[names[k]] = _hero(f.party[k][0], f.party[k][1], "%s-%s" % [names[k], f.party[k][0]])
+		G.state.heroes[names[k]] = _hero(f.party[k][0], f.party[k][1], "%s-%s" % [names[k], f.party[k][0]], str(f.party[k][2]) if f.party[k].size() > 2 else "")
+	for g in f.get("gear", []):
+		G.state.heroes[names[int(g[0])]].equip.weapon = {"id": str(g[1])}
+	G.state.companions = []
+	for k in 2:
+		if str(G.state.heroes[names[k]].get("sub", "")) == "beast_master":
+			G._add_beast(names[k])
 	N.players = {1: names[0], 2: names[1]}
 	G.state.log = []
 	G._busy = false
@@ -180,6 +197,14 @@ func _decide(me: String) -> Dictionary:
 			return {"t": "item", "idx": _idx(h, "potion_heal"), "target": me}
 		if h.get("second_wind", false) and hpf < 0.55:
 			return {"t": "second_wind"}
+		if h.cls == "Варвар" and not h.get("raging", false) and int(h.get("rages", 0)) > 0:
+			return {"t": "rage"}
+		if h.cls == "Колдун" and "hex" in R.known_spells(h) and R.slot_for(h, "hex") >= 0 and h.get("conc", {}).is_empty() and (boss or alive.size() >= 2) and not used.get("a", false):
+			return {"t": "spell", "spell": "hex", "target": tgt}
+		if "branding_smite" in R.known_spells(h) and R.slot_for(h, "branding_smite") >= 0 and boss and int(h.get("brand", 0)) == 0 and not used.get("a", false):
+			return {"t": "spell", "spell": "branding_smite", "target": -1}
+		if G.can_extra_attack(me) and used.get("a", false):
+			return {"t": "extra_attack", "target": tgt}
 		if "healing_word" in R.known_spells(h) and R.slot_for(h, "healing_word") >= 0 and (int(ph.hp) <= 0 or float(ph.hp) / float(ph.max_hp) < 0.3) and not ph.get("dead", false):
 			return {"t": "spell", "spell": "healing_word", "target": p}
 		if front and fe.size() > 0 and _env("cliff") >= 0:
@@ -200,6 +225,12 @@ func _decide(me: String) -> Dictionary:
 	# ---------- основное действие ----------
 	if int(ph.hp) <= 0 and not ph.get("dead", false):
 		return {"t": "stabilize", "target": p}
+	if int(h.get("lay", 0)) >= 8 and (float(ph.hp) / float(ph.max_hp) < 0.3 or hpf < 0.3):
+		return {"t": "lay_hands", "target": p if float(ph.hp) / float(ph.max_hp) < hpf else me}
+	if h.cls == "Паладин" and (h.slots_max as Array).size() > 0:
+		var want_smite: bool = boss or c.enemies[tgt].get("undead", false)
+		if want_smite != h.get("smite_on", false):
+			G._cact({"t": "smite_toggle"})
 	if G.insp_pool() > 0 and boss and not c.get("help", {}).get(me, false) and not (h.cls in ["Маг"]):
 		G._cact({"t": "insp"})
 		stats.acts["%s insp" % h.cls] = int(stats.acts.get("%s insp" % h.cls, 0)) + 1
@@ -222,7 +253,28 @@ func _decide(me: String) -> Dictionary:
 		return {"t": "env", "idx": _env("chandelier"), "target": fe[0]}
 	# заклинатели
 	match h.cls:
+		"Колдун":
+			if alive.size() >= 3 and can.call("banishing_flame"):
+				return {"t": "spell", "spell": "banishing_flame", "target": -1}
+			if alive.size() >= 3 and can.call("fireball"):
+				return {"t": "spell", "spell": "fireball", "target": -1}
+			if boss and can.call("blight"):
+				for i in alive:
+					if not c.enemies[i].get("undead", false) and int(c.enemies[i].max_hp) >= 50:
+						return {"t": "spell", "spell": "blight", "target": i}
+			if str(h.get("sub", "")) != "blade_pact":
+				var ht := int(c.get("hex", {}).get(me, -1))
+				return {"t": "spell", "spell": "eldritch_blast", "target": ht if ht >= 0 and not c.enemies[ht].dead else tgt}
+		"Паладин":
+			if int(c.round) == 1 and can.call("crusaders_mantle") and h.get("conc", {}).is_empty():
+				return {"t": "spell", "spell": "crusaders_mantle", "target": -1}
+			if int(c.round) == 1 and can.call("bless") and h.get("conc", {}).is_empty():
+				return {"t": "spell", "spell": "bless", "target": -1}
 		"Маг":
+			if alive.size() >= 2 and can.call("cone_of_cold"):
+				return {"t": "spell", "spell": "cone_of_cold", "target": -1}
+			if alive.size() >= 2 and can.call("ice_storm"):
+				return {"t": "spell", "spell": "ice_storm", "target": -1}
 			if alive.size() >= 3 and can.call("fireball"):
 				return {"t": "spell", "spell": "fireball", "target": -1}
 			if fe.size() >= 2 and can.call("burning_hands") and surf != "water":
@@ -245,6 +297,12 @@ func _decide(me: String) -> Dictionary:
 		"Жрец":
 			if int(c.round) == 1 and can.call("bless") and h.get("conc", {}).is_empty():
 				return {"t": "spell", "spell": "bless", "target": -1}
+			if float(ph.hp) / float(ph.max_hp) < 0.4 and hpf < 0.5 and can.call("mass_cure_wounds"):
+				return {"t": "spell", "spell": "mass_cure_wounds", "target": -1}
+			if alive.size() >= 2 and can.call("flame_strike"):
+				return {"t": "spell", "spell": "flame_strike", "target": -1}
+			if boss and can.call("guardian_faith"):
+				return {"t": "spell", "spell": "guardian_faith", "target": tgt}
 			if float(ph.hp) / float(ph.max_hp) < 0.4 and can.call("cure_wounds"):
 				return {"t": "spell", "spell": "cure_wounds", "target": p}
 			if boss and can.call("hold_person") and h.get("conc", {}).is_empty():

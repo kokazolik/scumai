@@ -1811,7 +1811,11 @@ func _give_xp(pname: String, xp: int) -> void:
 
 func _damage_hero(pname: String, dmg: int, crit: bool) -> String:
 	var h: Dictionary = state.heroes[pname]
-	var out := _damage_hero_raw(pname, dmg, crit)
+	var rnote := ""
+	if h.get("raging", false) and dmg > 1 and int(h.hp) > 0:
+		dmg = maxi(1, dmg / 2)
+		rnote = "Ярость: только %d урона. " % dmg
+	var out := rnote + _damage_hero_raw(pname, dmg, crit)
 	if h.get("conc", {}).is_empty() or dmg <= 0:
 		return out
 	if int(h.hp) <= 0 or h.get("dead", false):
@@ -2040,6 +2044,8 @@ func _inv(op: String, a: Dictionary) -> void:
 			var txt := R.apply_choice(h, str(a.get("pick", "")))
 			if txt != "":
 				_log("lvl", h.name, txt)
+				if str(h.get("sub", "")) == "beast_master" and str(a.get("pick", "")) == "beast_master":
+					_add_beast(pname)
 				_save()
 		"equip":
 			if idx < 0 or idx >= h.items.size():
@@ -2055,7 +2061,7 @@ func _inv(op: String, a: Dictionary) -> void:
 				_broadcast()
 				return
 			var cat := str(R.item_def(it).get("cat", "shield" if slot == "offhand" else ""))
-			if slot in ["armor", "offhand"] and not (cat in R.CLASSES[h.cls].get("armor", [])):
+			if slot in ["armor", "offhand"] and not (cat in R.CLASSES[h.cls].get("armor", []) or cat in h.get("extra_armor", [])):
 				_log("sys", h.name, "%s не умеет носить: %s." % [h.name, R.item_name(it)])
 				_broadcast()
 				return
@@ -2174,11 +2180,101 @@ func _inv(op: String, a: Dictionary) -> void:
 				return
 			h.second_wind = false
 			_heal_hero(pname, randi_range(1, 10) + int(h.level))
+		"lay_hands":
+			if in_combat:
+				return
+			if not _lay_hands(pname, str(a.get("target", pname))):
+				return
+		"respec":
+			if in_combat:
+				return
+			if int(h.gold) < RESPEC_COST:
+				_log("sys", h.name, "Переобучение стоит %d зм — у %s только %d." % [RESPEC_COST, h.name, int(h.gold)])
+				_broadcast()
+				return
+			h.gold = int(h.gold) - RESPEC_COST
+			_log("lvl", h.name, respec(h))
+			if str(h.get("sub", "")) == "" and _beast_of(pname) >= 0:
+				state.companions.remove_at(_beast_of(pname))
 		_:
 			return
 	if not in_combat:
 		_save()
 	_broadcast()
+
+
+const RESPEC_COST := 100
+
+
+## Переобучение (как у Уизерса в BG3): характеристики — к стартовым, таланты, +2 и подкласс — выбрать заново.
+static func respec(h: Dictionary) -> String:
+	var c: Dictionary = R.CLASSES[h.cls]
+	var r: Dictionary = R.RACES.get(h.race, R.RACES["Человек"])
+	for a in R.AB:
+		h.scores[a] = int(c.scores[a]) + int(r.bonus.get(a, 0))
+	h.talents = []
+	h.erase("sub")
+	h.erase("extra_armor")
+	h.choices = []
+	# хиты по формуле, как при честном повышении уровней
+	var con := R.mod(int(h.scores["ТЕЛ"]))
+	var rh := int(r.get("hp_per_level", 0))
+	var mhp := int(c.hd) + con + rh
+	for lv in range(2, int(h.level) + 1):
+		mhp += maxi(1, int(c.hd) / 2 + 1 + con + rh)
+	var lost := int(h.max_hp) - int(h.hp)
+	h.max_hp = mhp
+	h.hp = clampi(mhp - lost, 1, mhp)
+	for lv in range(2, int(h.level) + 1):
+		var ch := R.make_choice(h, lv)
+		if not ch.is_empty():
+			h.choices.append(ch)
+	if h.cls == "Бард":
+		h.inspire = maxi(1, R.amod(h, "ХАР"))
+	return "%s проходит переобучение: характеристики вернулись к стартовым, таланты и путь — выбрать заново (%d выбор%s)." % [
+		h.name, (h.choices as Array).size(), "" if (h.choices as Array).size() == 1 else "ов"]
+
+
+func _beast_of(pname: String) -> int:
+	var cps: Array = state.get("companions", [])
+	for i in cps.size():
+		if cps[i].get("beast", false) and str(cps[i].get("owner", "")) == pname:
+			return i
+	return -1
+
+
+## Волк Повелителя зверей: растёт с уровнем хозяина.
+func _add_beast(pname: String) -> void:
+	var h: Dictionary = state.heroes[pname]
+	if not state.has("companions"):
+		state.companions = []
+	var lv := int(h.level)
+	var hpv := 11 + 4 * lv
+	var cp := {"name": "Волк %s" % str(h.name), "kind": "зверь", "mon": "wolf", "hp": hpv, "max_hp": hpv, "ac": 13 + lv / 4,
+		"atk": 2 + R.prof(lv) + 2, "dmg": "2d4+%d" % (2 + R.prof(lv)), "owner": pname, "beast": true}
+	var bi := _beast_of(pname)
+	if bi >= 0:
+		state.companions[bi] = cp
+	else:
+		state.companions.append(cp)
+	_log("sys", h.name, "Из чащи выходит волк и садится у ног %s: теперь он сражается рядом." % h.name)
+
+
+func _lay_hands(pname: String, to: String) -> bool:
+	var h: Dictionary = state.heroes[pname]
+	if not state.heroes.has(to):
+		to = pname
+	var th: Dictionary = state.heroes[to]
+	var pool := int(h.get("lay", 0))
+	var need := int(th.max_hp) - int(th.hp)
+	if pool <= 0 or need <= 0 or th.get("dead", false):
+		return false
+	var v := mini(pool, need)
+	h.lay = pool - v
+	_fx_event("act_lay_hands", "ffe08a", "Наложение рук", "%s: +%d хитов · в запасе %d" % [th.name, v, int(h.lay)], true)
+	_log("cbt" if phase == "combat" else "sys", h.name, "%s возлагает ладони на %s: свет закрывает раны." % [h.name, "себя" if to == pname else th.name])
+	_heal_hero(to, v)
+	return true
 
 
 func _count_item(h: Dictionary, id: String) -> int:
@@ -2308,7 +2404,7 @@ func _start_combat(spec: Array, env_ids: Array = []) -> bool:
 	var pos := {}
 	for n in state.heroes:
 		var hh: Dictionary = state.heroes[n]
-		pos[n] = "back" if (hh.cls in ["Маг", "Бард", "Следопыт"] or R.attack_info(hh).ranged) else "front"
+		pos[n] = "back" if (hh.cls in ["Маг", "Бард", "Следопыт", "Колдун"] or R.attack_info(hh).ranged) else "front"
 	state.campaign.last_combat = int(state.turn)
 	state.combat = {"round": 1, "turn": 0, "order": order, "enemies": enemies, "dodge": {}, "sneak": {}, "pos": pos, "moved": {}, "help": {},
 		"used": {}, "hidden": {}, "high": {}, "env": _pick_env(env_ids), "surf": {}, "diseng": {}, "dip": {}, "thrown": [], "hsurf": {}, "react": {}}
@@ -2425,6 +2521,7 @@ func _combat_continue() -> void:
 			c.ticked["%s_%d" % [pname, int(c.round)]] = true
 			c.dodge.erase(pname)
 			c.sneak.erase(pname)
+			c.get("once", {}).erase(pname)
 			c.get("diseng", {}).erase(pname)
 			if not c.has("used"):
 				c.used = {}
@@ -2766,7 +2863,7 @@ func _enemy_pick(en: Dictionary, targets: Array) -> String:
 			sc += 3.0
 		if cs.has("stunned"):
 			sc += 3.0
-		if h.cls in ["Маг", "Жрец", "Бард"]:
+		if h.cls in ["Маг", "Жрец", "Бард", "Колдун"]:
 			sc += 1.5   # заклинатели опасны — их стараются сбить первыми
 		if sc > best_s:
 			best_s = sc
@@ -2903,6 +3000,8 @@ func _end_combat(result: String) -> void:
 		h.erase("coat")
 		h.erase("conc")
 		h.erase("blessed")
+		h.erase("raging")
+		h.erase("brand")
 		h.get("conds", {}).erase("wet")
 		for k in ["prone", "stunned", "frightened", "blinded"]:
 			h.get("conds", {}).erase(k)
@@ -3193,6 +3292,26 @@ func _cact(a: Dictionary) -> void:
 			h.react_off = not h.get("react_off", false)
 			_broadcast()
 			return
+		"smite_toggle":
+			h.smite_on = not h.get("smite_on", false)
+			_broadcast()
+			return
+		"rage":
+			if h.cls != "Варвар" or h.get("raging", false) or int(h.get("rages", 0)) <= 0:
+				return
+			h.rages = int(h.rages) - 1
+			h.raging = true
+			_fx_event("act_rage", "ff5a3d", "%s в ярости!" % h.name, "+%d урона вблизи · урон по тебе вдвое меньше" % (2 if int(h.level) < 9 else 3), true)
+			_log("cbt", h.name, "%s впадает в ярость! Удары вблизи сильнее, раны — вдвое легче. Осталось ярости: %d." % [h.name, int(h.rages)])
+		"extra_attack":
+			if not can_extra_attack(pname):
+				return
+			if str(h.get("sub", "")) == "war_domain" and not (h.cls == "Варвар" and h.get("raging", false)):
+				h.war_left = int(h.get("war_left", 0)) - 1
+			_log("cbt", h.name, "%s: %s" % [h.name, "бешенство берсерка — лишний удар!" if h.cls == "Варвар" else "боевой жрец — удар во славу бога!"])
+			ok = _hero_attack(pname, int(a.get("target", -1)), 1)
+		"lay_hands":
+			ok = _lay_hands(pname, str(a.get("target", pname)))
 		"insp":
 			if insp_pool() <= 0 or c.get("help", {}).get(pname, false):
 				return
@@ -3245,12 +3364,16 @@ func action_cost(pname: String, a: Dictionary) -> String:
 	match t:
 		"move":
 			return "m"
-		"second_wind", "inspire", "shove", "dip":
+		"second_wind", "inspire", "shove", "dip", "rage", "extra_attack":
 			return "b"
+		"smite_toggle":
+			return "f"
+		"lay_hands":
+			return "a"
 		"hide", "disengage":
 			return "b" if h.cls == "Плут" else "a"
 		"throw":
-			return "a"
+			return "b" if str(h.get("sub", "")) == "thief" else "a"
 		"insp", "react_toggle":
 			return "f"
 		"spell":
@@ -3263,7 +3386,7 @@ func action_cost(pname: String, a: Dictionary) -> String:
 			var d := R.item_def(h.items[idx])
 			if d.type == "potion" and str(a.get("target", pname)) != pname and state.heroes.has(str(a.get("target", ""))):
 				return "a"   # напоить напарника — как в BG3, это действие
-			if d.type in ["potion", "coat"]:
+			if d.type in ["potion", "coat"] or (str(h.get("sub", "")) == "thief" and d.type == "bomb"):
 				return "b"
 			if d.type == "scroll" and R.SPELLS.has(str(d.get("spell", ""))) and R.SPELLS[str(d.spell)].get("bonus", false):
 				return "b"
@@ -3283,6 +3406,10 @@ func has_bonus_left(pname: String) -> bool:
 		return false
 	if h.get("second_wind", false):
 		return true
+	if h.cls == "Варвар" and not h.get("raging", false) and int(h.get("rages", 0)) > 0:
+		return true
+	if can_extra_attack(pname):
+		return true
 	if h.cls == "Плут" and not c.get("hidden", {}).get(pname, false):
 		return true
 	for it in h.items:
@@ -3298,6 +3425,16 @@ func has_bonus_left(pname: String) -> bool:
 	if hero_pos(pname) == "front" and _front_enemies().size() > 0 and (_env_find("cliff") >= 0 or str(_surf().get("t", "")) in ["fire", "web"]):
 		return true   # толкнуть с обрыва или в огонь/паутину — это имеет смысл
 	return false
+
+
+## Лишний удар бонусным действием: берсерк в ярости или жрец войны.
+func can_extra_attack(pname: String) -> bool:
+	var h: Dictionary = state.heroes.get(pname, {})
+	if h.is_empty() or state.combat.is_empty() or _alive_enemies().is_empty():
+		return false
+	if str(h.get("sub", "")) == "berserker" and h.get("raging", false):
+		return true
+	return str(h.get("sub", "")) == "war_domain" and int(h.get("war_left", 0)) > 0
 
 
 func _turn_over(pname: String) -> bool:
@@ -3432,20 +3569,32 @@ func _hit_enemy_raw(i: int, dmg: int, src: String, dt := "") -> String:
 				return note + "%s падает… и снова поднимается (стойкость нежити, %d против %d)!" % [en.name, sv, 5 + dmg]
 		en.hp = 0
 		en.dead = true
-		return note + "%s пал%s!" % [en.name, "" if src == "" else " (" + src + ")"]
+		var killer := combat_actor()
+		var fnote := ""
+		if state.heroes.has(killer) and str(state.heroes[killer].get("sub", "")) == "fiend" and int(state.heroes[killer].hp) > 0:
+			var kh: Dictionary = state.heroes[killer]
+			var fv := maxi(1, R.amod(kh, "ХАР") + int(kh.level))
+			kh.hp = mini(int(kh.max_hp), int(kh.hp) + fv)
+			fnote = " Тёмное благословение: %s +%d хитов." % [kh.name, fv]
+		return note + "%s пал%s!%s" % [en.name, "" if src == "" else " (" + src + ")", fnote]
 	return note + "(%s: %d/%d)" % [en.name, en.hp, en.max_hp]
 
 
-func _hero_attack(pname: String, target: int) -> bool:
+func _hero_attack(pname: String, target: int, n_attacks := -1) -> bool:
 	_last_target[pname] = target
 	var h: Dictionary = state.heroes[pname]
 	var c: Dictionary = state.combat
 	var info := R.attack_info(h)
 	var rolls := []
+	if not c.has("once"):
+		c.once = {}
+	if not c.once.has(pname):
+		c.once[pname] = {}
+	var once: Dictionary = c.once[pname]
 	if not info.ranged and hero_pos(pname) != "front":
 		c.pos[pname] = "front"
 		_log("cbt", h.name, "%s выходит вперёд." % h.name)
-	for k in int(info.attacks):
+	for k in (int(info.attacks) if n_attacks < 0 else n_attacks):
 		var ti := _target_enemy(target)
 		if ti < 0:
 			break
@@ -3466,11 +3615,14 @@ func _hero_attack(pname: String, target: int) -> bool:
 			adv += 1
 			from_shadow = true
 			c.hidden.erase(pname)
+		var assassinate: bool = str(h.get("sub", "")) == "assassin_sub" and int(c.round) == 1
+		if assassinate:
+			adv += 1
 		var r := _d20(h, clampi(adv, -1, 1))
 		var high := 2 if info.ranged and c.get("high", {}).get(pname, false) else 0
 		var total: int = r.value + int(info.atk) + r.insp + high
 		var hit: bool = (total >= int(en.ac) or r.value == 20) and r.value != 1
-		var crit: bool = (hit and r.value >= int(info.get("crit", 20))) or (hit and (en.asleep or en.get("conds", {}).has("held")) and not info.ranged)
+		var crit: bool = (hit and r.value >= int(info.get("crit", 20))) or (hit and (en.asleep or en.get("conds", {}).has("held")) and not info.ranged) or (hit and assassinate)
 		var line := "%s%s бьёт %s (%s): %d против КД %d — " % ["Из тени! " if from_shadow else "", h.name, en.name, info.name, total, en.ac]
 		var outcome := "промах"
 		var dealt := -1
@@ -3499,6 +3651,7 @@ func _hero_attack(pname: String, target: int) -> bool:
 			if int(c.get("dip", {}).get(pname, -1)) >= int(c.round) and not en.dead:
 				var fd := _roll_damage("1d4", crit)
 				line += " Пылающее оружие: +%d огнём. %s" % [fd, _hit_enemy(ti, fd, "", "огонь")]
+			line += _on_hit_extras(pname, ti, info, crit, once)
 		else:
 			line += "промах."
 		_log("cbt", h.name, line)
@@ -3507,6 +3660,67 @@ func _hero_attack(pname: String, target: int) -> bool:
 			"kind": "attack", "dmg": dealt, "dmg_text": "%s%+d" % [R.dice_ru(str(info.dice)), int(info.bonus)]})
 	_show_rolls(rolls)
 	return true
+
+
+## Добавки к попаданию оружием: магическое оружие, кара, порча, мантия, подклассы.
+func _on_hit_extras(pname: String, ti: int, info: Dictionary, crit: bool, once: Dictionary) -> String:
+	var h: Dictionary = state.heroes[pname]
+	var c: Dictionary = state.combat
+	var en: Dictionary = c.enemies[ti]
+	var out := ""
+	var ex: Dictionary = info.get("extra", {})
+	if not ex.is_empty() and not en.dead and (not ex.get("undead", false) or en.get("undead", false)):
+		var xd := _roll_damage(str(ex.dice), crit)
+		out += " %s: +%d (%s). %s" % [info.name, xd, str(ex.dt), _hit_enemy(ti, xd, "", str(ex.dt))]
+	if str(info.get("drain", "")) != "" and not en.dead and not en.get("undead", false):
+		var dd := _roll_damage(str(info.drain), crit)
+		var dn := _hit_enemy(ti, dd, "", "некротический")
+		h.hp = mini(int(h.max_hp), int(h.hp) + _last_dmg)
+		out += " Клинок пьёт кровь: +%d, %s лечится (%d/%d). %s" % [_last_dmg, h.name, int(h.hp), int(h.max_hp), dn]
+	if info.get("stun", false) and crit and not en.dead and int(en.max_hp) < 80:
+		_add_cond(en, "stunned", 1)
+		out += " Громовой удар оглушает %s!" % en.name
+	if not info.ranged and h.get("smite_on", false) and not en.dead:
+		var sl := -1
+		for si in (h.slots as Array).size():
+			if int(h.slots[si]) > 0:
+				sl = si
+				break
+		if sl >= 0:
+			h.slots[sl] = int(h.slots[sl]) - 1
+			var nd := 2 + sl + (1 if en.get("undead", false) else 0)
+			var sd := _roll_damage("%dd8" % nd, crit)
+			_fx_event("act_smite", "ffe08a", "Божественная кара", "%d излучением · ячейка %d ур." % [sd, sl + 1])
+			out += " ⚡ Божественная кара (ячейка %d ур.): +%d излучением. %s" % [sl + 1, sd, _hit_enemy(ti, sd, "", "излучение")]
+	if int(h.get("brand", 0)) > 0 and not en.dead:
+		var bd := _roll_damage("%dd6" % int(h.brand), crit)
+		h.erase("brand")
+		out += " Клеймо света: +%d излучением, %s больше не спрячется. %s" % [bd, en.name, _hit_enemy(ti, bd, "", "излучение")]
+	if c.has("mantle") and not en.dead:
+		var md := _roll_damage("1d4", crit)
+		out += " Мантия: +%d. %s" % [md, _hit_enemy(ti, md, "", "излучение")]
+	out += _hex_hit(pname, ti, crit)
+	var sub := str(h.get("sub", ""))
+	if sub == "hunter_sub" and not once.get("colossus", false) and not en.dead and int(en.hp) < int(en.max_hp):
+		once.colossus = true
+		var gd := _roll_damage("1d8", crit)
+		out += " Убийца великанов: +%d. %s" % [gd, _hit_enemy(ti, gd, "", str(info.get("dt", "")))]
+	if sub == "battle_master" and not once.get("trip", false) and not en.dead:
+		once.trip = true
+		var td := _roll_damage("1d8", crit)
+		out += " Подсечка: +%d. %s" % [td, _hit_enemy(ti, td, "", str(info.get("dt", "")))]
+		if not en.dead and int(en.max_hp) < 60:
+			_add_cond(en, "prone", 1)
+			out += " %s падает!" % en.name
+	return out
+
+
+func _hex_hit(pname: String, ti: int, crit: bool) -> String:
+	var c: Dictionary = state.combat
+	if int(c.get("hex", {}).get(pname, -1)) != ti or c.enemies[ti].dead:
+		return ""
+	var hd := _roll_damage("1d6", crit)
+	return " Порча: +%d некротикой. %s" % [hd, _hit_enemy(ti, hd, "", "некротический")]
 
 
 func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> bool:
@@ -3529,7 +3743,7 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 	var p := R.parse_dice(dice if dice != "" else "1d4")
 	if dice == "":
 		pass
-	elif int(sp.lvl) == 0 and int(h.level) >= 5:
+	elif int(sp.lvl) == 0 and int(h.level) >= 5 and spell != "eldritch_blast":
 		dice = "%dd%d" % [p.n * 2, p.sides]
 	elif upcast > 0 and sp.kind != "auto":
 		dice = "%dd%d%s" % [p.n + upcast, p.sides, ("+%d" % p.bonus) if p.bonus > 0 else ""]
@@ -3539,7 +3753,10 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 	var head := "%s %s «%s»" % [h.name, "читает свиток" if from_scroll else "колдует", sp.name]
 	match str(sp.kind):
 		"attack":
-			for k in int(sp.get("rays", 1)):
+			var nrays := int(sp.get("rays", 1)) + upcast * int(sp.has("rays"))
+			if spell == "eldritch_blast" and int(h.level) >= 5:
+				nrays = 2
+			for k in nrays:
 				var ti := _target_enemy(int(target) if (target is int or target is float) else -1)
 				if ti < 0:
 					break
@@ -3562,10 +3779,10 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				var line := "%s в %s: %d против КД %d — " % [head, en.name, total, en.ac]
 				var dealt := -1
 				if hit:
-					var dmg := _roll_damage(dice, crit) + R.talent_sum(h, "spell_dmg")
+					var dmg := _roll_damage(dice, crit) + R.talent_sum(h, "spell_dmg") + (R.caster_mod(h) if sp.get("add_mod", false) and int(h.level) >= 2 else 0)
 					var note := _hit_enemy(ti, dmg, "", str(sp.get("dt", "")))
 					dealt = _last_dmg
-					line += "попадание, %d урона. %s" % [dmg, note]
+					line += "попадание, %d урона. %s%s" % [dmg, note, _hex_hit(pname, ti, crit)]
 					if str(sp.get("cond", "")) != "" and not en.dead:
 						_add_cond(en, str(sp.cond), 1)
 						line += " %s %s." % [en.name, str(R.CONDS[str(sp.cond)].name).to_lower()]
@@ -3590,6 +3807,9 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 				if ti < 0:
 					continue
 				var en: Dictionary = c.enemies[ti]
+				if sp.get("no_undead", false) and en.get("undead", false):
+					parts.append("%s — нежить, не действует" % en.name)
+					continue
 				var sv := randi_range(1, 20) + _msave(en, str(sp.save))
 				if en.asleep and str(sp.save) in ["ЛОВ", "СИЛ"]:
 					sv = 0
@@ -3603,7 +3823,10 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 					cnote = ", " + str(R.CONDS[str(sp.cond)].name).to_lower()
 				parts.append("%s %s (%d), %d урона%s %s" % [en.name, "увернулся" if saved else "не увернулся", sv, dmg, cnote, _hit_enemy(ti, dmg, "", str(sp.get("dt", ""))) if dmg > 0 else ""])
 			_fx_event("sp_" + spell, str(sp.get("col", "ff7a3d")), sp.name, "спасбросок %s против СЛ %d · целей: %d" % [sp.save, sdc, parts.size()])
-			_log("cbt", h.name, "%s (СЛ %d): %s" % [head, sdc, "; ".join(parts)])
+			var snote := ""
+			if str(sp.get("surf", "")) != "" and _front_enemies().size() > 0:
+				snote = " " + _add_surface(str(sp.surf))
+			_log("cbt", h.name, "%s (СЛ %d): %s%s" % [head, sdc, "; ".join(parts), snote])
 		"heal":
 			var who: Array = []
 			if sp.get("all", false):
@@ -3656,6 +3879,25 @@ func _hero_spell(pname: String, spell: String, target, from_scroll: bool) -> boo
 					en.held_dc = sdc
 					en.held_by = pname
 					_log("cbt", h.name, "%s%s на %s: спасбросок МДР %d против СЛ %d — скован! Удары вблизи по нему — критические." % [prev, head, en.name, sv, sdc])
+		"hex":
+			var ti := _target_enemy(int(target) if (target is int or target is float) else -1)
+			if ti < 0:
+				return false
+			var prev := _start_conc(pname, spell, str(ti))
+			if not c.has("hex"):
+				c.hex = {}
+			c.hex[pname] = ti
+			_fx_event("sp_hex", str(sp.get("col", "a35bff")), sp.name, "%s проклят: +1к6 некротикой" % c.enemies[ti].name)
+			_log("cbt", h.name, "%s%s на %s: каждое попадание %s по нему — +1к6 некротикой." % [prev, head, c.enemies[ti].name, h.name])
+		"smite_buff":
+			h.brand = 2 + upcast
+			_fx_event("sp_" + spell, str(sp.get("col", "ffe08a")), sp.name, "следующий удар +%dк6 излучением" % int(h.brand), true)
+			_log("cbt", h.name, "%s: клинок сияет — следующий удар +%dк6 излучением." % [head, int(h.brand)])
+		"mantle":
+			var prev := _start_conc(pname, spell, "")
+			c.mantle = pname
+			_fx_event("sp_" + spell, str(sp.get("col", "ffd75e")), sp.name, "удары союзников +1к4 излучением", true)
+			_log("cbt", h.name, "%s%s: оружие союзников сияет — +1к4 излучением к каждому удару." % [prev, head])
 		"sleep":
 			var pool := R.roll(dice) + upcast * R.roll("2d8")
 			var alive := _alive_enemies()
@@ -3703,7 +3945,7 @@ func _can_shield(pname: String) -> bool:
 
 
 static func has_shield(h: Dictionary) -> bool:
-	return str(h.get("cls", "")) in ["Маг", "Колдун"]
+	return str(h.get("cls", "")) == "Маг"
 
 
 ## Ответный выпад: Воин с 3 уровня (у Мастера боевых искусств — с 1-го после выбора).
@@ -3886,6 +4128,10 @@ func _end_conc(pname: String, why: String) -> String:
 			var c: Dictionary = state.combat
 			if not c.is_empty() and t.is_valid_int() and int(t) < c.enemies.size():
 				c.enemies[int(t)].get("conds", {}).erase("held")
+		"hex":
+			state.combat.get("hex", {}).erase(pname)
+		"crusaders_mantle":
+			state.combat.erase("mantle")
 	return "%s теряет концентрацию (%s): «%s» спадает." % [h.name, why, R.SPELLS[sp].name if R.SPELLS.has(sp) else sp]
 
 
@@ -3986,6 +4232,12 @@ func _add_surface(t: String) -> String:
 				return "Лёд тает в лужи."
 			_set_surf("fire", 2)
 			return "Земля под врагами горит."
+		"ice":
+			if cur == "fire":
+				_set_surf("water", 2)
+				return "Град гасит огонь — остаются лужи."
+			_set_surf("ice", 3)
+			return "Земля под врагами покрылась льдом: на нём легко поскользнуться."
 	return ""
 
 
@@ -4279,7 +4531,7 @@ func _heroes_text() -> String:
 			status += " (сейчас отсутствует, держится в тени)"
 		lines.append("- %s: %s %s %d ур., %s. Хиты %d/%d, КД %d, золото %d. %s. Навыки: %s. Умения: %s. Надето: %s. В сумке: %s.%s" % [
 			h.name, h.race, h.cls, h.level, h.about if str(h.about) != "" else "без описания", h.hp, h.max_hp, R.ac(h), h.gold,
-			", ".join(sc), ", ".join(h.skills), R.CLASSES[h.cls].features, ", ".join(eq), ", ".join(bag) if bag.size() > 0 else "пусто", status])
+			", ".join(sc), ", ".join(h.skills), str(R.CLASSES[h.cls].features) + ((". Путь: " + str(R.SUBCLASSES[str(h.sub)].name)) if R.SUBCLASSES.has(str(h.get("sub", ""))) else ""), ", ".join(eq), ", ".join(bag) if bag.size() > 0 else "пусто", status])
 	return "\n".join(lines)
 
 

@@ -10,6 +10,7 @@ const DIR := "res://art/icons/"
 const CLASS_ICONS := {
 	"Воин": "cls_warrior", "Маг": "cls_wizard", "Плут": "cls_rogue",
 	"Жрец": "cls_cleric", "Следопыт": "cls_ranger", "Бард": "cls_bard",
+	"Варвар": "cls_barbarian", "Паладин": "cls_paladin", "Колдун": "cls_warlock",
 }
 
 const RACE_ICONS := {
@@ -38,6 +39,8 @@ const MONSTER_NAMES := [
 ## id предмета из rules.gd ITEMS → иконка.
 const ITEM_ICONS := {
 	"dagger": "it_dagger", "shortsword": "it_sword", "rapier": "it_sword", "longsword": "it_sword",
+	"flame_tongue": "it_sword", "frost_brand": "it_sword", "vampire_blade": "it_sword", "storm_bow": "it_bow",
+	"thunder_hammer": "it_mace", "sun_mace": "it_mace",
 	"greatsword": "it_sword", "battleaxe": "it_axe", "greataxe": "it_axe", "mace": "it_mace",
 	"warhammer": "it_mace", "quarterstaff": "it_staff", "spear": "it_spear",
 	"shortbow": "it_bow", "longbow": "it_bow", "crossbow": "it_bow",

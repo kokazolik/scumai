@@ -17,8 +17,12 @@ const SKILLS := {
 ## Опыт для уровней 2..10.
 const XP_LEVELS := [300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000]
 
-## Ячейки заклинаний полного заклинателя по уровням (1..10), уровни ячеек 1..3 (выше пока нет заклинаний).
-const SLOTS := [[2], [3], [4, 2], [4, 3], [4, 3, 2], [4, 3, 3], [4, 3, 3], [4, 3, 3], [4, 3, 3], [4, 3, 3]]
+## Ячейки заклинаний полного заклинателя по уровням (1..10), уровни ячеек 1..5.
+const SLOTS := [[2], [3], [4, 2], [4, 3], [4, 3, 2], [4, 3, 3], [4, 3, 3, 1], [4, 3, 3, 2], [4, 3, 3, 3, 1], [4, 3, 3, 3, 2]]
+## Полузаклинатель (Паладин): ячейки со 2 уровня.
+const HALF_SLOTS := [[], [2], [3], [3], [4, 2], [4, 2], [4, 3], [4, 3], [4, 3, 2], [4, 3, 2]]
+## Магия договора (Колдун): мало ячеек, все одного уровня, возвращаются на коротком отдыхе.
+const PACT_SLOTS := [[1], [2], [0, 2], [0, 2], [0, 0, 2], [0, 0, 2], [0, 0, 0, 2], [0, 0, 0, 2], [0, 0, 0, 0, 2], [0, 0, 0, 0, 2]]
 
 const RACES := {
 	"Человек": {"bonus": {"СИЛ": 1, "ЛОВ": 1, "ТЕЛ": 1, "ИНТ": 1, "МДР": 1, "ХАР": 1}, "desc": "+1 ко всем характеристикам"},
@@ -40,7 +44,7 @@ const CLASSES := {
 	"Маг": {"armor": [], "hd": 6, "saves": ["ИНТ", "МДР"], "main": "ИНТ", "caster": "ИНТ",
 		"scores": {"ИНТ": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ХАР": 10, "СИЛ": 8},
 		"skills": ["Магия", "История", "Анализ"],
-		"spells": ["fire_bolt", "ray_of_frost", "shocking_grasp", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball"],
+		"spells": ["fire_bolt", "ray_of_frost", "shocking_grasp", "magic_missile", "burning_hands", "sleep", "scorching_ray", "fireball", "ice_storm", "cone_of_cold"],
 		"start": [["quarterstaff", true], ["mage_robe", true], ["spellbook", false], ["potion_heal", false]],
 		"features": "Заклинания на Интеллекте: огонь, лёд, усыпление",
 		"desc": "Огонь, лёд и тайные знания"},
@@ -53,7 +57,7 @@ const CLASSES := {
 	"Жрец": {"armor": ["лёгкий", "средний", "тяжёлый", "shield"], "hd": 8, "saves": ["МДР", "ХАР"], "main": "МДР", "caster": "МДР",
 		"scores": {"МДР": 15, "ТЕЛ": 14, "СИЛ": 13, "ХАР": 12, "ИНТ": 10, "ЛОВ": 8},
 		"skills": ["Медицина", "Религия", "Проницательность"],
-		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "bless", "shield_of_faith", "spiritual_weapon", "hold_person", "mass_healing_word"],
+		"spells": ["sacred_flame", "cure_wounds", "healing_word", "guiding_bolt", "bless", "shield_of_faith", "spiritual_weapon", "hold_person", "mass_healing_word", "guardian_faith", "flame_strike", "mass_cure_wounds"],
 		"start": [["mace", true], ["scale_mail", true], ["shield", true], ["holy_symbol", true]],
 		"features": "Заклинания на Мудрости: лечение, свет, защита",
 		"desc": "Лечит друзей и жжёт нежить"},
@@ -66,10 +70,52 @@ const CLASSES := {
 	"Бард": {"armor": ["лёгкий"], "hd": 8, "saves": ["ЛОВ", "ХАР"], "main": "ХАР", "caster": "ХАР",
 		"scores": {"ХАР": 15, "ЛОВ": 14, "ТЕЛ": 13, "ИНТ": 12, "МДР": 10, "СИЛ": 8},
 		"skills": ["Выступление", "Убеждение", "Обман", "Проницательность"],
-		"spells": ["vicious_mockery", "healing_word", "thunderwave", "sleep", "shatter", "hold_person"],
+		"spells": ["vicious_mockery", "healing_word", "thunderwave", "sleep", "shatter", "hold_person", "confusion", "mass_cure_wounds"],
 		"start": [["rapier", true], ["leather", true], ["fine_clothes", true], ["lute", false]],
 		"features": "Вдохновение барда (союзник добавляет 1к6 к броску), заклинания на Харизме",
 		"desc": "Песни, обаяние и вдохновение"},
+	"Варвар": {"armor": ["лёгкий", "средний", "shield"], "hd": 12, "saves": ["СИЛ", "ТЕЛ"], "main": "СИЛ",
+		"scores": {"СИЛ": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ХАР": 10, "ИНТ": 8},
+		"skills": ["Атлетика", "Выживание", "Запугивание"],
+		"start": [["greataxe", true], ["traveler_clothes", true], ["spear", false], ["potion_heal", false]],
+		"features": "Ярость (бонусное действие: +2 урона вблизи и вдвое меньше урона по тебе), защита без доспехов 10+ЛОВ+ТЕЛ, Дополнительная атака с 5 уровня",
+		"desc": "Ярость, секира и железная шкура"},
+	"Паладин": {"armor": ["лёгкий", "средний", "тяжёлый", "shield"], "hd": 10, "saves": ["МДР", "ХАР"], "main": "СИЛ", "caster": "ХАР", "half": true,
+		"scores": {"СИЛ": 15, "ХАР": 14, "ТЕЛ": 13, "МДР": 12, "ЛОВ": 10, "ИНТ": 8},
+		"skills": ["Атлетика", "Убеждение", "Религия"],
+		"spells": ["cure_wounds", "bless", "shield_of_faith", "hold_person", "branding_smite", "crusaders_mantle"],
+		"start": [["longsword", true], ["chain_mail", true], ["shield", true], ["holy_symbol", true], ["potion_heal", false]],
+		"features": "Наложение рук (запас лечения 5×уровень), Божественная кара со 2 уровня (тратит ячейку: +2к8 излучением при ударе), Дополнительная атака с 5 уровня",
+		"desc": "Клятва, кара и щит для друга"},
+	"Колдун": {"armor": ["лёгкий"], "hd": 8, "saves": ["МДР", "ХАР"], "main": "ХАР", "caster": "ХАР", "pact": true,
+		"scores": {"ХАР": 15, "ТЕЛ": 14, "ЛОВ": 13, "МДР": 12, "ИНТ": 10, "СИЛ": 8},
+		"skills": ["Магия", "Обман", "Запугивание"],
+		"spells": ["eldritch_blast", "hex", "burning_hands", "hold_person", "scorching_ray", "fireball", "blight", "banishing_flame"],
+		"start": [["dagger", true], ["leather", true], ["traveler_clothes", true], ["spellbook", false], ["potion_heal", false]],
+		"features": "Мистический заряд, Порча (+1к6 некротикой по проклятому), мало ячеек договора — но они возвращаются на привале",
+		"desc": "Договор с тёмной силой"},
+}
+
+## Подклассы: выбор на 3 уровне. Эффекты складываются вместе с талантами (talent_sum), особые — в game.gd.
+const SUBCLASSES := {
+	"battle_master": {"cls": "Воин", "name": "Мастер боя", "desc": "Ответный выпад (реакция) и подсечка: первый удар за ход +1к8 и сбивает с ног"},
+	"champ": {"cls": "Воин", "name": "Чемпион", "desc": "Крит на 19–20 и +1 хит за уровень", "crit": 1, "hp_lvl": 1},
+	"evocation": {"cls": "Маг", "name": "Школа воплощения", "desc": "+3 урона атакующими заклинаниями", "spell_dmg": 3},
+	"abjuration": {"cls": "Маг", "name": "Школа ограждения", "desc": "+1 КД и +2 ко всем спасброскам", "ac": 1, "save_all": 2},
+	"thief": {"cls": "Плут", "name": "Вор", "desc": "Быстрые руки: предметы и броски — бонусным действием; +2 Ловкость рук", "skills": {"Ловкость рук": 2}},
+	"assassin_sub": {"cls": "Плут", "name": "Ассасин", "desc": "В первом раунде боя — преимущество, и любое попадание критическое"},
+	"life_domain": {"cls": "Жрец", "name": "Домен жизни", "desc": "Лечение сильнее на 4, +1 КД в доспехе", "heal": 4, "ac_armor": 1},
+	"war_domain": {"cls": "Жрец", "name": "Домен войны", "desc": "+2 урона оружием и боевой жрец: удар бонусным действием (МДР раз за отдых)", "dmg_weapon": 2},
+	"hunter_sub": {"cls": "Следопыт", "name": "Охотник", "desc": "Убийца великанов: +1к8 по раненому врагу раз за ход"},
+	"beast_master": {"cls": "Следопыт", "name": "Повелитель зверей", "desc": "Верный волк сражается рядом и растёт вместе с тобой"},
+	"lore_college": {"cls": "Бард", "name": "Коллегия знаний", "desc": "+2 ко всем навыкам и +1 вдохновение на отдых", "skill_all": 2, "inspire": 1},
+	"valor_college": {"cls": "Бард", "name": "Коллегия доблести", "desc": "+1 КД, +2 урона оружием, средние доспехи и щит", "ac": 1, "dmg_weapon": 2},
+	"berserker": {"cls": "Варвар", "name": "Берсерк", "desc": "Бешенство: в ярости — лишний удар бонусным действием"},
+	"bear_totem": {"cls": "Варвар", "name": "Тотем медведя", "desc": "+1 ярость за отдых, +2 хита за уровень, в ярости — +1 КД", "hp_lvl": 2},
+	"devotion": {"cls": "Паладин", "name": "Клятва преданности", "desc": "+1 ко всем спасброскам и лечение сильнее на 3", "save_all": 1, "heal": 3},
+	"vengeance": {"cls": "Паладин", "name": "Клятва мести", "desc": "+1 к попаданию и +2 урона оружием", "atk_weapon": 1, "dmg_weapon": 2},
+	"fiend": {"cls": "Колдун", "name": "Покровитель — Исчадие", "desc": "Тёмное благословение: добил врага — лечишься на ХАР+уровень"},
+	"blade_pact": {"cls": "Колдун", "name": "Договор клинка", "desc": "Бьёшь оружием через Харизму, +1 к попаданию, вторая атака с 5 уровня", "atk_weapon": 1},
 }
 
 ## Таланты: выбор при новом уровне (по мотивам SRD 5.1, своими словами).
@@ -79,27 +125,34 @@ const TALENTS := {
 	"alert": {"name": "Бдительный", "desc": "+5 к инициативе: в бою ходишь раньше", "init": 5},
 	"resilient": {"name": "Стойкий", "desc": "+1 ко всем спасброскам", "save_all": 1},
 	"keen": {"name": "Зоркий", "desc": "+3 к Восприятию и Проницательности", "skills": {"Восприятие": 3, "Проницательность": 3}},
-	"defense": {"name": "Стиль «Оборона»", "desc": "+1 КД, пока на тебе доспех", "ac_armor": 1, "cls": ["Воин", "Следопыт", "Жрец"]},
-	"dueling": {"name": "Стиль «Дуэль»", "desc": "+2 урона одноручным оружием ближнего боя", "dmg_onehand": 2, "cls": ["Воин", "Следопыт", "Плут"]},
-	"great_weapon": {"name": "Мощный замах", "desc": "+3 урона двуручным оружием", "dmg_two": 3, "cls": ["Воин"]},
-	"champion": {"name": "Чемпион", "desc": "Критическое попадание оружием на 19-20", "crit": 1, "cls": ["Воин", "Следопыт"]},
+	"defense": {"name": "Стиль «Оборона»", "desc": "+1 КД, пока на тебе доспех", "ac_armor": 1, "cls": ["Воин", "Следопыт", "Жрец", "Паладин", "Варвар"]},
+	"dueling": {"name": "Стиль «Дуэль»", "desc": "+2 урона одноручным оружием ближнего боя", "dmg_onehand": 2, "cls": ["Воин", "Следопыт", "Плут", "Паладин"]},
+	"great_weapon": {"name": "Мощный замах", "desc": "+3 урона двуручным оружием", "dmg_two": 3, "cls": ["Воин", "Варвар", "Паладин"]},
+	"champion": {"name": "Чемпион", "desc": "Критическое попадание оружием на 19-20", "crit": 1, "cls": ["Воин", "Следопыт", "Варвар"]},
 	"marksman": {"name": "Меткий стрелок", "desc": "+1 к попаданию и +2 урона дальнобойным оружием", "atk_ranged": 1, "dmg_ranged": 2, "cls": ["Следопыт", "Плут", "Воин"]},
 	"hunter": {"name": "Метка охотника", "desc": "+2 урона любым оружием", "dmg_weapon": 2, "cls": ["Следопыт"]},
 	"assassin": {"name": "Убийца", "desc": "Скрытая атака сильнее на 1к6", "sneak_dice": 1, "cls": ["Плут"]},
 	"expertise": {"name": "Экспертиза", "desc": "+3 к Скрытности, Ловкости рук и Обману", "skills": {"Скрытность": 3, "Ловкость рук": 3, "Обман": 3}, "cls": ["Плут", "Бард"]},
 	"evasion": {"name": "Увёртливость", "desc": "+1 КД и +1 ко всем спасброскам", "ac": 1, "save_all": 1, "cls": ["Плут"]},
-	"life": {"name": "Домен жизни", "desc": "Лечение заклинаниями и зельями сильнее на 3", "heal": 3, "cls": ["Жрец", "Бард"]},
+	"life": {"name": "Домен жизни", "desc": "Лечение заклинаниями и зельями сильнее на 3", "heal": 3, "cls": ["Жрец", "Бард", "Паладин"]},
 	"divine_strike": {"name": "Божественный удар", "desc": "+3 урона оружием (священная сила)", "dmg_weapon": 3, "cls": ["Жрец"]},
-	"war_caster": {"name": "Боевой маг", "desc": "+1 к атаке заклинаниями и к их Сложности", "spell_atk": 1, "cls": ["Маг", "Жрец", "Бард"]},
+	"war_caster": {"name": "Боевой маг", "desc": "+1 к атаке заклинаниями и к их Сложности", "spell_atk": 1, "cls": ["Маг", "Жрец", "Бард", "Колдун", "Паладин"]},
 	"evoker": {"name": "Школа воплощения", "desc": "+2 урона атакующими заклинаниями", "spell_dmg": 2, "cls": ["Маг"]},
-	"arcane_ward": {"name": "Магическая защита", "desc": "+2 КД (невидимый щит)", "ac": 2, "cls": ["Маг"]},
+	"arcane_ward": {"name": "Магическая защита", "desc": "+2 КД (невидимый щит)", "ac": 2, "cls": ["Маг", "Колдун"]},
 	"more_inspire": {"name": "Песнь отваги", "desc": "+1 вдохновение барда на каждый отдых", "inspire": 1, "cls": ["Бард"]},
+	"agonizing": {"name": "Тёмный дар", "desc": "+2 урона атакующими заклинаниями", "spell_dmg": 2, "cls": ["Колдун"]},
+	"devil_sight": {"name": "Дьявольское зрение", "desc": "+3 к Восприятию и Запугиванию", "skills": {"Восприятие": 3, "Запугивание": 3}, "cls": ["Колдун", "Варвар"]},
+	"thick_hide": {"name": "Толстая шкура", "desc": "+1 КД и +1 хит за уровень", "ac": 1, "hp_lvl": 1, "cls": ["Варвар"]},
+	"aura_courage": {"name": "Аура отваги", "desc": "+2 ко всем спасброскам", "save_all": 2, "cls": ["Паладин"]},
 	"lore": {"name": "Знаток", "desc": "+1 ко всем навыкам", "skill_all": 1, "cls": ["Бард"]},
 }
 
 
 static func talent_sum(h: Dictionary, key: String) -> int:
 	var t := 0
+	var sd: Dictionary = SUBCLASSES.get(str(h.get("sub", "")), {})
+	if sd.has(key) and not (sd[key] is Dictionary):
+		t += int(sd[key])
 	for id in h.get("talents", []):
 		var d: Dictionary = TALENTS.get(str(id), {})
 		if d.has(key) and not (d[key] is Dictionary):
@@ -109,6 +162,7 @@ static func talent_sum(h: Dictionary, key: String) -> int:
 
 static func talent_skill(h: Dictionary, skill: String) -> int:
 	var t := talent_sum(h, "skill_all")
+	t += int(SUBCLASSES.get(str(h.get("sub", "")), {}).get("skills", {}).get(skill, 0))
 	for id in h.get("talents", []):
 		t += int(TALENTS.get(str(id), {}).get("skills", {}).get(skill, 0))
 	return t
@@ -123,8 +177,15 @@ static func talent_names(h: Dictionary) -> Array:
 
 
 ## Новый выбор при повышении уровня: на 4 и 8 — +2 к характеристике, иначе один из трёх талантов.
-static func make_choice(h: Dictionary) -> Dictionary:
-	var lv := int(h.level)
+static func make_choice(h: Dictionary, at := -1) -> Dictionary:
+	var lv := int(h.level) if at < 0 else at
+	if lv == 3 and str(h.get("sub", "")) == "":
+		var subs := []
+		for id in SUBCLASSES:
+			if SUBCLASSES[id].cls == h.cls:
+				subs.append(id)
+		if subs.size() > 0:
+			return {"level": lv, "kind": "sub", "options": subs}
 	if lv in [4, 8]:
 		var opts := []
 		for a in AB:
@@ -132,9 +193,13 @@ static func make_choice(h: Dictionary) -> Dictionary:
 				opts.append(a)
 		return {"level": lv, "kind": "asi", "options": opts}
 	var pool := []
+	var queued := []
+	for q in h.get("choices", []):
+		if str(q.get("kind", "")) == "talent":
+			queued += q.options
 	for id in TALENTS:
 		var d: Dictionary = TALENTS[id]
-		if id in h.get("talents", []):
+		if id in h.get("talents", []) or id in queued:
 			continue
 		if d.has("cls") and not (h.cls in d.cls):
 			continue
@@ -165,6 +230,19 @@ static func apply_choice(h: Dictionary, pick: String) -> String:
 	if not (pick in c.options):
 		return ""
 	ch.pop_front()
+	if c.kind == "sub":
+		h.sub = pick
+		var sd: Dictionary = SUBCLASSES[pick]
+		if int(sd.get("hp_lvl", 0)) > 0:
+			var addh := int(sd.hp_lvl) * int(h.level)
+			h.max_hp = int(h.max_hp) + addh
+			h.hp = int(h.hp) + addh
+		if int(sd.get("inspire", 0)) > 0:
+			h.inspire = int(h.get("inspire", 0)) + int(sd.inspire)
+		if pick == "valor_college":
+			h.extra_armor = ["средний", "shield"]
+		_class_res(h)
+		return "%s выбирает путь: «%s» — %s." % [h.name, sd.name, sd.desc]
 	if c.kind == "asi":
 		h.scores[pick] = mini(20, int(h.scores[pick]) + 2)
 		return "%s: %s +2 (теперь %d)." % [h.name, AB_NAME.get(pick, pick), int(h.scores[pick])]
@@ -203,6 +281,13 @@ const ITEMS := {
 	"shortbow": {"name": "Короткий лук", "type": "weapon", "dt": "колющий", "dmg": "1d6", "ability": "ЛОВ", "ranged": true, "two": true, "price": 25},
 	"longbow": {"name": "Длинный лук", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "price": 50},
 	"crossbow": {"name": "Лёгкий арбалет", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "price": 25},
+	# уникальные магические: extra — добавочный урон при попадании, drain — лечит владельца
+	"flame_tongue": {"name": "Язык пламени", "type": "weapon", "dt": "рубящий", "dmg": "1d8", "ability": "СИЛ", "extra": {"dice": "2d6", "dt": "огонь"}, "magic": true, "price": 1200, "desc": "клинок вспыхивает: +2к6 огнём"},
+	"frost_brand": {"name": "Морозный клинок", "type": "weapon", "dt": "рубящий", "dmg": "2d6", "ability": "СИЛ", "two": true, "extra": {"dice": "1d6", "dt": "холод"}, "save": 1, "magic": true, "price": 1500, "desc": "+1к6 холодом, иней бережёт: +1 к спасброскам"},
+	"vampire_blade": {"name": "Кровопийца", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "fin", "drain": "1d6", "magic": true, "price": 1100, "desc": "пьёт кровь: +1к6 некротикой и лечит тебя на столько же"},
+	"storm_bow": {"name": "Лук бури", "type": "weapon", "dt": "колющий", "dmg": "1d8", "ability": "ЛОВ", "ranged": true, "two": true, "attack": 1, "extra": {"dice": "1d6", "dt": "молния"}, "magic": true, "price": 1300, "desc": "стрелы с треском молний: +1к6"},
+	"thunder_hammer": {"name": "Громовой молот", "type": "weapon", "dt": "дробящий", "dmg": "1d10", "ability": "СИЛ", "extra": {"dice": "1d8", "dt": "звук"}, "stun": true, "magic": true, "price": 1400, "desc": "+1к8 громом, на крите оглушает"},
+	"sun_mace": {"name": "Солнечная булава", "type": "weapon", "dt": "дробящий", "dmg": "1d6", "ability": "СИЛ", "attack": 1, "damage": 1, "extra": {"dice": "1d8", "dt": "излучение", "undead": true}, "magic": true, "price": 1000, "desc": "+1, по нежити +1к8 излучением"},
 
 	"padded": {"name": "Стёганый доспех", "type": "armor", "ac": 11, "dex_max": -1, "cat": "лёгкий", "price": 5},
 	"leather": {"name": "Кожаный доспех", "type": "armor", "ac": 11, "dex_max": -1, "cat": "лёгкий", "price": 10},
@@ -331,6 +416,18 @@ const SPELLS := {
 	"spiritual_weapon": {"bonus": true, "dt": "силовой", "col": "ffe08a", "name": "Духовное оружие", "lvl": 2, "kind": "attack", "dmg": "2d8", "desc": "призрачный молот, 2к8"},
 	"mass_healing_word": {"bonus": true, "col": "6fe3a0", "name": "Лечащее слово для всех", "lvl": 3, "kind": "heal", "dmg": "1d4", "all": true, "desc": "лечит всех союзников"},
 	"fireball": {"dt": "огонь", "col": "ff5a2a", "name": "Огненный шар", "lvl": 3, "kind": "save", "save": "ЛОВ", "dmg": "8d6", "aoe": true, "desc": "взрыв по всем врагам, 8к6"},
+	"eldritch_blast": {"dt": "силовой", "col": "c86bff", "name": "Мистический заряд", "lvl": 0, "kind": "attack", "dmg": "1d10", "add_mod": true, "desc": "луч тёмной силы, 1к10 + ХАР; с 5 уровня — два луча"},
+	"hex": {"bonus": true, "col": "a35bff", "name": "Порча", "lvl": 1, "kind": "hex", "conc": true, "desc": "проклятие на врага: твои попадания по нему +1к6 некротикой"},
+	"branding_smite": {"bonus": true, "col": "ffe08a", "name": "Клеймящая кара", "lvl": 2, "kind": "smite_buff", "dmg": "2d6", "desc": "следующий удар оружием +2к6 излучением и подсвечивает врага (он не спрячется)"},
+	"crusaders_mantle": {"col": "ffd75e", "name": "Мантия крестоносца", "lvl": 3, "kind": "mantle", "conc": true, "desc": "удары оружием всех союзников +1к4 излучением, пока держишь концентрацию"},
+	"blight": {"dt": "некротический", "col": "8fae5a", "name": "Усыхание", "lvl": 4, "kind": "save", "save": "ТЕЛ", "dmg": "8d8", "no_undead": true, "desc": "высасывает жизнь из врага, 8к8 (нежить не берёт)"},
+	"banishing_flame": {"dt": "огонь", "col": "ff5a2a", "name": "Адское пламя", "lvl": 5, "kind": "save", "save": "ЛОВ", "dmg": "10d6", "aoe": true, "surf": "fire", "desc": "пламя преисподней по всем врагам, 10к6, земля горит"},
+	"ice_storm": {"dt": "холод", "col": "a8e4ff", "name": "Ледяная буря", "lvl": 4, "kind": "save", "save": "ЛОВ", "dmg": "6d8", "aoe": true, "surf": "ice", "desc": "град по всем врагам, 6к8, земля во льду"},
+	"cone_of_cold": {"dt": "холод", "col": "7fd4ff", "name": "Конус холода", "lvl": 5, "kind": "save", "save": "ТЕЛ", "dmg": "8d8", "aoe": true, "desc": "волна мороза по всем, 8к8"},
+	"confusion": {"dt": "психический", "col": "ff8fd0", "name": "Смятение", "lvl": 4, "kind": "save", "save": "МДР", "dmg": "3d8", "aoe": true, "cond": "stunned", "desc": "враги теряются: 3к8 и пропуск хода"},
+	"guardian_faith": {"dt": "излучение", "col": "ffd75e", "name": "Страж веры", "lvl": 4, "kind": "save", "save": "ЛОВ", "dmg": "6d8", "desc": "призрачный страж бьёт врага, 6к8"},
+	"flame_strike": {"dt": "огонь", "col": "ffb35e", "name": "Небесный огонь", "lvl": 5, "kind": "save", "save": "ЛОВ", "dmg": "8d6", "aoe": true, "desc": "столб огня и света по всем врагам, 8к6"},
+	"mass_cure_wounds": {"col": "6fe3a0", "name": "Массовое лечение ран", "lvl": 5, "kind": "heal", "dmg": "3d8", "all": true, "desc": "лечит всех союзников на 3к8 + мод."},
 }
 
 ## Монстры (упрощённые статблоки SRD). atk — бонус атаки, multi — атак за ход.
@@ -364,7 +461,7 @@ const MONSTERS := {
 
 ## Типы урона. Враги бывают уязвимы (×2) или стойки (½) к некоторым.
 const DT_GEN := {"рубящий": "рубящему", "колющий": "колющему", "дробящий": "дробящему", "огонь": "огню", "холод": "холоду",
-	"излучение": "излучению", "психический": "психическому", "силовой": "силовому", "звук": "звуку", "яд": "яду", "молния": "молнии"}
+	"излучение": "излучению", "психический": "психическому", "силовой": "силовому", "звук": "звуку", "яд": "яду", "молния": "молнии", "некротический": "некротике"}
 
 ## Предметы окружения в бою (как в тактических RPG: бочки, люстры, обрывы).
 ## kind: aoe — по всем врагам впереди, one — по выбранному врагу, edge — сталкивать с обрыва, high — возвышенность.
@@ -521,7 +618,7 @@ static func item_desc(it: Dictionary) -> String:
 		parts.append("+%d КД" % int(d.ac))
 	if int(d.get("attack", 0)) > 0 and d.type == "weapon":
 		parts.append("+%d к атаке и урону" % int(d.attack))
-	if int(d.get("save", 0)) > 0:
+	if int(d.get("save", 0)) > 0 and str(d.get("desc", "")) == "":
 		parts.append("+%d к спасброскам" % int(d.save))
 	for a in d.get("abil", {}):
 		parts.append("%s +%d" % [a, int(d.abil[a])])
@@ -601,6 +698,8 @@ static func roll_loot(tier: int) -> Dictionary:
 		"greataxe", "chain_mail", "scroll_fire", "ring_luck"]
 	var magic := ["elven_cloak", "cloak_protection", "ring_protection", "amulet_health", "gauntlets_power",
 		"amulet_ward", "circlet_wisdom", "potion_superior", "half_plate", "splint", "plate"]
+	if tier >= 2:
+		magic += ["flame_tongue", "frost_brand", "vampire_blade", "storm_bow", "thunder_hammer", "sun_mace"]
 	for i in n:
 		var r := randf()
 		var it := {}
@@ -664,14 +763,32 @@ static func new_hero(hero_name: String, race: String, cls: String, about: String
 	h.hp = h.max_hp
 	_update_slots(h)
 	h.slots = h.slots_max.duplicate()
+	_class_res(h)
 	return h
+
+
+## Классовые запасы на отдых: ярость, наложение рук, удары боевого жреца.
+static func _class_res(h: Dictionary) -> void:
+	var lv := int(h.level)
+	if h.cls == "Варвар":
+		h.rages = (2 if lv < 3 else (3 if lv < 6 else 4)) + (1 if str(h.get("sub", "")) == "bear_totem" else 0)
+	if h.cls == "Паладин":
+		h.lay = 5 * lv
+	if str(h.get("sub", "")) == "war_domain":
+		h.war_left = maxi(1, amod(h, "МДР"))
+
+
+static func rages_max(h: Dictionary) -> int:
+	var lv := int(h.level)
+	return (2 if lv < 3 else (3 if lv < 6 else 4)) + (1 if str(h.get("sub", "")) == "bear_totem" else 0)
 
 
 static func _update_slots(h: Dictionary) -> void:
 	if not CLASSES[h.cls].has("caster"):
 		h.slots_max = []
 		return
-	var mx: Array = SLOTS[clampi(int(h.level), 1, 10) - 1].duplicate()
+	var table: Array = PACT_SLOTS if CLASSES[h.cls].get("pact", false) else (HALF_SLOTS if CLASSES[h.cls].get("half", false) else SLOTS)
+	var mx: Array = table[clampi(int(h.level), 1, 10) - 1].duplicate()
 	var cur: Array = h.get("slots", [])
 	var out := []
 	for i in mx.size():
@@ -694,14 +811,20 @@ static func level_up(h: Dictionary) -> String:
 		if not h.has("choices"):
 			h.choices = []
 		h.choices.append(ch)
-		extra = ", выбери %s" % ("+2 к характеристике" if ch.kind == "asi" else "новый талант")
+		extra = ", выбери %s" % ("+2 к характеристике" if ch.kind == "asi" else ("свой путь (подкласс)" if ch.kind == "sub" else "новый талант"))
 	var old_max := (h.slots_max as Array).duplicate()
 	_update_slots(h)
 	for i in h.slots_max.size():
 		var before := int(old_max[i]) if i < old_max.size() else 0
 		h.slots[i] = int(h.slots[i]) + int(h.slots_max[i]) - before
-	if int(h.level) == 5 and h.cls in ["Воин", "Следопыт"]:
+	if int(h.level) == 5 and (h.cls in EXTRA_ATTACK or str(h.get("sub", "")) in ["blade_pact", "valor_college"]):
 		extra += ", вторая атака за ход"
+	if int(h.level) == 2 and h.cls == "Паладин":
+		extra += ", Божественная кара и первые заклинания"
+	var lay_before := int(h.get("lay", 0))
+	_class_res(h)
+	if h.cls == "Паладин":
+		h.lay = mini(5 * int(h.level), lay_before + 5)
 	return "%s достигает %d уровня! +%d хитов%s." % [h.name, h.level, gain, extra]
 
 
@@ -733,6 +856,10 @@ static func ac(h: Dictionary) -> int:
 	var dex := amod(h, "ЛОВ")
 	var total := 10 + dex
 	var armor = h.equip.get("armor")
+	if h.cls == "Варвар" and not (armor is Dictionary and not armor.is_empty()):
+		total += amod(h, "ТЕЛ")
+	if h.get("raging", false) and str(h.get("sub", "")) == "bear_totem":
+		total += 1
 	if armor is Dictionary and not armor.is_empty():
 		var d := item_def(armor)
 		var dm := int(d.get("dex_max", -1))
@@ -785,7 +912,9 @@ static func attack_info(h: Dictionary) -> Dictionary:
 		m = amod(h, "ЛОВ")
 	elif a == "fin":
 		m = maxi(amod(h, "СИЛ"), amod(h, "ЛОВ"))
-	var atk := m + prof(int(h.level)) + int(w.get("attack", 0))
+	if str(h.get("sub", "")) == "blade_pact" and not w.get("ranged", false):
+		m = maxi(m, amod(h, "ХАР"))
+	var atk := m + prof(int(h.level)) + int(w.get("attack", 0)) + talent_sum(h, "atk_weapon")
 	if h.cls == "Следопыт" and w.get("ranged", false):
 		atk += 2
 	var dmg_bonus := m + int(w.get("damage", 0)) + talent_sum(h, "dmg_weapon")
@@ -796,9 +925,15 @@ static func attack_info(h: Dictionary) -> Dictionary:
 		dmg_bonus += talent_sum(h, "dmg_two")
 	else:
 		dmg_bonus += talent_sum(h, "dmg_onehand")
+	if h.get("raging", false) and not w.get("ranged", false):
+		dmg_bonus += 2 if int(h.level) < 9 else 3
 	return {"name": str(w.name), "atk": atk, "dice": str(w.dmg), "bonus": dmg_bonus, "crit": 20 - talent_sum(h, "crit"),
 		"ranged": bool(w.get("ranged", false)), "fin": a == "fin" or bool(w.get("ranged", false)), "dt": weapon_dt(w),
-		"attacks": 2 if (int(h.level) >= 5 and h.cls in ["Воин", "Следопыт"]) else 1}
+		"extra": w.get("extra", {}), "drain": str(w.get("drain", "")), "stun": bool(w.get("stun", false)),
+		"attacks": 2 if (int(h.level) >= 5 and (h.cls in EXTRA_ATTACK or str(h.get("sub", "")) in ["blade_pact", "valor_college"])) else 1}
+
+
+const EXTRA_ATTACK := ["Воин", "Следопыт", "Варвар", "Паладин"]
 
 
 static func caster_mod(h: Dictionary) -> int:
@@ -847,6 +982,8 @@ static func long_rest(h: Dictionary) -> void:
 	h.second_wind = h.cls == "Воин"
 	if h.cls == "Бард":
 		h.inspire = maxi(1, amod(h, "ХАР")) + talent_sum(h, "inspire")
+	_class_res(h)
+	h.erase("raging")
 	h.relentless = bool(RACES.get(h.race, {}).get("relentless", false))
 	h.death_s = 0
 	h.death_f = 0
@@ -862,6 +999,10 @@ static func short_rest(h: Dictionary) -> int:
 	h.hp = mini(int(h.max_hp), int(h.hp) + ceili(int(h.max_hp) / 2.0))
 	if h.cls == "Воин":
 		h.second_wind = true
+	if CLASSES[h.cls].get("pact", false):
+		h.slots = (h.slots_max as Array).duplicate()
+	if h.cls == "Варвар":
+		h.rages = mini(rages_max(h), int(h.get("rages", 0)) + 1)
 	return int(h.hp) - before
 
 

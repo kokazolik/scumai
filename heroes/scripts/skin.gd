@@ -262,7 +262,8 @@ static func make_portrait(icon: Texture2D, size := 112, tint := GOLD_LIGHT) -> C
 
 ## Портрет героя: силуэт расы в цвете класса и значок класса в углу.
 const CLASS_TINT := {"Воин": Color("ffb27a"), "Маг": Color("9fc4ff"), "Плут": Color("c8e6a0"),
-	"Жрец": Color("fff0b0"), "Следопыт": Color("a8e0c0"), "Бард": Color("f0b0e8")}
+	"Жрец": Color("fff0b0"), "Следопыт": Color("a8e0c0"), "Бард": Color("f0b0e8"),
+	"Варвар": Color("ff9070"), "Паладин": Color("ffe7a0"), "Колдун": Color("c8a0ff")}
 
 static func make_hero_portrait(race_icon: Texture2D, cls_icon: Texture2D, cls: String, size := 112) -> Control:
 	var root := make_portrait(race_icon if race_icon else cls_icon, size, CLASS_TINT.get(cls, GOLD_LIGHT))
