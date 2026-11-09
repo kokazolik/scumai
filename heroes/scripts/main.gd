@@ -367,6 +367,14 @@ func _build_menu() -> void:
 	var key_btn := _button("", C_CARD2, _paste_key)
 	refs.key_btn = key_btn
 	content.add_child(key_btn)
+	if LLM.provider() == "gc":
+		var diag_btn := _button("Проверить связь со Сбером", C_CARD2, func():
+			refs.err.text = "Проверяю связь со Сбером, это до минуты…"
+			var rep: String = await LLM.gc_diagnose()
+			DisplayServer.clipboard_set(rep)
+			if is_instance_valid(refs.get("err")):
+				refs.err.text = rep + "\n(скопировано — пришли это разработчику)")
+		content.add_child(diag_btn)
 	var mi := LLM.model_info()
 	var model_btn := _wrap_button("Нейронка: %s\n%s" % [mi.name, mi.note], C_CARD2, func():
 		LLM.cycle_model()

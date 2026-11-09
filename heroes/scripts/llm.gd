@@ -25,7 +25,11 @@ const MODELS := [
 const GC_OAUTH := "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 const GC_URLS := ["https://api.giga.chat/v1/chat/completions", "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"]
 ## Корневой сертификат Минцифры: серверы Сбера подписаны им, а в общем наборе его нет. Берём с Госуслуг и храним у себя.
-const RU_CA_URLS := ["https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt", "https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt"]
+## Промежуточные сертификаты Минцифры по обычному http (подлинность всё равно проверяется по вшитому корню).
+const RU_CA_URLS := ["http://reestr-pki.ru/cdp/subca_ssl_rsa2022.crt", "http://reestr-pki.ru/cdp/subca_ssl_rsa2024.crt",
+	"http://reestr-pki.ru/cdp/subca_ssl_rsa2025.crt", "http://reestr-pki.ru/cdp/subca_ssl_rsa2026.crt",
+	"http://company.rt.ru/cdp/subca_ssl_rsa2022.crt", "http://company.rt.ru/cdp/subca_ssl_rsa2024.crt",
+	"https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt"]
 ## Свой сервер-посредник (Yandex Cloud Functions, код в server/gigachat_proxy): телефон ходит на него,
 ## а он — в Сбер с правильной проверкой сертификата. Пусто — пока не задан; адрес можно вставить в игре.
 const DEFAULT_GC_PROXY := ""
@@ -139,40 +143,63 @@ func set_model(id: String) -> void:
 
 
 func _load_ru_ca() -> void:
-	# вшитый в игру публичный сертификат Минцифры; скачанный — только если вшитый не прочитался
+	var pem := RU_CA_PEM
+	if FileAccess.file_exists("user://ru_extra.pem"):
+		pem += "\n" + FileAccess.get_file_as_string("user://ru_extra.pem")
 	var cert := X509Certificate.new()
-	if cert.load_from_string(RU_CA_PEM) == OK:
+	if cert.load_from_string(pem) == OK:
 		_ru_tls = TLSOptions.client(cert)
 		return
 	cert = X509Certificate.new()
-	if FileAccess.file_exists("user://ru_ca.pem") and cert.load("user://ru_ca.pem") == OK:
+	if cert.load_from_string(RU_CA_PEM) == OK:
 		_ru_tls = TLSOptions.client(cert)
 
 
-## Скачать сертификат Минцифры (один раз), чтобы доверять серверам Сбера.
-func _fetch_ru_ca() -> bool:
+static func _der_to_pem(raw: PackedByteArray) -> String:
+	var txt := raw.get_string_from_utf8()
+	if txt.contains("BEGIN CERTIFICATE"):
+		return txt.strip_edges() + "\n"
+	if raw.size() < 100 or raw[0] != 0x30:
+		return ""
+	var b := Marshalls.raw_to_base64(raw)
+	var out := "-----BEGIN CERTIFICATE-----\n"
+	for i in range(0, b.length(), 64):
+		out += b.substr(i, 64) + "\n"
+	return out + "-----END CERTIFICATE-----\n"
+
+
+var _extra_tried := false
+
+## Докачать промежуточные сертификаты Минцифры (если сервер Сбера их не присылает). Возвращает, сколько нашлось.
+func _fetch_ru_ca() -> int:
+	_extra_tried = true
 	var pem := ""
+	var n := 0
 	for u in RU_CA_URLS:
 		var http := HTTPRequest.new()
-		http.timeout = 20.0
+		http.timeout = 10.0
 		add_child(http)
 		if http.request(u) != OK:
 			http.queue_free()
 			continue
 		var r: Array = await http.request_completed
 		http.queue_free()
-		var txt := (r[3] as PackedByteArray).get_string_from_utf8()
-		if r[0] == HTTPRequest.RESULT_SUCCESS and int(r[1]) == 200 and txt.contains("BEGIN CERTIFICATE"):
-			pem += txt.strip_edges() + "\n"
-	if pem == "":
-		return false
-	var f := FileAccess.open("user://ru_ca.pem", FileAccess.WRITE)
+		if r[0] != HTTPRequest.RESULT_SUCCESS or int(r[1]) != 200:
+			continue
+		var one := _der_to_pem(r[3])
+		var test := X509Certificate.new()
+		if one != "" and test.load_from_string(one) == OK and not pem.contains(one):
+			pem += one
+			n += 1
+	if n == 0:
+		return 0
+	var f := FileAccess.open("user://ru_extra.pem", FileAccess.WRITE)
 	if f == null:
-		return false
+		return 0
 	f.store_string(pem)
 	f.close()
 	_load_ru_ca()
-	return _ru_tls != null
+	return n
 
 
 ## Один HTTP-запрос с учётом сертификата Минцифры. Возвращает массив request_completed.
@@ -186,7 +213,7 @@ func _gc_http(url: String, headers: PackedStringArray, body: String) -> Array:
 		order.push_front(_gc_tls_mode)
 	var r: Array = [HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR, 0, PackedStringArray(), PackedByteArray()]
 	for mode in order:
-		if mode == 1 and _ru_tls == null and not await _fetch_ru_ca():
+		if mode == 1 and _ru_tls == null:
 			continue
 		var http := HTTPRequest.new()
 		http.timeout = 60.0
@@ -206,7 +233,49 @@ func _gc_http(url: String, headers: PackedStringArray, body: String) -> Array:
 		if r[0] != HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR:
 			_gc_tls_mode = mode
 			return r
+		if mode == 1 and not _extra_tried and await _fetch_ru_ca() > 0:
+			return await _gc_http(url, headers, body)   # с докачанными сертификатами — ещё раз
 	return r
+
+
+## Проверка связи со Сбером: какие способы подключения проходят. Текст для пересылки разработчику.
+func gc_diagnose() -> String:
+	var lines := PackedStringArray(["Godot " + Engine.get_version_info().string + ", " + OS.get_name()])
+	var n := await _fetch_ru_ca()
+	lines.append("доп. сертификаты Минцифры: %d" % n)
+	var any_ca := X509Certificate.new()
+	any_ca.load_from_string(RU_CA_PEM)
+	var modes := {"обычн": TLSOptions.client(), "Минцифры": _ru_tls, "без проверки": TLSOptions.client_unsafe(any_ca)}
+	for hp in [["ngw.devices.sberbank.ru", 9443], ["gigachat.devices.sberbank.ru", 443], ["api.giga.chat", 443]]:
+		var line: String = "%s:%d —" % hp
+		for mname in modes:
+			line += " %s %s" % [mname, "✔" if await _tls_probe(hp[0], hp[1], modes[mname]) else "✘"]
+		lines.append(line)
+	return "\n".join(lines)
+
+
+func _tls_probe(host: String, port: int, opts: TLSOptions) -> bool:
+	if opts == null:
+		return false
+	var tcp := StreamPeerTCP.new()
+	var ip := IP.resolve_hostname(host, IP.TYPE_IPV4)
+	if ip == "" or tcp.connect_to_host(ip, port) != OK:
+		return false
+	var t0 := Time.get_ticks_msec()
+	while tcp.get_status() == StreamPeerTCP.STATUS_CONNECTING and Time.get_ticks_msec() - t0 < 8000:
+		tcp.poll()
+		await get_tree().process_frame
+	if tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+		return false
+	var tls := StreamPeerTLS.new()
+	if tls.connect_to_stream(tcp, host, opts) != OK:
+		return false
+	while tls.get_status() == StreamPeerTLS.STATUS_HANDSHAKING and Time.get_ticks_msec() - t0 < 12000:
+		tls.poll()
+		await get_tree().process_frame
+	var ok := tls.get_status() == StreamPeerTLS.STATUS_CONNECTED
+	tls.disconnect_from_stream()
+	return ok
 
 
 func _gc_auth() -> String:
