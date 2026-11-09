@@ -50,6 +50,23 @@ def _http(url, data, headers, timeout=25):
         raise ProxyError("%s: %s: %s" % (host, type(reason).__name__, reason))
 
 
+def _clean_key(k):
+    """Убрать то, что часто прилипает при копировании: пробелы, переносы, кавычки, «Basic »."""
+    k = (k or "").strip().strip("`'\"").strip()
+    if k.lower().startswith("basic "):
+        k = k[6:]
+    return "".join(k.split())
+
+
+def _key_shape(k):
+    try:
+        dec = base64.b64decode(k + "=" * (-len(k) % 4)).decode("utf-8")
+        parts = dec.split(":")
+        return "длина %d, расшифровка: %s" % (len(k), "client_id:secret ✔" if len(parts) == 2 and len(parts[0]) == 36 else "не похоже на ключ")
+    except Exception:
+        return "длина %d, не base64" % len(k)
+
+
 def _token(key, scope, force=False):
     tok = _tokens.get(key)
     if tok and not force and time.time() < tok[1] - 60:
@@ -86,7 +103,7 @@ def _handle(event):
         if "check" not in (event.get("queryStringParameters") or {}):
             return _resp(200, {"ok": True, "service": "chronicles-gigachat-proxy"})
         # ?check — проверить вход в Сбер ключом из настроек функции (ключ не показывается)
-        key = os.environ.get("GIGACHAT_AUTH_KEY", "").strip()
+        key = _clean_key(os.environ.get("GIGACHAT_AUTH_KEY", ""))
         if not key:
             return _resp(200, {"ok": False, "step": "env", "message": "GIGACHAT_AUTH_KEY не задан"})
         t0 = time.time()
@@ -95,12 +112,13 @@ def _handle(event):
         except ProxyError as e:
             return _resp(200, {"ok": False, "step": "oauth", "message": str(e), "sec": round(time.time() - t0, 1)})
         if err:
-            return _resp(200, {"ok": False, "step": "oauth", "http": err[0], "message": err[1].get("message", ""), "sec": round(time.time() - t0, 1)})
+            return _resp(200, {"ok": False, "step": "oauth", "http": err[0], "message": err[1].get("message", ""),
+                               "key": _key_shape(key), "sec": round(time.time() - t0, 1)})
         return _resp(200, {"ok": True, "step": "oauth", "sec": round(time.time() - t0, 1)})
     app_token = os.environ.get("APP_TOKEN", "")
     if app_token and headers.get("x-app-token", "") != app_token:
         return _resp(403, {"message": "wrong app token"})
-    key = headers.get("x-gigachat-key", "").strip() or os.environ.get("GIGACHAT_AUTH_KEY", "").strip()
+    key = _clean_key(headers.get("x-gigachat-key", "")) or _clean_key(os.environ.get("GIGACHAT_AUTH_KEY", ""))
     if not key:
         return _resp(401, {"message": "no GigaChat key on the server"})
     raw = event.get("body") or ""
